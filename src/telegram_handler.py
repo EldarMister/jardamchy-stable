@@ -593,6 +593,9 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         def _reply(text: str = None) -> None:
             _answer_callback(callback_query_id, text)
         
+        # Быстрый ответ callback
+        _reply()
+        
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
         
@@ -601,22 +604,18 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
-            _reply()
             return jsonify({"status": "ok"}), 200
         
         # Получаем заказ (нужен для определения комиссии)
         order = db.get_order(order_id)
         if not order:
             send_telegram_private(user_id, "❌ Заказ не найден.")
-            _reply()
             return jsonify({"status": "ok"}), 200
         if order.get('status') == config.ORDER_STATUS_CANCELLED:
             send_telegram_private(user_id, "❌ Заказ уже закрыт (отменён).")
-            _reply()
             return jsonify({"status": "ok"}), 200
         if order.get('status') == config.ORDER_STATUS_COMPLETED:
             send_telegram_private(user_id, "❌ Заказ уже закрыт (завершён).")
-            _reply()
             return jsonify({"status": "ok"}), 200
         
         # Определяем комиссию: если клиент предложил цену < 70 → 5 сом, иначе 10 сом
@@ -654,8 +653,17 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
             driver_commission=commission
         )
         if not assigned:
-            _reply("Заказ уже забрали")
+            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
             return jsonify({"status": "ok"}), 200
+        
+        # Сразу обновляем сообщение в группе
+        updated_text = f"""🚖 *ЗАКАЗ ЗАБРАН* ✅
+
+👤 Водитель: *{user_name}*
+📞 Клиент: {order.get('client_phone', '')}
+
+⏱ Заказ в работе."""
+        edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
         # Списываем комиссию
         success, new_balance = db.update_driver_balance(
@@ -724,7 +732,6 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         )
         
         db.log_transaction("TAXI_ORDER_TAKEN", user_id, order_id)
-        _reply()
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
@@ -930,6 +937,12 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
     """Обработка взятия заказа портером"""
     try:
         order_id = data.split("_")[2]
+
+        def _reply(text: str = None) -> None:
+            _answer_callback(callback_query_id, text)
+        
+        # Быстрый ответ callback
+        _reply()
         
         # Проверяем, не занят ли заказ
         if db.is_order_taken(order_id):
@@ -944,7 +957,6 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
-            _answer_callback(callback_query_id)
             return jsonify({"status": "ok"}), 200
         
         # Атомарно назначаем водителя
@@ -961,8 +973,20 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
             ]
         )
         if not assigned:
-            _reply("Заказ уже забрали")
+            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
             return jsonify({"status": "ok"}), 200
+        
+        # Получаем заказ
+        order = db.get_order(order_id)
+        
+        # Сразу обновляем сообщение в группе
+        updated_text = f"""🚛 *ГРУЗ ЗАБРАН* ✅
+
+👤 Водитель: *{user_name}*
+📞 Клиент: {order.get('client_phone', '')}
+
+⏱ Заказ в работе."""
+        edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
         # Списываем комиссию
         commission = config.PORTER_COMMISSION
@@ -971,9 +995,6 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
             -commission,
             reason=f"Porter order {order_id}"
         )
-        
-        # Получаем заказ
-        order = db.get_order(order_id)
         
         profile = _normalize_driver_profile(driver, user_name)
         # Сообщаем клиенту
@@ -1021,7 +1042,6 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
     except Exception as e:
         logger.exception("Error handling porter take")
         send_telegram_private(user_id, "❌ Ошибка при взятии заказа.")
-        _answer_callback(callback_query_id)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -1207,20 +1227,16 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         def _reply(text: str = None) -> None:
             _answer_callback(callback_query_id, text)
 
+        # Быстрый ответ callback
+        _reply()
+
         # Получаем заказ
         order = db.get_order(order_id)
         if not order:
             send_telegram_private(user_id, "❌ Заказ не найден.")
-            _reply()
             return jsonify({"status": "ok"}), 200
-        if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
-            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
-            _reply()
-            return jsonify({"status": "ok"}), 200
-
         if _is_delivery_order_closed(order):
             send_telegram_private(user_id, "❌ Заказ уже закрыт.")
-            _reply()
             return jsonify({"status": "ok"}), 200
         
         # Определяем тип доставки и комиссию
@@ -1235,20 +1251,6 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             # Доставка аптеки - 10 сом с таксиста
             commission = config.TAXI_PHARMACY_COMMISSION
         
-        # Списываем комиссию если есть
-        if commission > 0:
-            success, new_balance = db.update_driver_balance(
-                user_id,
-                -commission,
-                reason=f"Delivery {service_type} order {order_id}"
-            )
-            if success:
-                commission_msg = f"\n💰 Списано комиссии: {commission} сом"
-            else:
-                send_telegram_private(user_id, f"❌ Недостаточно средств. Нужно: {commission} сом")
-                _reply()
-                return jsonify({"status": "ok"}), 200
-        
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
         if not driver:
@@ -1256,12 +1258,9 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
-            _reply()
             return jsonify({"status": "ok"}), 200
         
-        profile = _normalize_driver_profile(driver, user_name)
-        
-        # Атомарно назначаем водителя
+        # Атомарно назначаем водителя (до списания комиссии)
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -1273,8 +1272,32 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             ]
         )
         if not assigned:
-            _reply("Заказ уже забрали")
+            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
             return jsonify({"status": "ok"}), 200
+        
+        # Сразу обновляем сообщение в группе (до всех остальных операций)
+        updated_text = f"""📦 *ДОСТАВКА ЗАБРАТА* ✅
+
+👤 Водитель: *{user_name}*
+📞 Клиент: {order.get('client_phone', '')}
+
+⏱ Доставка в процессе."""
+        edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
+        
+        # Списываем комиссию если есть
+        if commission > 0:
+            success, new_balance = db.update_driver_balance(
+                user_id,
+                -commission,
+                reason=f"Delivery {service_type} order {order_id}"
+            )
+            if success:
+                commission_msg = f"\n💰 Списано комиссии: {commission} сом"
+            else:
+                # Если не удалось списать - все равно продолжаем
+                commission_msg = ""
+        
+        profile = _normalize_driver_profile(driver, user_name)
         
         # Сообщаем клиенту
         client_msg = f"""✅ *Курьер найден!*
@@ -1369,18 +1392,7 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             db.set_telegram_session_data(user_id, _delivery_driver_key(order_id, "arrived_notified"), False)
             db.set_telegram_session_data(user_id, _delivery_driver_key(order_id, "closed"), False)
         
-        # Обновляем сообщение в группе
-        updated_text = f"""📦 *ДОСТАВКА ЗАБРАТА* ✅
-
-👤 Водитель: *{user_name}*
-📞 Клиент: {order.get('client_phone', '')}
-
-⏱ Доставка в процессе."""
-        
-        edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
-        
         db.log_transaction("DELIVERY_TAKEN", user_id, order_id)
-        _reply()
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
