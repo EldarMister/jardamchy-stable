@@ -108,7 +108,7 @@ def handle_callback_query(callback_query: dict) -> tuple:
         
         # === КАФЕ ===
         if data.startswith("cafe_accept_"):
-            return handle_cafe_accept(data, user_id, user_name, chat_id, message_id, db)
+            return handle_cafe_accept(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
         elif data.startswith("cafe_decline_"):
             return handle_cafe_decline(data, user_id, user_name, chat_id, message_id, db)
         elif data.startswith("cafe_ready_"):
@@ -176,7 +176,8 @@ def handle_callback_query(callback_query: dict) -> tuple:
 # =============================================================================
 
 def handle_cafe_accept(data: str, user_id: str, user_name: str,
-                       chat_id: str, message_id: int, db) -> tuple:
+                       chat_id: str, message_id: int, db,
+                       callback_query_id: str = None) -> tuple:
     """Обработка принятия заказа кафе"""
     try:
         order_id = data.split("_")[2]
@@ -184,6 +185,8 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
         def _reply(text: str = None) -> None:
             _answer_callback(callback_query_id, text)
 
+        # Получаем заказ
+        order = db.get_order(order_id)
         if not order:
             send_telegram_private(user_id, "❌ Заказ не найден.")
             _reply()
@@ -191,12 +194,6 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
         if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
             send_telegram_private(user_id, "❌ Заказ уже закрыт.")
             _reply()
-            return jsonify({"status": "ok"}), 200
-        
-        # Получаем заказ
-        order = db.get_order(order_id)
-        if not order:
-            send_telegram_private(user_id, "❌ Заказ не найден.")
             return jsonify({"status": "ok"}), 200
         
         # Обновляем статус
@@ -920,8 +917,12 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         driver = db.get_driver(user_id)
         
         if not driver:
-            db.add_driver(user_id, user_name, driver_type='porter')
-            driver = db.get_driver(user_id)
+            send_telegram_private(
+                user_id,
+                "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
+            )
+            _answer_callback(callback_query_id)
+            return jsonify({"status": "ok"}), 200
         
         # Атомарно назначаем водителя
         assigned = db.assign_order_to_driver(
@@ -1228,8 +1229,12 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
         if not driver:
-            db.add_driver(user_id, user_name)
-            driver = db.get_driver(user_id)
+            send_telegram_private(
+                user_id,
+                "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
+            )
+            _reply()
+            return jsonify({"status": "ok"}), 200
         
         profile = _normalize_driver_profile(driver, user_name)
         
@@ -1704,6 +1709,7 @@ def _handle_register_command(user_id: str, command: str, db) -> tuple:
     """Обработка команды /register или /update"""
     
     is_update = command in ('/update', 'update')
+    logger.info(f"[DRIVER_REG_START] tid={user_id} command='{command}' is_update={is_update}")
     
     # Проверяем, зарегистрирован ли уже
     driver = db.get_driver(user_id)
@@ -1731,6 +1737,11 @@ def _handle_register_command(user_id: str, command: str, db) -> tuple:
     # Начинаем регистрацию/обновление
     db.create_telegram_session(user_id)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_TYPE)
+    
+    # DEBUG LOG - проверяем что сессия создана
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_START] tid={user_id} session created. state={session.get('state') if session else 'NO_SESSION'} temp_data={temp_data_log}")
     
     # Отправляем с кнопками
     buttons = [
@@ -1851,6 +1862,11 @@ def _handle_reg_type(user_id: str, text: str, db) -> tuple:
     db.set_telegram_session_data(user_id, 'driver_type', driver_type)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_NAME)
     
+    # DEBUG LOG
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_STEP1] tid={user_id} driver_type='{driver_type}' temp_data={temp_data_log}")
+    
     send_telegram_private(user_id, config.DRIVER_REG_NAME_PROMPT)
     return jsonify({"status": "ok"}), 200
 
@@ -1868,6 +1884,11 @@ def _handle_reg_name(user_id: str, text: str, db) -> tuple:
     
     db.set_telegram_session_data(user_id, 'name', text)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_PHONE)
+    
+    # DEBUG LOG
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_STEP2] tid={user_id} name='{text}' temp_data={temp_data_log}")
     
     send_telegram_private(user_id, config.DRIVER_REG_PHONE_PROMPT)
     return jsonify({"status": "ok"}), 200
@@ -1888,6 +1909,11 @@ def _handle_reg_phone(user_id: str, text: str, db) -> tuple:
     
     db.set_telegram_session_data(user_id, 'phone', phone)
     
+    # DEBUG LOG
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_STEP3] tid={user_id} phone='{phone}' temp_data={temp_data_log}")
+    
     # Выбираем подсказку в зависимости от типа
     driver_type = db.get_telegram_session_data(user_id, 'driver_type', 'taxi')
     
@@ -1899,7 +1925,10 @@ def _handle_reg_phone(user_id: str, text: str, db) -> tuple:
         
         # Собираем данные для подтверждения
         session = db.get_telegram_session(user_id)
-        temp_data = session.get('temp_data', {})
+        temp_data = (session.get('temp_data') or {}) if session else {}
+        
+        # DEBUG LOG
+        logger.info(f"[DRIVER_REG_STEP3_ANT] tid={user_id} temp_data={temp_data}")
         
         msg = config.DRIVER_REG_CONFIRM_TEMPLATE_ANT.format(
             type_emoji='🐜',
@@ -1937,6 +1966,11 @@ def _handle_reg_car(user_id: str, text: str, db) -> tuple:
     db.set_telegram_session_data(user_id, 'car_model', text)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_PLATE)
     
+    # DEBUG LOG
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_STEP4] tid={user_id} car_model='{text}' temp_data={temp_data_log}")
+    
     send_telegram_private(user_id, config.DRIVER_REG_PLATE_PROMPT)
     return jsonify({"status": "ok"}), 200
 
@@ -1953,7 +1987,10 @@ def _handle_reg_plate(user_id: str, text: str, db) -> tuple:
     
     # Собираем все данные для подтверждения
     session = db.get_telegram_session(user_id)
-    temp_data = session.get('temp_data', {})
+    temp_data = (session.get('temp_data') or {}) if session else {}
+    
+    # DEBUG LOG
+    logger.info(f"[DRIVER_REG_STEP5] tid={user_id} plate='{text.upper()}' temp_data={temp_data}")
     
     driver_type_key = temp_data.get('driver_type', 'taxi')
     type_emoji = config.DRIVER_TYPES.get(driver_type_key, '🚖 Такси').split(' ')[0]
@@ -1979,6 +2016,11 @@ def _handle_reg_plate(user_id: str, text: str, db) -> tuple:
 def _handle_reg_confirm(user_id: str, text: str, db) -> tuple:
     """Шаг 6: Подтверждение регистрации"""
     text_lower = text.lower().strip()
+    
+    # DEBUG LOG
+    session = db.get_telegram_session(user_id)
+    temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+    logger.info(f"[DRIVER_REG_STEP6] tid={user_id} text='{text}' temp_data={temp_data_log}")
     
     if text_lower in ('да', 'yes', 'ооба', 'верно', 'ок', 'ok', '✅'):
         return _save_driver_registration(user_id, db)
@@ -2011,32 +2053,49 @@ def _save_driver_registration(user_id: str, db) -> tuple:
 
     session = db.get_telegram_session(user_id)
     if not session:
-        logger.error(f"[BUG] No session found for driver {user_id}")
-        send_telegram_private(user_id, "❌ Ошибка: сессия не найдена. Начните регистрацию заново с /driver")
+        logger.error(f"[DRIVER_REG_SAVE] No session found for driver {user_id}")
+        send_telegram_private(user_id, "❌ Ошибка: сессия не найдена. Начните регистрацию заново с /register")
         return jsonify({"status": "error"}), 400
 
-    temp_data = session.get('temp_data', {})
+    # Защита от None в temp_data (если в БД NULL)
+    temp_data = (session.get('temp_data') or {})
 
     # DEBUG: Логируем все данные, которые собрали
-    logger.info(f"[DRIVER_REG] User {user_id} temp_data: {temp_data}")
+    logger.info(f"[DRIVER_REG_SAVE] tid={user_id} temp_data={temp_data}")
 
     driver_type = temp_data.get('driver_type', 'taxi')
-    name = temp_data.get('name', '')
-    phone = temp_data.get('phone', '')
-    car_model = temp_data.get('car_model', '')
-    plate = temp_data.get('plate', '')
+    name = (temp_data.get('name', '') or '').strip()
+    phone = (temp_data.get('phone', '') or '').strip()
+    car_model = (temp_data.get('car_model', '') or '').strip()
+    plate = (temp_data.get('plate', '') or '').strip()
+
+    # DEBUG LOG - конкретные значения
+    logger.info(f"[DRIVER_REG_SAVE] tid={user_id} name='{name}' phone='{phone}' car_model='{car_model}' plate='{plate}' driver_type='{driver_type}'")
 
     # Валидация критичных полей
     if not name or not phone:
-        logger.error(f"[BUG] Missing required fields for {user_id}: name={bool(name)}, phone={bool(phone)}")
+        logger.error(f"[DRIVER_REG_SAVE] FAILED: missing data for {user_id}: name={bool(name)}, phone={bool(phone)}")
         send_telegram_private(
             user_id,
-            "❌ Ошибка: не все данные были сохранены.\n\n"
-            "Пожалуйста, начните регистрацию заново с /driver"
+            "❌ Ошибка регистрации: данные сессии отсутствуют или неполные.\n"
+            "Пожалуйста, введите /register и пройдите регистрацию заново."
         )
-        db.clear_telegram_session(user_id)
-        return jsonify({"status": "error"}), 400
+        return jsonify({"status": "error", "message": "Missing registration data"}), 200
     
+    # DEBUG LOG - конкретные значения
+    logger.info(f"[DRIVER_REG_SAVE] tid={user_id} name='{name}' phone='{phone}' car_model='{car_model}' plate='{plate}' driver_type='{driver_type}'")
+
+    # ВАЛИДАЦИЯ: Проверяем наличие обязательных данных
+    if not name or not phone:
+        error_msg = f"[DRIVER_REG_SAVE] FAILED: missing data for user {user_id}. temp_data={temp_data}"
+        logger.error(error_msg)
+        send_telegram_private(
+            user_id, 
+            "❌ Ошибка регистрации: данные сессии отсутствуют или неполные.\n"
+            "Пожалуйста, введите /register и пройдите регистрацию заново."
+        )
+        return jsonify({"status": "error", "message": "Missing registration data"}), 200
+
     # Сохраняем водителя
     db.add_driver(
         telegram_id=user_id,
@@ -2089,6 +2148,9 @@ def _save_driver_registration(user_id: str, db) -> tuple:
 def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> tuple:
     """Обработка нажатия кнопок регистрации водителя"""
     try:
+        # DEBUG LOG
+        logger.info(f"[DRIVER_REG_CALLBACK] tid={user_id} data='{data}'")
+        
         # dreg_type_taxi, dreg_type_porter, dreg_type_ant
         if data.startswith("dreg_type_"):
             driver_type = data.replace("dreg_type_", "")
@@ -2099,6 +2161,11 @@ def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> t
             db.set_telegram_session_data(user_id, 'driver_type', driver_type)
             db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_NAME)
             
+            # DEBUG LOG - проверяем что записалось
+            session = db.get_telegram_session(user_id)
+            temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
+            logger.info(f"[DRIVER_REG_CALLBACK] tid={user_id} driver_type='{driver_type}' saved. temp_data={temp_data_log}")
+            
             type_name = config.DRIVER_TYPES.get(driver_type, driver_type)
             send_telegram_private(
                 user_id, 
@@ -2108,6 +2175,7 @@ def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> t
         
         # dreg_confirm_yes, dreg_confirm_no
         elif data == "dreg_confirm_yes":
+            logger.info(f"[DRIVER_REG_CALLBACK] tid={user_id} confirming registration")
             return _save_driver_registration(user_id, db)
         
         elif data == "dreg_confirm_no":

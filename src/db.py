@@ -1170,16 +1170,15 @@ class Database:
             cur.execute(
                 """INSERT INTO telegram_sessions (telegram_id, temp_data)
                    VALUES (%s, %s::jsonb)
-                   ON CONFLICT (telegram_id) DO UPDATE
-                   SET temp_data = telegram_sessions.temp_data || %s::jsonb,
-                       updated_at = CURRENT_TIMESTAMP
-                   RETURNING temp_data""",
+                   ON CONFLICT (telegram_id) DO UPDATE 
+                   SET temp_data = COALESCE(telegram_sessions.temp_data, '{}'::jsonb) || %s::jsonb,
+                       updated_at = CURRENT_TIMESTAMP""",
                 (telegram_id, json.dumps({key: value}), json.dumps({key: value}))
             )
-            row = cur.fetchone()
-            if row:
-                result_data = dict(row)['temp_data']
-                logger.debug(f"[SESSION_DATA] {telegram_id}: {key}={value}, full_data={result_data}")
+            
+            if cur.rowcount == 0:
+                logger.error(f"Failed to set session data for {telegram_id}: {key}={value}")
+                
             return cur.rowcount > 0
     
     def clear_telegram_session(self, telegram_id: str) -> bool:
