@@ -1163,10 +1163,14 @@ class Database:
                 """INSERT INTO telegram_sessions (telegram_id, temp_data)
                    VALUES (%s, %s::jsonb)
                    ON CONFLICT (telegram_id) DO UPDATE 
-                   SET temp_data = telegram_sessions.temp_data || %s::jsonb,
+                   SET temp_data = COALESCE(telegram_sessions.temp_data, '{}'::jsonb) || %s::jsonb,
                        updated_at = CURRENT_TIMESTAMP""",
                 (telegram_id, json.dumps({key: value}), json.dumps({key: value}))
             )
+            
+            if cur.rowcount == 0:
+                logger.error(f"Failed to set session data for {telegram_id}: {key}={value}")
+                
             return cur.rowcount > 0
     
     def clear_telegram_session(self, telegram_id: str) -> bool:
