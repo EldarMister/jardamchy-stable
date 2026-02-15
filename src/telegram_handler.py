@@ -108,7 +108,7 @@ def handle_callback_query(callback_query: dict) -> tuple:
         
         # === КАФЕ ===
         if data.startswith("cafe_accept_"):
-            return handle_cafe_accept(data, user_id, user_name, chat_id, message_id, db)
+            return handle_cafe_accept(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
         elif data.startswith("cafe_decline_"):
             return handle_cafe_decline(data, user_id, user_name, chat_id, message_id, db)
         elif data.startswith("cafe_ready_"):
@@ -176,7 +176,8 @@ def handle_callback_query(callback_query: dict) -> tuple:
 # =============================================================================
 
 def handle_cafe_accept(data: str, user_id: str, user_name: str,
-                       chat_id: str, message_id: int, db) -> tuple:
+                       chat_id: str, message_id: int, db,
+                       callback_query_id: str = None) -> tuple:
     """Обработка принятия заказа кафе"""
     try:
         order_id = data.split("_")[2]
@@ -184,6 +185,8 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
         def _reply(text: str = None) -> None:
             _answer_callback(callback_query_id, text)
 
+        # Получаем заказ
+        order = db.get_order(order_id)
         if not order:
             send_telegram_private(user_id, "❌ Заказ не найден.")
             _reply()
@@ -191,12 +194,6 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
         if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
             send_telegram_private(user_id, "❌ Заказ уже закрыт.")
             _reply()
-            return jsonify({"status": "ok"}), 200
-        
-        # Получаем заказ
-        order = db.get_order(order_id)
-        if not order:
-            send_telegram_private(user_id, "❌ Заказ не найден.")
             return jsonify({"status": "ok"}), 200
         
         # Обновляем статус
