@@ -25,6 +25,29 @@ logger = logging.getLogger(__name__)
 # DRIVER PROFILE HELPERS
 # =============================================================================
 
+def _format_phone_for_whatsapp(phone: str) -> str:
+    """Форматировать номер телефона для отображения в WhatsApp (формат: 0220 203 021)"""
+    if not phone:
+        return "—"
+    
+    # Удалить все нецифровые символы
+    phone = ''.join(c for c in phone if c.isdigit())
+    
+    # Если номер начинается с 996 → заменить на 0
+    if phone.startswith("996"):
+        phone = "0" + phone[3:]
+    
+    # Если номер начинается с +996 → убрать + и 996, добавить 0
+    if phone.startswith("+996"):
+        phone = "0" + phone[4:]
+    
+    # Форматировать как XXXX XXX XXX (10 цифр: 4 + 3 + 3)
+    if len(phone) == 10:
+        return f"{phone[:4]} {phone[4:7]} {phone[7:]}"
+    
+    return phone
+
+
 def _normalize_driver_profile(driver, fallback_name: str = "") -> dict:
     """Normalize driver profile data from DB with safe fallbacks."""
     def _clean(value):
@@ -644,7 +667,7 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         
         profile = _normalize_driver_profile(driver, user_name)
         driver_name = profile["name"]
-        driver_phone = profile["phone"]
+        driver_phone = _format_phone_for_whatsapp(profile["phone"])
         driver_car = profile["car_model"]
         driver_plate = profile["plate"]
 
@@ -743,7 +766,7 @@ def handle_taxi_arrived(data: str, user_id: str, user_name: str,
         driver = db.get_driver(user_id)
         profile = _normalize_driver_profile(driver, user_name)
         driver_name = profile["name"]
-        driver_phone = profile["phone"]
+        driver_phone = _format_phone_for_whatsapp(profile["phone"])
         driver_car = profile["car_model"]
         driver_plate = profile["plate"]
         car_info = f"\n🚘 *{driver_car}* | {driver_plate}"
@@ -958,7 +981,7 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
 
 🚛 *Транспорт:* {profile["car_model"]}
 👤 *Водитель:* {profile["name"]}
-📞 *Телефон:* {profile["phone"]}
+📞 *Телефон:* {_format_phone_for_whatsapp(profile["phone"])}
 🔢 *Номер:* {profile["plate"]}
 
 💰 Цена: *Договорная*
@@ -1257,7 +1280,7 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         client_msg = f"""✅ *Курьер найден!*
 
 👤 *Водитель:* {profile["name"]}
-📞 *Телефон:* {profile["phone"]}
+📞 *Телефон:* {_format_phone_for_whatsapp(profile["phone"])}
 🚘 *Авто:* {profile["car_model"]}
 🔢 *Номер:* {profile["plate"]}
 
@@ -1401,7 +1424,7 @@ def handle_delivery_arrived(data: str, user_id: str, user_name: str,
         client_msg = (
             "📍 *Курьер приехал и ожидает вас!*\n"
             f"👤 *Курьер:* {profile['name']}\n"
-            f"📞 *Телефон:* {profile['phone']}\n"
+            f"📞 *Телефон:* {_format_phone_for_whatsapp(profile['phone'])}\n"
             f"🔢 *Номер:* {profile['plate']}\n\n"
             "🚶 Пожалуйста, выходите."
         )
