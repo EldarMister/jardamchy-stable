@@ -2022,6 +2022,11 @@ def _handle_reg_confirm(user_id: str, text: str, db) -> tuple:
     temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
     logger.info(f"[DRIVER_REG_STEP6] tid={user_id} text='{text}' temp_data={temp_data_log}")
     
+    # Проверяем состояние
+    if not session or session.get('state') != config.STATE_DRIVER_REG_CONFIRM:
+        logger.warning(f"[DRIVER_REG_STEP6] tid={user_id} ignored: wrong state or no session")
+        return jsonify({"status": "ok"}), 200
+    
     if text_lower in ('да', 'yes', 'ооба', 'верно', 'ок', 'ok', '✅'):
         return _save_driver_registration(user_id, db)
     
@@ -2051,16 +2056,25 @@ def _handle_reg_confirm(user_id: str, text: str, db) -> tuple:
 def _save_driver_registration(user_id: str, db) -> tuple:
     """Сохранение регистрации водителя"""
 
+    # Проверяем, не зарегистрирован ли уже водитель (защита от двойного вызова)
+    existing_driver = db.get_driver(user_id)
+    if existing_driver and existing_driver.get('name') and existing_driver.get('phone'):
+        logger.info(f"[DRIVER_REG_SAVE] Driver {user_id} already registered, skipping")
+        return jsonify({"status": "ok"}), 200
+
     session = db.get_telegram_session(user_id)
     if not session:
         logger.error(f"[DRIVER_REG_SAVE] No session found for driver {user_id}")
+        # Если сессии нет, но водитель существует - просто возвращаем успех
+        if existing_driver:
+            return jsonify({"status": "ok"}), 200
         send_telegram_private(user_id, "❌ Ошибка: сессия не найдена. Начните регистрацию заново с /register")
         return jsonify({"status": "error"}), 400
 
     # Защита от None в temp_data (если в БД NULL)
     temp_data = (session.get('temp_data') or {})
 
-    # DEBUG: Логируем все данные, которые собрали
+    # DEBUG: Логируем все данные
     logger.info(f"[DRIVER_REG_SAVE] tid={user_id} temp_data={temp_data}")
 
     driver_type = temp_data.get('driver_type', 'taxi')
@@ -2069,7 +2083,6 @@ def _save_driver_registration(user_id: str, db) -> tuple:
     car_model = (temp_data.get('car_model', '') or '').strip()
     plate = (temp_data.get('plate', '') or '').strip()
 
-    # DEBUG LOG - конкретные значения
     logger.info(f"[DRIVER_REG_SAVE] tid={user_id} name='{name}' phone='{phone}' car_model='{car_model}' plate='{plate}' driver_type='{driver_type}'")
 
     # Валидация критичных полей
@@ -2077,20 +2090,6 @@ def _save_driver_registration(user_id: str, db) -> tuple:
         logger.error(f"[DRIVER_REG_SAVE] FAILED: missing data for {user_id}: name={bool(name)}, phone={bool(phone)}")
         send_telegram_private(
             user_id,
-            "❌ Ошибка регистрации: данные сессии отсутствуют или неполные.\n"
-            "Пожалуйста, введите /register и пройдите регистрацию заново."
-        )
-        return jsonify({"status": "error", "message": "Missing registration data"}), 200
-    
-    # DEBUG LOG - конкретные значения
-    logger.info(f"[DRIVER_REG_SAVE] tid={user_id} name='{name}' phone='{phone}' car_model='{car_model}' plate='{plate}' driver_type='{driver_type}'")
-
-    # ВАЛИДАЦИЯ: Проверяем наличие обязательных данных
-    if not name or not phone:
-        error_msg = f"[DRIVER_REG_SAVE] FAILED: missing data for user {user_id}. temp_data={temp_data}"
-        logger.error(error_msg)
-        send_telegram_private(
-            user_id, 
             "❌ Ошибка регистрации: данные сессии отсутствуют или неполные.\n"
             "Пожалуйста, введите /register и пройдите регистрацию заново."
         )
@@ -2175,6 +2174,11 @@ def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> t
         
         # dreg_confirm_yes, dreg_confirm_no
         elif data == "dreg_confirm_yes":
+            # Проверяем, что мы в правильном состоянии
+            session = db.get_telegram_session(user_id)
+            if not session or session.get('state') != config.STATE_DRIVER_REG_CONFIRM:
+                logger.warning(f"[DRIVER_REG_CALLBACK] tid={user_id} confirm ignored: wrong state or no session")
+                return jsonify({"status": "ok"}), 200
             logger.info(f"[DRIVER_REG_CALLBACK] tid={user_id} confirming registration")
             return _save_driver_registration(user_id, db)
         
