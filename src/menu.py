@@ -84,9 +84,8 @@ def list_categories_public(cafe_id):
 
 @menu_bp.route('/api/order', methods=['POST'])
 def create_web_order():
-    """Создание веб-заказа - оптимизированная версия с асинхронными уведомлениями"""
+    """Создание веб-заказа - только создание кода, без отправки в кафе"""
     import time
-    import threading
     
     timings = {}
     start_total = time.time()
@@ -111,28 +110,12 @@ def create_web_order():
         cafe_name = cafe['name'] if cafe else "Unknown Cafe"
         timings['get_cafe'] = int((time.time() - t0) * 1000)
 
-        # Создаем веб-заказ
+        # Создаем ТОЛЬКО веб-заказ (без отправки в кафе)
         t0 = time.time()
         order_code = db.create_web_order(cafe_id, cafe_name, items, float(total_price))
         timings['create_web_order'] = int((time.time() - t0) * 1000)
         
-        # Формируем детали заказа
-        t0 = time.time()
-        order_details = "\n".join([f"• {item['name']} x{item['count']} = {item['price'] * item['count']} с" for item in items])
-        
-        # Создаем заказ в основной таблице orders
-        order_id = db.create_order(
-            client_phone="web_order",
-            service_type=config.SERVICE_CAFE,
-            details=order_details,
-            address="Уточнить у клиента",
-            payment_method=config.PAYMENT_CASH,
-            price=float(total_price)
-        )
-        db.update_web_order_status(order_code, 'PENDING', address=order_id)
-        timings['create_order'] = int((time.time() - t0) * 1000)
-        
-        # Формируем ответ сразу (до отправки в Telegram)
+        # Формируем ответ
         msg_lines = [f"Заказ с сайта ✅", f"Кафе: {cafe_name}"]
         for item in items:
             msg_lines.append(f"{item['name']} x{item['count']}")
@@ -143,55 +126,12 @@ def create_web_order():
         encoded_text = urllib.parse.quote(msg_text)
         whatsapp_url = f"https://wa.me/{config.WHATSAPP_BOT_PHONE}?text={encoded_text}"
         
-        # Асинхронная отправка в Telegram (не блокирует ответ)
-        def send_notifications_async(order_id, cafe_name, order_details, total_price):
-            try:
-                cafe_msg = f"""🍔 *НОВЫЙ ЗАКАЗ С САЙТА* #{order_id}
-
-🏠 *Кафе:* {cafe_name}
-📋 *Заказ:*
-{order_details}
-
-💵 *Итого:* {total_price} сом
-💳 *Оплата:* Наличные
-📞 *Клиент:* Ожидаем подтверждения
-
-⏱ *Таймер: 2 минуты*"""
-                
-                buttons = [
-                    {"text": "✅ Принять", "callback": f"cafe_accept_{order_id}"},
-                    {"text": "❌ Отказать", "callback": f"cafe_decline_{order_id}"}
-                ]
-                result = send_telegram_group(config.GROUP_CAFE_ID, cafe_msg, buttons)
-                
-                if result and result.get('message_id'):
-                    db.create_auction_timer(
-                        order_id=order_id,
-                        service_type=config.SERVICE_CAFE,
-                        telegram_message_id=str(result['message_id']),
-                        chat_id=config.GROUP_CAFE_ID,
-                        timeout_seconds=config.CAFE_AUCTION_TIMEOUT
-                    )
-            except Exception as e:
-                current_app.logger.error(f"Async notification failed: {e}")
-        
-        # Запускаем в фоновом потоке
-        t0 = time.time()
-        notif_thread = threading.Thread(
-            target=send_notifications_async,
-            args=(order_id, cafe_name, order_details, total_price),
-            daemon=True
-        )
-        notif_thread.start()
-        timings['start_thread'] = int((time.time() - t0) * 1000)
-        
         timings['total'] = int((time.time() - start_total) * 1000)
-        current_app.logger.info(f"Web order {order_code} created in {timings['total']}ms")
+        current_app.logger.info(f"Web order {order_code} created in {timings['total']}ms (awaiting confirmation)")
         
         return jsonify({
             "success": True, 
             "order_code": order_code, 
-            "order_id": order_id,
             "whatsapp_link": whatsapp_url,
             "_debug_timings_ms": timings
         }), 201

@@ -800,17 +800,36 @@ def _submit_taxi_order(user: User, db) -> tuple:
 
 
 def _submit_cafe_order(user: User, db) -> tuple:
-    """Отправка заказа в кафе"""
+    """Отправка заказа в кафе (включая подтверждение веб-заказа)"""
     order_details = user.get_temp_data('cafe_order_details', '')
     address = user.get_temp_data('cafe_address', '')
+    web_order_code = user.get_temp_data('web_order_code')
     
+    # Если это подтверждение веб-заказа - получаем данные из web_order
+    if web_order_code:
+        web_order = db.get_web_order(web_order_code)
+        if web_order:
+            # Используем детали из web_order
+            items = web_order['items_json']
+            order_details = "\n".join([f"• {item['name']} x{item['count']}" for item in items])
+            cafe_name = web_order['cafe_name']
+            total_price = web_order['total_price']
+            
+            # Обновляем web_order
+            db.update_web_order_status(web_order_code, 'CONFIRMED', client_phone=user.phone, address=address)
+    
+    # Создаем основной заказ
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_CAFE,
         details=order_details,
         address=address,
-        payment_method=config.PAYMENT_CASH  # По умолчанию наличные
+        payment_method=config.PAYMENT_CASH
     )
+    
+    # Если был web_order - сохраняем связь
+    if web_order_code:
+        db.update_web_order_status(web_order_code, 'CONFIRMED', address=str(order_id))
     
     commission_info = f"💰 Комиссия: {config.CAFE_COMMISSION_PERCENT}%"
     
