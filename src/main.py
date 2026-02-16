@@ -590,7 +590,12 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     
     # === ПРИВЕТСТВИЕ или НЕИЗВЕСТНОЕ ===
     else:
-        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        # Anti-flood: проверяем rate limiting на приветствие (10 минут)
+        if db.can_send_welcome(user.phone, cooldown_seconds=600):
+            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+            db.update_last_welcome(user.phone)
+        else:
+            logger.info(f"Welcome suppressed for {user.phone} (anti-flood)")
         return jsonify({"status": "ok"}), 200
 
 

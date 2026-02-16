@@ -68,9 +68,23 @@ class Database:
                         current_state VARCHAR(50) DEFAULT 'IDLE',
                         temp_data JSONB DEFAULT '{}',
                         language VARCHAR(10) DEFAULT 'ru',
+                        last_welcome_at TIMESTAMP DEFAULT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+                
+                # Migration: add last_welcome_at if missing
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'users' AND column_name = 'last_welcome_at'
+                        ) THEN
+                            ALTER TABLE users ADD COLUMN last_welcome_at TIMESTAMP DEFAULT NULL;
+                        END IF;
+                    END $$;
                 """)
             
                 # Таблица заказов
@@ -405,6 +419,45 @@ class Database:
         with self.get_cursor(commit=True) as cur:
             cur.execute(
                 "UPDATE users SET temp_data = '{}', updated_at = CURRENT_TIMESTAMP WHERE phone = %s",
+                (phone,)
+            )
+            return cur.rowcount > 0
+    
+    def can_send_welcome(self, phone: str, cooldown_seconds: int = 600) -> bool:
+        """Проверить, можно ли отправить приветствие (rate limiting)"""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT last_welcome_at 
+                   FROM users 
+                   WHERE phone = %s""",
+                (phone,)
+            )
+            row = cur.fetchone()
+            if not row or not row['last_welcome_at']:
+                return True
+            
+            from datetime import datetime, timezone
+            last_welcome = row['last_welcome_at']
+            if isinstance(last_welcome, str):
+                from datetime import datetime
+                last_welcome = datetime.fromisoformat(last_welcome.replace('Z', '+00:00'))
+            
+            # Делаем last_welcome aware если он naive
+            if last_welcome.tzinfo is None:
+                from datetime import timezone
+                last_welcome = last_welcome.replace(tzinfo=timezone.utc)
+            
+            now = datetime.now(timezone.utc)
+            delta = (now - last_welcome).total_seconds()
+            return delta >= cooldown_seconds
+    
+    def update_last_welcome(self, phone: str) -> bool:
+        """Обновить время последнего приветствия"""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE users 
+                   SET last_welcome_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+                   WHERE phone = %s""",
                 (phone,)
             )
             return cur.rowcount > 0

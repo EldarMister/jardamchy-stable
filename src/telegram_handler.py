@@ -611,53 +611,29 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
     try:
         order_id = data.split("_")[2]
         
-        # Защита от двойного нажатия: 1 заказ = 1 действие
-        lock_key = f"taxi_take_{order_id}_{user_id}"
-        lock = _get_callback_lock(lock_key)
-        
-        if not lock.acquire(blocking=False):
-            # Уже обрабатывается или было обработано
+        # Дедупликация: проверяем не обрабатывали ли уже этот callback
+        dedup_key = f"cbq_{callback_query_id}"
+        if dedup_key in _callback_locks:
             return jsonify({"status": "ok"}), 200
+        _callback_locks[dedup_key] = True
         
-        # Callback уже отвечен в handle_callback_query для скорости
+        # Быстрый ответ callback в первые 200ms
+        answer_telegram_callback(callback_query_id, "⏳ Обрабатываю...")
         
-        # Получаем заказ (нужен для проверки статуса и определения комиссии)
-        order = db.get_order(order_id)
-        if not order:
-            send_telegram_private(user_id, "❌ Заказ не найден.")
-            return jsonify({"status": "ok"}), 200
-        if order.get('status') == config.ORDER_STATUS_CANCELLED:
-            send_telegram_private(user_id, "❌ Заказ уже закрыт (отменён).")
-            return jsonify({"status": "ok"}), 200
-        if order.get('status') == config.ORDER_STATUS_COMPLETED:
-            send_telegram_private(user_id, "❌ Заказ уже закрыт (завершён).")
-            return jsonify({"status": "ok"}), 200
-        
-        # Проверяем, не занят ли заказ другим водителем
-        if order.get('driver_id') and str(order.get('driver_id')) != str(user_id):
-            send_telegram_private(user_id, "❌ Заказ уже забрал другой водитель!")
-            return jsonify({"status": "ok"}), 200
-        
-        # Получаем информацию о водителе
+        # Получаем информацию о водителе (нужна для проверки баланса и комиссии)
         driver = db.get_driver(user_id)
-        
         if not driver:
+            answer_telegram_callback(callback_query_id, "❌ Вы не зарегистрированы")
             send_telegram_private(
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
             return jsonify({"status": "ok"}), 200
         
-        # Определяем комиссию: если клиент предложил цену < 70 → 5 сом, иначе 10 сом
-        custom_price = float(order.get('price_total', 0))
-        if custom_price > 0 and custom_price < config.TAXI_CUSTOM_PRICE_THRESHOLD:
-            commission = config.TAXI_CUSTOM_PRICE_COMMISSION  # 5 сом
-        else:
-            commission = config.TAXI_COMMISSION  # 10 сом
-        
-        # Проверяем баланс — минимум 10 сом
+        # Проверяем баланс до атомарного захвата
         balance = float(driver.get('balance', 0))
         if balance < config.MIN_DRIVER_BALANCE:
+            answer_telegram_callback(callback_query_id, "❌ Недостаточно средств")
             send_telegram_private(
                 user_id,
                 f"❌ *Недостаточно средств!*\n\n"
@@ -667,8 +643,12 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
             )
             return jsonify({"status": "ok"}), 200
         
+        # Предопределяем комиссию (без обращения к заказу)
+        # Комиссия определяется позже на основе цены заказа
+        commission = config.TAXI_COMMISSION  # default
+        
+        # АТОМАРНЫЙ ЗАХВАТ: одним UPDATE проверяем и назначаем
         now = datetime.now()
-        # Атомарно назначаем водителя
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -681,9 +661,29 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
             driver_assigned_at=now,
             driver_commission=commission
         )
+        
         if not assigned:
-            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
+            # Уточняем причину неудачи для лучшего UX
+            order = db.get_order(order_id)
+            if not order:
+                answer_telegram_callback(callback_query_id, "❌ Заказ не найден")
+            elif order.get('driver_id') == str(user_id):
+                answer_telegram_callback(callback_query_id, "✅ Заказ уже ваш")
+            elif order.get('driver_id'):
+                answer_telegram_callback(callback_query_id, "❌ Заказ уже забрал другой")
+            else:
+                answer_telegram_callback(callback_query_id, "❌ Заказ уже недоступен")
             return jsonify({"status": "ok"}), 200
+        
+        # Заказ захвачен - получаем данные для уведомлений
+        order = db.get_order(order_id)
+        
+        # Пересчитываем комиссию на основе реальной цены
+        custom_price = float(order.get('price_total', 0))
+        if custom_price > 0 and custom_price < config.TAXI_CUSTOM_PRICE_THRESHOLD:
+            commission = config.TAXI_CUSTOM_PRICE_COMMISSION
+            # Обновляем комиссию в заказе
+            db.update_order_status(order_id, config.ORDER_STATUS_IN_DELIVERY, driver_commission=commission)
         
         # Сразу обновляем сообщение в группе
         updated_text = f"""🚖 *ЗАКАЗ ЗАБРАН* ✅
@@ -1277,31 +1277,38 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
     try:
         order_id = data.split("_")[2]
 
+        # Дедупликация callback
+        dedup_key = f"cbq_{callback_query_id}"
+        if dedup_key in _callback_locks:
+            return jsonify({"status": "ok"}), 200
+        _callback_locks[dedup_key] = True
+        
+        # Быстрый ответ callback
+        answer_telegram_callback(callback_query_id, "⏳ Обрабатываю...")
+        
         # Защита от двойного нажатия: 1 заказ = 1 действие
         lock_key = f"delivery_take_{order_id}_{user_id}"
         lock = _get_callback_lock(lock_key)
         
         if not lock.acquire(blocking=False):
-            # Уже обрабатывается или было обработано
             return jsonify({"status": "ok"}), 200
 
-        # Callback уже отвечен в handle_callback_query для скорости
-
-        # Получаем заказ
-        order = db.get_order(order_id)
-        if not order:
-            send_telegram_private(user_id, "❌ Заказ не найден.")
-            return jsonify({"status": "ok"}), 200
-        if _is_delivery_order_closed(order):
-            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
-            return jsonify({"status": "ok"}), 200
-            
-        # Проверяем, не занят ли заказ другим водителем
-        if order.get('driver_id') and str(order.get('driver_id')) != str(user_id):
-            send_telegram_private(user_id, "❌ Заказ уже забрал другой водитель!")
+        # Получаем информацию о водителе
+        driver = db.get_driver(user_id)
+        if not driver:
+            answer_telegram_callback(callback_query_id, "❌ Вы не зарегистрированы")
+            send_telegram_private(user_id, "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register.")
             return jsonify({"status": "ok"}), 200
         
         # Определяем тип доставки и комиссию
+        order = db.get_order(order_id)
+        if not order:
+            answer_telegram_callback(callback_query_id, "❌ Заказ не найден")
+            return jsonify({"status": "ok"}), 200
+            
+        if _is_delivery_order_closed(order):
+            answer_telegram_callback(callback_query_id, "❌ Заказ уже закрыт")
+            return jsonify({"status": "ok"}), 200
         service_type = order.get('service_type')
         commission = 0
         commission_msg = ""
@@ -1322,7 +1329,7 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             )
             return jsonify({"status": "ok"}), 200
         
-        # Атомарно назначаем водителя (до списания комиссии)
+        # АТОМАРНЫЙ ЗАХВАТ
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -1334,7 +1341,12 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             ]
         )
         if not assigned:
-            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
+            if order.get('driver_id') == str(user_id):
+                answer_telegram_callback(callback_query_id, "✅ Заказ уже ваш")
+            elif order.get('driver_id'):
+                answer_telegram_callback(callback_query_id, "❌ Заказ уже забрал другой")
+            else:
+                answer_telegram_callback(callback_query_id, "❌ Заказ уже недоступен")
             return jsonify({"status": "ok"}), 200
         
         # Сразу обновляем сообщение в группе (до всех остальных операций)
