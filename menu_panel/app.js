@@ -242,7 +242,25 @@ function renderCategories() {
 
     wrap.style.display = 'grid';
 
-    const cats = [{ id: 'all', name: 'Все блюда' }, ...state.categories];
+    // Приоритетные категории (будут первыми)
+    const priorityCategories = ['Фаст-фуд', 'Фастфуд', 'фаст-фуд', 'фастфуд', 
+                                'Сеты', 'сеты', 
+                                'Пицца', 'пицца', 
+                                'Основные блюда', 'основные блюда',
+                                'Напитки', 'напитки'];
+    
+    // Сортируем категории: приоритетные первыми
+    const sortedCategories = [...state.categories].sort((a, b) => {
+        const aIndex = priorityCategories.indexOf(a.name);
+        const bIndex = priorityCategories.indexOf(b.name);
+        
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        return a.name.localeCompare(b.name);
+    });
+
+    const cats = [{ id: 'all', name: 'Все блюда' }, ...sortedCategories];
 
     cats.forEach(cat => {
         const card = document.createElement('div');
@@ -456,10 +474,12 @@ function showSuccess(data) {
     state.cart = { cafeId: null, items: {} };
     updateCartBar();
 
-    // Show success modal
-    document.getElementById('successOrderCode').innerText = data.order_code;
-    document.getElementById('whatsappLink').href = data.whatsapp_link;
-    document.getElementById('successModal').classList.add('active');
+    // Сразу открываем WhatsApp без показа модального окна
+    window.open(data.whatsapp_link, '_blank');
+    
+    // Показываем простое уведомление об успехе
+    alert('Заказ оформлен! Открылся WhatsApp для отправки заказа.');
+    goHome();
 }
 
 function closeSuccessModal() {

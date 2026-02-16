@@ -18,6 +18,28 @@ from services import (
     answer_telegram_callback
 )
 
+# In-memory lock для защиты от двойного нажатия (1 действие = 1 нажатие)
+import threading
+_callback_locks = {}
+_locks_lock = threading.Lock()
+
+def _get_callback_lock(key: str):
+    """Получить или создать lock для конкретного callback"""
+    with _locks_lock:
+        if key not in _callback_locks:
+            _callback_locks[key] = threading.Lock()
+        return _callback_locks[key]
+
+def _cleanup_old_locks():
+    """Очистка старых locks (вызывать периодически)"""
+    with _locks_lock:
+        # Оставляем только последние 1000 locks
+        if len(_callback_locks) > 1000:
+            # Удаляем случайные старые ключи
+            keys_to_remove = list(_callback_locks.keys())[:500]
+            for k in keys_to_remove:
+                del _callback_locks[k]
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,10 +144,9 @@ def handle_callback_query(callback_query: dict) -> tuple:
         
         logger.info(f"Callback from {user_name} ({user_id}): {data}")
 
-        # Быстро подтверждаем callback, если не нужен кастомный ответ
-        needs_custom_answer = data.startswith(("taxi_take_", "porter_take_", "delivery_take_"))
-        if not needs_custom_answer:
-            answer_telegram_callback(callback_query_id)
+        # СРАЗУ отвечаем на callback для мгновенной реакции кнопки
+        # Это убирает "часики" на кнопке в Telegram
+        answer_telegram_callback(callback_query_id)
         
         db = get_db()
         
@@ -589,24 +610,18 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
     """Обработка взятия заказа таксистом"""
     try:
         order_id = data.split("_")[2]
-
-        def _reply(text: str = None) -> None:
-            _answer_callback(callback_query_id, text)
         
-        # Быстрый ответ callback
-        _reply()
+        # Защита от двойного нажатия: 1 заказ = 1 действие
+        lock_key = f"taxi_take_{order_id}_{user_id}"
+        lock = _get_callback_lock(lock_key)
         
-        # Получаем информацию о водителе
-        driver = db.get_driver(user_id)
-        
-        if not driver:
-            send_telegram_private(
-                user_id,
-                "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
-            )
+        if not lock.acquire(blocking=False):
+            # Уже обрабатывается или было обработано
             return jsonify({"status": "ok"}), 200
         
-        # Получаем заказ (нужен для определения комиссии)
+        # Callback уже отвечен в handle_callback_query для скорости
+        
+        # Получаем заказ (нужен для проверки статуса и определения комиссии)
         order = db.get_order(order_id)
         if not order:
             send_telegram_private(user_id, "❌ Заказ не найден.")
@@ -616,6 +631,21 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
         if order.get('status') == config.ORDER_STATUS_COMPLETED:
             send_telegram_private(user_id, "❌ Заказ уже закрыт (завершён).")
+            return jsonify({"status": "ok"}), 200
+        
+        # Проверяем, не занят ли заказ другим водителем
+        if order.get('driver_id') and str(order.get('driver_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Заказ уже забрал другой водитель!")
+            return jsonify({"status": "ok"}), 200
+        
+        # Получаем информацию о водителе
+        driver = db.get_driver(user_id)
+        
+        if not driver:
+            send_telegram_private(
+                user_id,
+                "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
+            )
             return jsonify({"status": "ok"}), 200
         
         # Определяем комиссию: если клиент предложил цену < 70 → 5 сом, иначе 10 сом
@@ -635,7 +665,6 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                 f"⚠️ Минимальный баланс для приёма заказов: *{config.MIN_DRIVER_BALANCE} сом*\n\n"
                 f"📌 Пополните баланс и попробуйте снова."
             )
-            _reply()
             return jsonify({"status": "ok"}), 200
         
         now = datetime.now()
@@ -737,8 +766,13 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
     except Exception as e:
         logger.exception("Error handling taxi take")
         send_telegram_private(user_id, "❌ Ошибка при взятии заказа.")
-        _answer_callback(callback_query_id)
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        # Освобождаем lock
+        try:
+            lock.release()
+        except:
+            pass
 
 
 def handle_taxi_arrived(data: str, user_id: str, user_name: str,
@@ -937,16 +971,30 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
     """Обработка взятия заказа портером"""
     try:
         order_id = data.split("_")[2]
-
-        def _reply(text: str = None) -> None:
-            _answer_callback(callback_query_id, text)
         
-        # Быстрый ответ callback
-        _reply()
+        # Защита от двойного нажатия: 1 заказ = 1 действие
+        lock_key = f"porter_take_{order_id}_{user_id}"
+        lock = _get_callback_lock(lock_key)
         
-        # Проверяем, не занят ли заказ
-        if db.is_order_taken(order_id):
-            send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
+        if not lock.acquire(blocking=False):
+            # Уже обрабатывается или было обработано
+            return jsonify({"status": "ok"}), 200
+        
+        # Callback уже отвечен в handle_callback_query для скорости
+        
+        # Сначала получаем заказ для проверки статуса
+        order = db.get_order(order_id)
+        if not order:
+            send_telegram_private(user_id, "❌ Заказ не найден.")
+            return jsonify({"status": "ok"}), 200
+            
+        # Проверяем, не занят ли заказ другим водителем
+        if order.get('driver_id') and str(order.get('driver_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Заказ уже забрал другой водитель!")
+            return jsonify({"status": "ok"}), 200
+            
+        if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
+            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
             return jsonify({"status": "ok"}), 200
         
         # Получаем информацию о водителе
@@ -1036,13 +1084,18 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
         db.log_transaction("PORTER_ORDER_TAKEN", user_id, order_id)
-        _reply()
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
         logger.exception("Error handling porter take")
         send_telegram_private(user_id, "❌ Ошибка при взятии заказа.")
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        # Освобождаем lock
+        try:
+            lock.release()
+        except:
+            pass
 
 
 # =============================================================================
@@ -1224,11 +1277,15 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
     try:
         order_id = data.split("_")[2]
 
-        def _reply(text: str = None) -> None:
-            _answer_callback(callback_query_id, text)
+        # Защита от двойного нажатия: 1 заказ = 1 действие
+        lock_key = f"delivery_take_{order_id}_{user_id}"
+        lock = _get_callback_lock(lock_key)
+        
+        if not lock.acquire(blocking=False):
+            # Уже обрабатывается или было обработано
+            return jsonify({"status": "ok"}), 200
 
-        # Быстрый ответ callback
-        _reply()
+        # Callback уже отвечен в handle_callback_query для скорости
 
         # Получаем заказ
         order = db.get_order(order_id)
@@ -1237,6 +1294,11 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
         if _is_delivery_order_closed(order):
             send_telegram_private(user_id, "❌ Заказ уже закрыт.")
+            return jsonify({"status": "ok"}), 200
+            
+        # Проверяем, не занят ли заказ другим водителем
+        if order.get('driver_id') and str(order.get('driver_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Заказ уже забрал другой водитель!")
             return jsonify({"status": "ok"}), 200
         
         # Определяем тип доставки и комиссию
@@ -1397,8 +1459,13 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         
     except Exception as e:
         logger.exception("Error handling delivery take")
-        _answer_callback(callback_query_id)
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        # Освобождаем lock
+        try:
+            lock.release()
+        except:
+            pass
 
 
 def handle_delivery_arrived(data: str, user_id: str, user_name: str,

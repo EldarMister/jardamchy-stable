@@ -7,6 +7,7 @@ import urllib.parse
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from db import get_db
 import config
+from services import send_telegram_group
 
 # Путь к папке menu_panel (на один уровень выше src)
 MENU_PANEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'menu_panel')
@@ -99,11 +100,58 @@ def create_web_order():
         cafes = db.list_cafes(active_only=False)
         cafe = next((c for c in cafes if c['id'] == int(cafe_id)), None)
         cafe_name = cafe['name'] if cafe else "Unknown Cafe"
+        cafe_phone = cafe.get('phone', '') if cafe else ''
 
+        # Создаем веб-заказ
         order_code = db.create_web_order(cafe_id, cafe_name, items, float(total_price))
         
-        # Формируем deep link
-        # Текст: Заказ W12345
+        # Формируем детали заказа для основной таблицы orders
+        order_details = "\n".join([f"• {item['name']} x{item['count']} = {item['price'] * item['count']} с" for item in items])
+        
+        # Создаем заказ в основной таблице orders для обработки через Telegram
+        order_id = db.create_order(
+            client_phone="web_order",  # Временно, будет обновлено при подтверждении
+            service_type=config.SERVICE_CAFE,
+            details=order_details,
+            address="Уточнить у клиента",  # Временно
+            payment_method=config.PAYMENT_CASH,
+            price=float(total_price)
+        )
+        
+        # Связываем web_order с основным заказом
+        db.update_web_order_status(order_code, 'PENDING', address=order_id)
+        
+        # Отправляем уведомление в группу кафе с полным списком блюд
+        cafe_msg = f"""🍔 *НОВЫЙ ЗАКАЗ С САЙТА* #{order_id}
+
+🏠 *Кафе:* {cafe_name}
+📋 *Заказ:*
+{order_details}
+
+💵 *Итого:* {total_price} сом
+💳 *Оплата:* Наличные
+📞 *Клиент:* Ожидаем подтверждения
+
+⏱ *Таймер: 2 минуты*"""
+        
+        from services import send_telegram_group
+        buttons = [
+            {"text": "✅ Принять", "callback": f"cafe_accept_{order_id}"},
+            {"text": "❌ Отказать", "callback": f"cafe_decline_{order_id}"}
+        ]
+        result = send_telegram_group(config.GROUP_CAFE_ID, cafe_msg, buttons)
+        
+        # Создаем таймер аукциона
+        if result and result.get('message_id'):
+            db.create_auction_timer(
+                order_id=order_id,
+                service_type=config.SERVICE_CAFE,
+                telegram_message_id=str(result['message_id']),
+                chat_id=config.GROUP_CAFE_ID,
+                timeout_seconds=config.CAFE_AUCTION_TIMEOUT
+            )
+        
+        # Формируем deep link для WhatsApp
         msg_lines = [f"Заказ с сайта ✅", f"Кафе: {cafe_name}"]
         for item in items:
             msg_lines.append(f"{item['name']} x{item['count']}")
@@ -118,6 +166,7 @@ def create_web_order():
         return jsonify({
             "success": True, 
             "order_code": order_code, 
+            "order_id": order_id,
             "whatsapp_link": whatsapp_url
         }), 201
         
