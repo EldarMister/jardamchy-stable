@@ -1324,7 +1324,7 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             )
             return jsonify({"status": "ok"}), 200
         
-        # АТОМАРНЫЙ ЗАХВАТ
+        # АТОМАРНЫЙ ЗАХВАТ (доставка может быть назначена на заказ принятый кафе)
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -1332,7 +1332,9 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             allowed_statuses=[
                 config.ORDER_STATUS_PENDING,
                 config.ORDER_STATUS_AUCTION,
-                config.ORDER_STATUS_URGENT
+                config.ORDER_STATUS_URGENT,
+                config.ORDER_STATUS_ACCEPTED,
+                config.ORDER_STATUS_READY
             ]
         )
         if not assigned:
