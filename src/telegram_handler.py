@@ -144,8 +144,13 @@ def handle_callback_query(callback_query: dict) -> tuple:
         
         logger.info(f"Callback from {user_name} ({user_id}): {data}")
 
+        # Дедупликация: проверяем не обрабатывали ли уже этот callback
+        dedup_key = f"cbq_{callback_query_id}"
+        if dedup_key in _callback_locks:
+            return jsonify({"status": "ok"}), 200
+        _callback_locks[dedup_key] = True
+        
         # СРАЗУ отвечаем на callback для мгновенной реакции кнопки
-        # Это убирает "часики" на кнопке в Telegram
         answer_telegram_callback(callback_query_id)
         
         db = get_db()
@@ -608,22 +613,19 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                      chat_id: str, message_id: int, db,
                      callback_query_id: str = None) -> tuple:
     """Обработка взятия заказа таксистом"""
+    lock = None
     try:
         order_id = data.split("_")[2]
         
-        # Дедупликация: проверяем не обрабатывали ли уже этот callback
-        dedup_key = f"cbq_{callback_query_id}"
-        if dedup_key in _callback_locks:
+        # Защита от двойного нажатия: 1 заказ = 1 действие
+        lock_key = f"taxi_take_{order_id}_{user_id}"
+        lock = _get_callback_lock(lock_key)
+        if not lock.acquire(blocking=False):
             return jsonify({"status": "ok"}), 200
-        _callback_locks[dedup_key] = True
-        
-        # Быстрый ответ callback в первые 200ms
-        answer_telegram_callback(callback_query_id, "⏳ Обрабатываю...")
         
         # Получаем информацию о водителе (нужна для проверки баланса и комиссии)
         driver = db.get_driver(user_id)
         if not driver:
-            answer_telegram_callback(callback_query_id, "❌ Вы не зарегистрированы")
             send_telegram_private(
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
@@ -633,7 +635,6 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         # Проверяем баланс до атомарного захвата
         balance = float(driver.get('balance', 0))
         if balance < config.MIN_DRIVER_BALANCE:
-            answer_telegram_callback(callback_query_id, "❌ Недостаточно средств")
             send_telegram_private(
                 user_id,
                 f"❌ *Недостаточно средств!*\n\n"
@@ -663,16 +664,16 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         )
         
         if not assigned:
-            # Уточняем причину неудачи для лучшего UX
+            # Уточняем причину неудачи
             order = db.get_order(order_id)
             if not order:
-                answer_telegram_callback(callback_query_id, "❌ Заказ не найден")
+                send_telegram_private(user_id, "❌ Заказ не найден")
             elif order.get('driver_id') == str(user_id):
-                answer_telegram_callback(callback_query_id, "✅ Заказ уже ваш")
+                send_telegram_private(user_id, "✅ Заказ уже ваш")
             elif order.get('driver_id'):
-                answer_telegram_callback(callback_query_id, "❌ Заказ уже забрал другой")
+                send_telegram_private(user_id, "❌ Заказ уже забрал другой")
             else:
-                answer_telegram_callback(callback_query_id, "❌ Заказ уже недоступен")
+                send_telegram_private(user_id, "❌ Заказ уже недоступен")
             return jsonify({"status": "ok"}), 200
         
         # Заказ захвачен - получаем данные для уведомлений
@@ -769,10 +770,11 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         # Освобождаем lock
-        try:
-            lock.release()
-        except:
-            pass
+        if lock:
+            try:
+                lock.release()
+            except:
+                pass
 
 
 def handle_taxi_arrived(data: str, user_id: str, user_name: str,
@@ -969,6 +971,7 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
                        chat_id: str, message_id: int, db,
                        callback_query_id: str = None) -> tuple:
     """Обработка взятия заказа портером"""
+    lock = None
     try:
         order_id = data.split("_")[2]
         
@@ -1092,10 +1095,11 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         # Освобождаем lock
-        try:
-            lock.release()
-        except:
-            pass
+        if lock:
+            try:
+                lock.release()
+            except:
+                pass
 
 
 # =============================================================================
@@ -1274,18 +1278,10 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                          chat_id: str, message_id: int, db,
                          callback_query_id: str = None) -> tuple:
     """Обработка взятия доставки еды/лекарств/магазина"""
+    lock = None
     try:
         order_id = data.split("_")[2]
 
-        # Дедупликация callback
-        dedup_key = f"cbq_{callback_query_id}"
-        if dedup_key in _callback_locks:
-            return jsonify({"status": "ok"}), 200
-        _callback_locks[dedup_key] = True
-        
-        # Быстрый ответ callback
-        answer_telegram_callback(callback_query_id, "⏳ Обрабатываю...")
-        
         # Защита от двойного нажатия: 1 заказ = 1 действие
         lock_key = f"delivery_take_{order_id}_{user_id}"
         lock = _get_callback_lock(lock_key)
@@ -1296,18 +1292,17 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
         if not driver:
-            answer_telegram_callback(callback_query_id, "❌ Вы не зарегистрированы")
             send_telegram_private(user_id, "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register.")
             return jsonify({"status": "ok"}), 200
         
         # Определяем тип доставки и комиссию
         order = db.get_order(order_id)
         if not order:
-            answer_telegram_callback(callback_query_id, "❌ Заказ не найден")
+            send_telegram_private(user_id, "❌ Заказ не найден")
             return jsonify({"status": "ok"}), 200
             
         if _is_delivery_order_closed(order):
-            answer_telegram_callback(callback_query_id, "❌ Заказ уже закрыт")
+            send_telegram_private(user_id, "❌ Заказ уже закрыт")
             return jsonify({"status": "ok"}), 200
         service_type = order.get('service_type')
         commission = 0
@@ -1342,11 +1337,11 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         )
         if not assigned:
             if order.get('driver_id') == str(user_id):
-                answer_telegram_callback(callback_query_id, "✅ Заказ уже ваш")
+                send_telegram_private(user_id, "✅ Заказ уже ваш")
             elif order.get('driver_id'):
-                answer_telegram_callback(callback_query_id, "❌ Заказ уже забрал другой")
+                send_telegram_private(user_id, "❌ Заказ уже забрал другой")
             else:
-                answer_telegram_callback(callback_query_id, "❌ Заказ уже недоступен")
+                send_telegram_private(user_id, "❌ Заказ уже недоступен")
             return jsonify({"status": "ok"}), 200
         
         # Сразу обновляем сообщение в группе (до всех остальных операций)
@@ -1474,10 +1469,11 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         # Освобождаем lock
-        try:
-            lock.release()
-        except:
-            pass
+        if lock:
+            try:
+                lock.release()
+            except:
+                pass
 
 
 def handle_delivery_arrived(data: str, user_id: str, user_name: str,
