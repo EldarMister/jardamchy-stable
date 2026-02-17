@@ -877,6 +877,13 @@ class Database:
             )
             row = cur.fetchone()
             return dict(row) if row else None
+
+    def get_cafe_by_id(self, cafe_id: int) -> Optional[Dict]:
+        """Получить кафе по ID (PK)"""
+        with self.get_cursor() as cur:
+            cur.execute("SELECT * FROM cafes WHERE id = %s", (cafe_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
     
     def add_cafe(self, telegram_id: str, name: str, phone: str = None,
                  address: str = None) -> bool:
@@ -895,7 +902,7 @@ class Database:
     
     def update_cafe_info(self, telegram_id: str, **fields) -> bool:
         """Обновить данные кафе (name, phone, address, commission_percent, is_active)"""
-        allowed = {'name', 'phone', 'address', 'commission_percent', 'is_active'}
+        allowed = {'name', 'phone', 'address', 'commission_percent', 'is_active', 'telegram_id'}
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
 
         if not updates:

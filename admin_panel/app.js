@@ -452,7 +452,10 @@ async function submitAddCafe() {
     }
 }
 
+let _editCafeOriginalTgId = '';
+
 function showEditCafeModal(telegramId, name, phone, address, commission, isActive) {
+    _editCafeOriginalTgId = telegramId;
     document.getElementById('edit-cafe-id').value = telegramId;
     document.getElementById('edit-cafe-name').value = name || '';
     document.getElementById('edit-cafe-phone').value = phone || '';
@@ -463,7 +466,7 @@ function showEditCafeModal(telegramId, name, phone, address, commission, isActiv
 }
 
 async function submitEditCafe() {
-    const telegram_id = val('edit-cafe-id');
+    const new_telegram_id = val('edit-cafe-id');
     const data = {
         name: val('edit-cafe-name'),
         phone: val('edit-cafe-phone'),
@@ -471,6 +474,10 @@ async function submitEditCafe() {
         commission_percent: parseInt(val('edit-cafe-comm') || '5', 10),
         is_active: document.getElementById('edit-cafe-active').checked
     };
+    if (new_telegram_id !== _editCafeOriginalTgId) {
+        data.telegram_id = new_telegram_id;
+    }
+    const telegram_id = _editCafeOriginalTgId;
 
     if (!data.name) {
         toast('Название обязательно', 'error');

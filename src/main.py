@@ -846,14 +846,31 @@ def _submit_cafe_order(user: User, db) -> tuple:
         {"text": "❌ Отказать", "callback": f"cafe_decline_{order_id}"}
     ]
     
-    result = send_telegram_group(config.GROUP_CAFE_ID, telegram_msg, buttons)
-    
+    # Определяем кафе-получателя
+    cafe_id = user.get_temp_data('cafe_id')
+    cafe_tg_id = None
+
+    if cafe_id:
+        cafe_obj = db.get_cafe_by_id(int(cafe_id))
+        if cafe_obj:
+            cafe_tg_id = cafe_obj.get('telegram_id')
+
+    if cafe_tg_id:
+        # Отправляем в личку конкретной кафешке
+        result = send_telegram_private(cafe_tg_id, telegram_msg, buttons)
+        target_chat_id = cafe_tg_id
+    else:
+        # Fallback: cafe_id не задан (ручной заказ без web-меню) или telegram_id пустой
+        logger.warning(f"Cafe order {order_id}: no cafe_id or telegram_id, sending to cafe group")
+        result = send_telegram_group(config.GROUP_CAFE_ID, telegram_msg, buttons)
+        target_chat_id = config.GROUP_CAFE_ID
+
     if result:
         db.create_auction_timer(
             order_id=order_id,
             service_type=config.SERVICE_CAFE,
             telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_CAFE_ID,
+            chat_id=target_chat_id,
             timeout_seconds=config.CAFE_AUCTION_TIMEOUT
         )
     
