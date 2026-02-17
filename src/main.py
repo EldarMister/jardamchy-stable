@@ -59,10 +59,92 @@ _SERVICE_TEXT_HINTS = (
     "такси", "кафе", "еда", "доставка", "курьер", "груз", "портер", "муравей",
     "аптека", "магазин", "меню", "order", "заказ"
 )
+_WHATSAPP_PRIVATE_SUFFIXES = ("@c.us", "@s.whatsapp.net", "@lid")
+_WHATSAPP_GROUP_SUFFIX = "@g.us"
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _extract_green_sender(sender_data: dict) -> tuple:
+    """Извлечь номер отправителя и тип WA-аккаунта из Green API webhook."""
+    raw_sender = (
+        (sender_data.get("sender") or "").strip()
+        or (sender_data.get("chatId") or "").strip()
+    )
+    if not raw_sender:
+        return "", "unknown", ""
+
+    sender_kind = "personal"
+    if raw_sender.endswith("@s.whatsapp.net") or raw_sender.endswith("@lid"):
+        sender_kind = "business"
+    if raw_sender.endswith(_WHATSAPP_GROUP_SUFFIX):
+        return "", "group", raw_sender
+
+    normalized = raw_sender.replace("whatsapp:", "").strip()
+    for suffix in _WHATSAPP_PRIVATE_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if not digits:
+        return "", sender_kind, raw_sender
+
+    sender_phone = digits
+    return sender_phone, sender_kind, raw_sender
+
+
+def _extract_green_message_payload(message_data: dict) -> tuple:
+    """Нормализовать входящие поля Green API для разных типов сообщений."""
+    incoming_msg = ""
+    media_url = ""
+    media_type = ""
+    button_response = ""
+    type_message = (message_data.get("typeMessage") or "").strip()
+
+    if type_message == "textMessage":
+        incoming_msg = message_data.get("textMessageData", {}).get("textMessage", "")
+    elif type_message == "extendedTextMessage":
+        incoming_msg = message_data.get("extendedTextMessageData", {}).get("text", "")
+    elif type_message == "imageMessage":
+        media_data = message_data.get("fileMessageData", {})
+        media_url = media_data.get("downloadUrl", "")
+        media_type = media_data.get("mimeType", "image/jpeg")
+        incoming_msg = media_data.get("caption", "")
+    elif type_message in ("audioMessage", "pttMessage"):
+        media_data = message_data.get("fileMessageData", {})
+        media_url = media_data.get("downloadUrl", "")
+        media_type = media_data.get("mimeType", "audio/ogg")
+    elif type_message == "buttonsResponseMessage":
+        btn_data = message_data.get("buttonsResponseMessageData", {})
+        button_response = (
+            btn_data.get("selectedButtonId")
+            or btn_data.get("selectedDisplayText")
+            or btn_data.get("selectedButtonText")
+            or ""
+        )
+        incoming_msg = button_response
+    elif type_message == "listResponseMessage":
+        list_data = message_data.get("listResponseMessageData", {})
+        button_response = list_data.get("selectedRowId") or list_data.get("title") or ""
+        incoming_msg = button_response
+    elif type_message == "locationMessage":
+        loc = message_data.get("locationMessageData", {})
+        latitude = loc.get("latitude")
+        longitude = loc.get("longitude")
+        if latitude is not None and longitude is not None:
+            incoming_msg = f"location {latitude},{longitude}"
+
+    if not incoming_msg:
+        incoming_msg = (
+            message_data.get("textMessageData", {}).get("textMessage")
+            or message_data.get("extendedTextMessageData", {}).get("text")
+            or ""
+        )
+
+    return (incoming_msg or "").strip(), media_url, media_type, (button_response or "").strip(), type_message
 
 
 def _parse_iso_utc(value):
@@ -128,11 +210,12 @@ def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tu
         return jsonify({"status": "ok"}), 200
 
     if count > UNKNOWN_FALLBACK_MAX_ATTEMPTS:
-        if cooldown_until and now < cooldown_until:
-            logger.info(f"Unknown fallback suppressed for {user.phone} (anti-spam cooldown)")
-            return jsonify({"status": "ok"}), 200
-
-        next_cooldown = now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
+        # После лимита отвечаем коротко на каждое сообщение, без повторного AI.
+        next_cooldown = (
+            cooldown_until
+            if (cooldown_until and now < cooldown_until)
+            else now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
+        )
         user.set_temp_data("fallback_unknown_cooldown_until", next_cooldown.isoformat())
         send_whatsapp(user.phone, UNKNOWN_FALLBACK_COOLDOWN_MESSAGE)
         return jsonify({"status": "ok"}), 200
@@ -140,9 +223,9 @@ def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tu
     reply = (ai_reply or "").strip()
     if not reply:
         reply = (
-            "Я бот Жардамчы GO: такси, еда, магазин, аптека, портер, муравей.\n"
-            "Чтобы сделать заказ, напишите услугу и детали.\n"
-            "Пример: Такси от Базара до Мкр 3."
+            "Я бот Жардамчы GO. Помогаю с заказами: такси, доставка еды, магазин, аптека, портер и муравей.\n"
+            "Чтобы оформить заказ, напишите услугу и детали: что нужно, откуда забрать и куда доставить.\n"
+            "Пример: Такси, от Базара до Мкр 3."
         )
     send_whatsapp(user.phone, reply)
     return jsonify({"status": "ok"}), 200
@@ -359,33 +442,29 @@ def handle_whatsapp():
             type_webhook = data.get('typeWebhook', '')
             
             # Обработка входящего сообщения
-            if type_webhook in ['incomingMessageReceived', 'incomingCall']:
+            if type_webhook == 'incomingCall':
+                return jsonify({"status": "ignored"}), 200
+
+            if type_webhook == 'incomingMessageReceived':
                 sender_data = data.get('senderData', {})
                 message_data = data.get('messageData', {})
-                
-                # Получаем телефон (убираем @c.us)
-                sender = sender_data.get('sender', '')
-                sender_phone = sender.replace('@c.us', '')
-                
-                # Текстовое сообщение
-                if message_data.get('typeMessage') == 'textMessage':
-                    incoming_msg = message_data.get('textMessageData', {}).get('textMessage', '')
-                
-                # Изображение
-                elif message_data.get('typeMessage') == 'imageMessage':
-                    media_url = message_data.get('fileMessageData', {}).get('downloadUrl', '')
-                    media_type = message_data.get('fileMessageData', {}).get('mimeType', 'image/jpeg')
-                    incoming_msg = message_data.get('fileMessageData', {}).get('caption', '')
-                
-                # Голосовое
-                elif message_data.get('typeMessage') == 'audioMessage':
-                    media_url = message_data.get('fileMessageData', {}).get('downloadUrl', '')
-                    media_type = 'audio/ogg' 
-                
-                # Кнопки (ответ)
-                elif message_data.get('typeMessage') == 'buttonsResponseMessage':
-                    button_response = message_data.get('buttonsResponseMessageData', {}).get('selectedButtonId', '')
-                    incoming_msg = button_response
+
+                sender_phone, sender_kind, raw_sender = _extract_green_sender(sender_data)
+                incoming_msg, media_url, media_type, button_response, type_message = _extract_green_message_payload(message_data)
+
+                logger.info(
+                    f"Green webhook type={type_message} sender_kind={sender_kind} sender={raw_sender}"
+                )
+
+                # Игнорируем группы/невалидные sender id, чтобы не ломать маршрут клиента.
+                if not sender_phone:
+                    logger.warning(f"Green webhook skipped: empty sender ({raw_sender})")
+                    return jsonify({"status": "ignored"}), 200
+
+                # Технические сообщения без текста/медиа не пропускаем в NLU.
+                if not incoming_msg and not media_url and not button_response:
+                    logger.info(f"Green webhook ignored: empty payload type={type_message}")
+                    return jsonify({"status": "ignored"}), 200
                 
             elif type_webhook == 'outgoingMessageStatus':
                 return jsonify({"status": "ignored"}), 200
@@ -558,11 +637,11 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         order = db.get_web_order(code)
         
         if not order:
-            send_whatsapp(sender_phone, "❌ Заказ с таким кодом не найден. Проверьте код.")
+            send_whatsapp(user.phone, "❌ Заказ с таким кодом не найден. Проверьте код.")
             return jsonify({"status": "ok"}), 200
             
         if order['status'] in ['CONFIRMED', 'COMPLETED', 'CANCELLED']:
-             send_whatsapp(sender_phone, f"⚠️ Этот заказ уже обработан (Статус: {order['status']}).")
+             send_whatsapp(user.phone, f"⚠️ Этот заказ уже обработан (Статус: {order['status']}).")
              return jsonify({"status": "ok"}), 200
 
         # Сохраняем контекст заказа

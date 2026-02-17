@@ -10,6 +10,7 @@ import requests
 import config
 
 logger = logging.getLogger(__name__)
+MAX_FALLBACK_REPLY_CHARS = 2000
 
 # Системный промпт для распознавания намерений
 INTENT_SYSTEM_PROMPT = """Ты — NLU-модуль бота "Жардамчы ГО" в г. Шамалды-Сай (Кыргызстан).
@@ -37,6 +38,17 @@ INTENT_SYSTEM_PROMPT = """Ты — NLU-модуль бота "Жардамчы �
 
 Если пользователь сразу указал адреса или детали — извлеки их.
 
+Учитывай реальные сообщения клиентов:
+- смешанный русский/кыргызский в одном тексте;
+- опечатки, транслит, разговорные сокращения;
+- короткие фразы без структуры, где нужно понять скрытое намерение.
+
+Если intent="unknown", обязательно заполни fallback_reply:
+- спокойно, по-человечески, без резкости;
+- на языке пользователя (русский или кыргызский), если язык неясен — можно двуязычно;
+- объясни как пользоваться ботом и какой формат сообщения прислать;
+- 1-2 наглядных примера для старта.
+
 Ответь ТОЛЬКО валидным JSON (без markdown):
 {
   "intent": "taxi|cafe|shop|pharmacy|porter|ant|greeting|unknown",
@@ -44,7 +56,7 @@ INTENT_SYSTEM_PROMPT = """Ты — NLU-модуль бота "Жардамчы �
   "to_address": "адрес назначения или null",
   "order_details": "детали заказа или null",
   "cargo_type": "furniture|trash|construction|livestock|other или null",
-  "fallback_reply": "короткий ответ как пользоваться ботом; только для unknown, иначе null"
+  "fallback_reply": "подробный ответ до ~2000 символов; для unknown обязателен, иначе null"
 }"""
 
 # Системный промпт для подтверждения
@@ -66,7 +78,7 @@ CONFIRM_SYSTEM_PROMPT = """Ты определяешь, подтвердил л�
 }"""
 
 
-def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 300) -> dict:
+def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> dict:
     """Вызов OpenAI GPT-4.1-mini API"""
     try:
         if not config.OPENAI_API_KEY:
@@ -145,10 +157,17 @@ def parse_user_message(message: str) -> dict:
 
     intent = result.get("intent", "unknown")
     fallback_reply = result.get("fallback_reply")
+    if isinstance(fallback_reply, str):
+        fallback_reply = fallback_reply.strip()
+    else:
+        fallback_reply = ""
+
     if intent == "unknown" and not fallback_reply:
         fallback_reply = _fallback_unknown_reply(message)
     if intent != "unknown":
         fallback_reply = None
+    elif len(fallback_reply) > MAX_FALLBACK_REPLY_CHARS:
+        fallback_reply = fallback_reply[:MAX_FALLBACK_REPLY_CHARS].rstrip() + "..."
 
     return {
         "intent": intent,
@@ -219,28 +238,32 @@ def _fallback_intent(message: str) -> dict:
     }
 
 
+def _looks_kyrgyz_text(message: str) -> bool:
+    msg = (message or "").lower()
+    if any(ch in msg for ch in ("ң", "ү", "ө", "ә")):
+        return True
+    kyrgyz_markers = (
+        "салам", "керек", "жеткир", "дарек", "кайда", "канча",
+        "жок", "ооба", "кылып", "беринчи", "берчи"
+    )
+    return sum(1 for marker in kyrgyz_markers if marker in msg) >= 2
+
+
 def _fallback_unknown_reply(message: str) -> str:
-    """Локальный fallback-ответ для неизвестного запроса."""
-    guessed_intent = _fallback_intent(message).get("intent", "unknown")
-    if guessed_intent == "taxi":
-        example = "Такси: от Базара до Мкр 3."
-    elif guessed_intent == "cafe":
-        example = "Еда: пицца и 2 салата."
-    elif guessed_intent == "shop":
-        example = "Магазин: хлеб, молоко, яйца."
-    elif guessed_intent == "pharmacy":
-        example = "Аптека: парацетамол 2 уп."
-    elif guessed_intent == "porter":
-        example = "Портер: перевезти мебель с адреса А на адрес Б."
-    elif guessed_intent == "ant":
-        example = "Муравей: забрать посылку с адреса А и отвезти на адрес Б."
-    else:
-        example = "Такси: от Базара до Мкр 3."
+    """Локальный подробный ответ для неизвестного запроса."""
+    if _looks_kyrgyz_text(message):
+        return (
+            "Мен Жардамчы GO ботмун. Такси, тамак жеткирүү, дүкөн, дарыкана, портер жана муравей кызматтарын аткарам.\n"
+            "Заказ берүү үчүн кызматтын атын жана негизги маалыматты жазыңыз: эмне керек, кайдан алып, кайда жеткирүү керек.\n"
+            "Мисал 1: Такси, Базардан 3-микрорайонго.\n"
+            "Мисал 2: Дүкөн, нан 2 даана жана сүт 1 литр, дарек: Шамалды-Сай борбору."
+        )
 
     return (
-        "Я бот Жардамчы GO: такси, еда, магазин, аптека, портер, муравей.\n"
-        "Чтобы сделать заказ, напишите услугу и детали.\n"
-        f"Пример: {example}"
+        "Я бот Жардамчы GO. Помогаю с заказами: такси, доставка еды, магазин, аптека, портер и муравей.\n"
+        "Чтобы оформить заказ, напишите услугу и детали: что нужно, откуда забрать и куда доставить.\n"
+        "Пример 1: Такси, от Базара до Мкр 3.\n"
+        "Пример 2: Магазин, хлеб 2 шт и молоко 1 л, адрес доставки: центр Шамалды-Сай."
     )
 
 
