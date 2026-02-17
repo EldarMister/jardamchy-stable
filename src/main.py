@@ -861,9 +861,9 @@ def _submit_cafe_order(user: User, db) -> tuple:
         target_chat_id = cafe_tg_id
     else:
         # Fallback: cafe_id не задан (ручной заказ без web-меню) или telegram_id пустой
-        logger.error(f"No telegram_id for cafe_id={cafe_id}")
-        result = None
-        target_chat_id = None
+        logger.warning(f"Cafe order {order_id}: no cafe_id or telegram_id, sending to cafe group")
+        result = send_telegram_group(config.GROUP_CAFE_ID, telegram_msg, buttons)
+        target_chat_id = config.GROUP_CAFE_ID
 
     if result:
         db.create_auction_timer(
