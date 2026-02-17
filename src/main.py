@@ -868,42 +868,49 @@ def _submit_cafe_order(user: User, db) -> tuple:
 
 
 def _submit_shop_order(user: User, db) -> tuple:
-    """Отправка заказа в магазин"""
+    """Отправка заказа из магазина — направляем в группу такси"""
     shop_list = user.get_temp_data('shop_list', '')
-    
+
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_SHOP,
         details=shop_list
     )
-    
-    shopper = db.get_shopper()
-    
-    if shopper:
-        msg = f"""🛒 *НОВЫЙ ЗАКАЗ (Магазин)*
 
-📋 *Список:*
+    commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
+
+    telegram_msg = f"""🛒 *ДОСТАВКА ИЗ МАГАЗИНА*
+
+📋 *Список покупок:*
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-💰 *Ваш заработок:* {config.SHOPPER_SERVICE_FEE} сом
+{commission_info}
 
-Выберите действие:"""
-        
-        buttons = [
-            {"text": "🛒 Взять в работу", "callback": f"shop_take_{order_id}"}
-        ]
-        
-        send_telegram_private(shopper['telegram_id'], msg, buttons)
-        send_whatsapp(user.phone, config.ORDER_SENT_GENERIC)
-        
-        db.log_transaction("SHOP_ORDER_CREATED", user.phone, order_id)
-    else:
-        send_whatsapp(user.phone, "❌ Закупщик временно недоступен. Попробуйте позже.")
-    
+Нужно купить и доставить клиенту."""
+
+    buttons = [{
+        "text": "🚖 Взять заказ",
+        "callback": f"taxi_take_{order_id}"
+    }]
+
+    result = send_telegram_group(config.GROUP_TAXI_ID, telegram_msg, buttons)
+
+    if result:
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type=config.SERVICE_SHOP,
+            telegram_message_id=str(result.get('message_id')),
+            chat_id=config.GROUP_TAXI_ID,
+            timeout_seconds=config.TAXI_RESPONSE_TIMEOUT
+        )
+
+    send_whatsapp(user.phone, config.ORDER_SENT_GENERIC)
+    db.log_transaction("SHOP_ORDER_CREATED", user.phone, order_id)
+
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
-    
+
     return jsonify({"status": "ok"}), 200
 
 

@@ -771,9 +771,10 @@ function renderStats(data) {
         </div>
     `;
 
-    const services = data.by_service || [];
+    const serviceMap = { day: data.by_service_day, week: data.by_service_week, month: data.by_service_month, all: data.by_service_all };
+    const services = serviceMap[statsPeriod] || data.by_service || [];
     renderServiceBars('stats-service-bars', services, 'count');
-    renderServiceBars('stats-revenue-bars', services, 'revenue');
+    renderServiceBars('stats-revenue-bars', services, 'commission');
 }
 
 function renderServiceBars(containerId, services, field) {

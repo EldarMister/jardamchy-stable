@@ -123,16 +123,26 @@ def get_dashboard():
             """)
             all_time = _clean_row(cur.fetchone())
 
-            # По типам услуг
-            cur.execute("""
-                SELECT 
-                    service_type,
-                    COUNT(*) as count,
-                    COALESCE(SUM(price_total), 0) as revenue
-                FROM orders 
-                GROUP BY service_type
-            """)
-            by_service = _clean_rows(cur.fetchall())
+            # По типам услуг — за каждый период
+            def _by_service_query(where_clause=""):
+                sql = f"""
+                    SELECT
+                        service_type,
+                        COUNT(*) as count,
+                        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
+                        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN commission ELSE 0 END), 0) as commission
+                    FROM orders
+                    {where_clause}
+                    GROUP BY service_type
+                """
+                cur.execute(sql)
+                return _clean_rows(cur.fetchall())
+
+            by_service_day = _by_service_query("WHERE DATE(created_at) = CURRENT_DATE")
+            by_service_week = _by_service_query("WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'")
+            by_service_month = _by_service_query("WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'")
+            by_service_all = _by_service_query()
+            by_service = by_service_all  # backward compat
 
             # Заказы по дням за последние 7 дней
             cur.execute("""
@@ -166,6 +176,10 @@ def get_dashboard():
             "month": month,
             "all_time": all_time,
             "by_service": by_service,
+            "by_service_day": by_service_day,
+            "by_service_week": by_service_week,
+            "by_service_month": by_service_month,
+            "by_service_all": by_service_all,
             "daily_chart": daily_chart,
             "counts": {
                 "drivers": drivers_count,

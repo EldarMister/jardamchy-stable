@@ -196,60 +196,64 @@ def handle_shop_client_confirm(user: User, response: str, db) -> Tuple[dict, int
 
 
 def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
-    """Подтверждение заказа магазина"""
+    """Подтверждение заказа магазина — отправляем в группу такси"""
     try:
         shop_list = user.get_temp_data('shop_list')
-        
+
         if not shop_list:
             send_whatsapp(user.phone, "❌ Список покупок не найден.")
             user.set_state(config.STATE_IDLE)
             return {"status": "error", "message": "Shop list not found"}, 404
-        
-        # Создаем заказ
+
         order_id = db.create_order(
             client_phone=user.phone,
             service_type=config.SERVICE_SHOP,
             details=shop_list
         )
-        
-        # Отправляем закупщику
-        shopper = db.get_shopper()
-        
-        if shopper:
-            msg = f"""🛒 *НОВЫЙ ЗАКАЗ (Магазин)*
 
-📋 *Список:*
+        commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
+
+        telegram_msg = f"""🛒 *ДОСТАВКА ИЗ МАГАЗИНА*
+
+📋 *Список покупок:*
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-💰 *Ваш заработок:* {config.SHOPPER_SERVICE_FEE} сом"""
-            
-            from services import send_telegram_private
-            buttons = [{
-                "text": "🛒 Взять в работу",
-                "callback": f"shop_take_{order_id}"
-            }]
-            
-            send_telegram_private(shopper['telegram_id'], msg, buttons)
-        
+{commission_info}
+
+Нужно купить и доставить клиенту."""
+
+        buttons = [{
+            "text": "🚖 Взять заказ",
+            "callback": f"taxi_take_{order_id}"
+        }]
+
+        result = send_telegram_group(config.GROUP_TAXI_ID, telegram_msg, buttons)
+
+        if result:
+            db.create_auction_timer(
+                order_id=order_id,
+                service_type=config.SERVICE_SHOP,
+                telegram_message_id=str(result.get('message_id')),
+                chat_id=config.GROUP_TAXI_ID,
+                timeout_seconds=config.TAXI_RESPONSE_TIMEOUT
+            )
+
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
-        
-        response_msg = f"""✅ *Заказ подтвержден!*
 
-🛒 Список передан закупщику.
+        response_msg = """✅ *Заказ подтвержден!*
 
-💰 Услуга: *{config.SHOPPER_SERVICE_FEE} сом*
-📦 Товары: по чеку
+🛒 Заявка отправлена водителям.
 
-⏱ Закупщик скоро свяжется."""
-        
+⏱ Водитель скоро свяжется с вами."""
+
         send_whatsapp(user.phone, response_msg)
-        
+
         db.log_transaction("SHOP_ORDER_CONFIRMED", user.phone, order_id)
-        
+
         return {"status": "ok"}, 200
-        
+
     except Exception as e:
         logger.exception("Error confirming shop order")
         user.set_state(config.STATE_IDLE)
