@@ -1286,7 +1286,7 @@ class Database:
             cur.execute(
                 """SELECT * FROM cafe_categories
                    WHERE cafe_id = %s
-                   ORDER BY sort_order ASC, id ASC""",
+                   ORDER BY sort_order ASC, name ASC""",
                 (cafe_id,)
             )
             return [dict(row) for row in cur.fetchall()]

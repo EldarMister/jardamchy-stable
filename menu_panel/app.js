@@ -242,22 +242,12 @@ function renderCategories() {
 
     wrap.style.display = 'grid';
 
-    // Приоритетные категории (будут первыми)
-    const priorityCategories = ['Фаст-фуд', 'Фастфуд', 'фаст-фуд', 'фастфуд', 
-                                'Сеты', 'сеты', 
-                                'Пицца', 'пицца', 
-                                'Основные блюда', 'основные блюда',
-                                'Напитки', 'напитки'];
-    
-    // Сортируем категории: приоритетные первыми
+    // Сортируем категории по sort_order (ASC), затем по имени (ASC)
     const sortedCategories = [...state.categories].sort((a, b) => {
-        const aIndex = priorityCategories.indexOf(a.name);
-        const bIndex = priorityCategories.indexOf(b.name);
-        
-        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-        if (aIndex !== -1) return -1;
-        if (bIndex !== -1) return 1;
-        return a.name.localeCompare(b.name);
+        const aOrder = a.sort_order ?? 999999;
+        const bOrder = b.sort_order ?? 999999;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return (a.name || '').localeCompare(b.name || '');
     });
 
     const cats = [{ id: 'all', name: 'Все блюда' }, ...sortedCategories];

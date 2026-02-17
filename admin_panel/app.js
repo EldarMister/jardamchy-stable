@@ -922,7 +922,8 @@ function renderCategoryBadges() {
     }
     listEl.innerHTML = menuCategories.map(c => `
         <span class="badge neutral" style="display:flex;align-items:center;gap:6px;">
-            ${c.name}
+            ${c.name} <small style="opacity:0.6;">#${c.sort_order ?? 0}</small>
+            <button class="btn btn-ghost btn-xs" style="padding:0 4px;" onclick="editCategory(${c.id})">✎</button>
             <button class="btn btn-ghost btn-xs" style="padding:0 4px;" onclick="deleteCategory(${c.id})">✕</button>
         </span>
     `).join('');
@@ -931,6 +932,8 @@ function renderCategoryBadges() {
 async function submitAddCategory() {
     const cafeId = document.getElementById('menu-cafe-select').value;
     const name = document.getElementById('add-category-name').value.trim();
+    const sortInput = document.getElementById('add-category-sort');
+    const sort_order = sortInput.value !== '' ? parseInt(sortInput.value) : 0;
     if (!cafeId || !name) {
         toast('Выберите кафе и введите название категории', 'warning');
         return;
@@ -938,13 +941,41 @@ async function submitAddCategory() {
     try {
         await api('/../menu/api/admin/categories', {
             method: 'POST',
-            body: JSON.stringify({ cafe_id: parseInt(cafeId), name })
+            body: JSON.stringify({ cafe_id: parseInt(cafeId), name, sort_order })
         });
         document.getElementById('add-category-name').value = '';
+        sortInput.value = '';
         await loadMenuCategories();
         toast('Категория добавлена', 'success');
     } catch (e) {
         toast('Ошибка добавления категории: ' + e.message, 'error');
+    }
+}
+
+function editCategory(id) {
+    const cat = menuCategories.find(c => c.id === id);
+    if (!cat) return;
+    const newName = prompt('Название категории:', cat.name);
+    if (newName === null) return;
+    const newOrder = prompt('Позиция (число):', cat.sort_order ?? 0);
+    if (newOrder === null) return;
+    submitEditCategory(id, newName.trim(), parseInt(newOrder) || 0);
+}
+
+async function submitEditCategory(id, name, sort_order) {
+    if (!name) {
+        toast('Название не может быть пустым', 'warning');
+        return;
+    }
+    try {
+        await api(`/../menu/api/admin/categories/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name, sort_order })
+        });
+        await loadMenuCategories();
+        toast('Категория обновлена', 'success');
+    } catch (e) {
+        toast('Ошибка обновления: ' + e.message, 'error');
     }
 }
 
