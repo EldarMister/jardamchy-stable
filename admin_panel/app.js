@@ -112,6 +112,18 @@ function navigate(section) {
     loadSectionData(section);
 }
 
+function isMobileViewport() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function closeMobileMenu() {
+    document.body.classList.remove('mobile-nav-open');
+}
+
+function toggleMobileMenu() {
+    document.body.classList.toggle('mobile-nav-open');
+}
+
 function loadSectionData(section) {
     switch (section) {
         case 'dashboard': loadDashboard(); break;
@@ -1577,11 +1589,31 @@ function updateClock() {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+    const mobileNavBackdrop = document.getElementById('mobile-nav-backdrop');
+
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener('click', () => {
+            toggleMobileMenu();
+        });
+    }
+
+    if (mobileNavBackdrop) {
+        mobileNavBackdrop.addEventListener('click', () => {
+            closeMobileMenu();
+        });
+    }
+
     document.querySelectorAll('.nav-item').forEach((item) => {
         item.addEventListener('click', () => {
             const section = item.dataset.section;
             if (section) navigate(section);
+            if (isMobileViewport()) closeMobileMenu();
         });
+    });
+
+    window.addEventListener('resize', () => {
+        if (!isMobileViewport()) closeMobileMenu();
     });
 
     updateClock();

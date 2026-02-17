@@ -248,6 +248,9 @@ body::before {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    min-width: 0;
+    width: calc(100vw - var(--sidebar-width));
+    max-width: calc(100vw - var(--sidebar-width));
 }
 
 /* --- Header --- */
@@ -317,6 +320,7 @@ body::before {
 .page-content {
     flex: 1;
     padding: 28px 32px;
+    min-width: 0;
 }
 
 .section {
@@ -489,6 +493,7 @@ body::before {
 
 .table-wrapper {
     overflow-x: auto;
+    max-width: 100%;
 }
 
 table {
@@ -1174,20 +1179,216 @@ textarea:focus {
 }
 
 @media (max-width: 768px) {
+    body.mobile-nav-open {
+        overflow: hidden;
+    }
+
     .sidebar {
+        width: min(86vw, 320px);
         transform: translateX(-100%);
+        z-index: 1200;
+    }
+
+    body.mobile-nav-open .sidebar {
+        transform: translateX(0);
+    }
+
+    .mobile-nav-backdrop {
+        display: block !important;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(2px);
+        opacity: 0;
+        pointer-events: none;
+        transition: var(--transition);
+        z-index: 1100;
+    }
+
+    body.mobile-nav-open .mobile-nav-backdrop {
+        opacity: 1;
+        pointer-events: auto;
     }
 
     .main-content {
         margin-left: 0;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .header {
+        padding: 0 16px;
+        gap: 10px;
+    }
+
+    .mobile-menu-btn {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--border-glass);
+        border-radius: 10px;
+        background: var(--bg-glass);
+        color: var(--text-primary);
+        cursor: pointer;
+        flex-shrink: 0;
+        font-size: 18px;
+    }
+
+    .header-title {
+        font-size: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .header-actions {
+        margin-left: auto;
+        gap: 8px;
+    }
+
+    .header-time {
+        display: none;
     }
 
     .kpi-grid {
         grid-template-columns: 1fr 1fr;
+        gap: 12px;
     }
 
     .page-content {
         padding: 16px;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom));
+        min-width: 0;
+    }
+
+    .grid-2,
+    .grid-3 {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .filters-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .filters-bar .filter-group {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+
+    .filters-bar .filter-label {
+        font-size: 11px;
+    }
+
+    .filters-bar select,
+    .filters-bar input[type="text"],
+    .filters-bar input[type="number"],
+    .filters-bar input[type="password"] {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .filters-bar>.btn {
+        width: 100%;
+    }
+
+    .card-subheader .filter-group {
+        width: 100%;
+    }
+
+    .card-subheader .filter-group>div {
+        width: 100%;
+    }
+
+    .card-subheader input,
+    .card-subheader select,
+    .card-subheader .btn {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .table-container {
+        margin-bottom: 16px;
+    }
+
+    .table-header {
+        padding: 12px 14px;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .table-title {
+        font-size: 14px;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+    }
+
+    .table-wrapper table {
+        min-width: 760px;
+    }
+
+    thead th,
+    tbody td {
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+
+    tbody td>div[style*="display:flex"] {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .btn-sm {
+        min-height: 36px;
+        padding: 7px 10px;
+    }
+
+    .modal-overlay {
+        padding: 12px;
+    }
+
+    .modal {
+        max-height: calc(100vh - 24px);
+        overflow: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .header {
+        padding: 0 12px;
+    }
+
+    .header-title {
+        font-size: 15px;
+    }
+
+    .kpi-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .page-content {
+        padding: 12px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    }
+
+    .table-wrapper table {
+        min-width: 680px;
+    }
+
+    .toast {
+        min-width: 0;
+        width: calc(100vw - 24px);
     }
 }
 
