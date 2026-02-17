@@ -124,13 +124,31 @@ def get_dashboard():
             all_time = _clean_row(cur.fetchone())
 
             # По типам услуг — за каждый период
+            # Комиссия считается по формулам:
+            #   cafe: 5% от price_total
+            #   porter: 20 сом фикс за заказ
+            #   ant: 10 сом фикс за заказ
+            #   taxi/shop: берём из колонки commission (или 10 сом фикс если 0)
+            #   pharmacy: 5% от price_total
             def _by_service_query(where_clause=""):
                 sql = f"""
                     SELECT
                         service_type,
                         COUNT(*) as count,
                         COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
-                        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN commission ELSE 0 END), 0) as commission
+                        COALESCE(SUM(
+                            CASE WHEN status = 'COMPLETED' THEN
+                                CASE
+                                    WHEN service_type = 'cafe' THEN price_total * 0.05
+                                    WHEN service_type = 'porter' THEN {config.PORTER_COMMISSION}
+                                    WHEN service_type = 'ant' THEN {config.ANT_COMMISSION}
+                                    WHEN service_type = 'pharmacy' THEN price_total * 0.05
+                                    WHEN service_type = 'taxi' THEN GREATEST(COALESCE(commission, 0), {config.TAXI_CUSTOM_PRICE_COMMISSION})
+                                    WHEN service_type = 'shop' THEN {config.TAXI_COMMISSION}
+                                    ELSE COALESCE(commission, 0)
+                                END
+                            ELSE 0 END
+                        ), 0) as commission
                     FROM orders
                     {where_clause}
                     GROUP BY service_type

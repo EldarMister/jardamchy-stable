@@ -26,9 +26,10 @@ ADMIN_TELEGRAM_IDS = os.getenv("ADMIN_TELEGRAM_IDS", "").split(",")
 # Кафе
 CAFE_COMMISSION_PERCENT = 5  # 5% от суммы заказа (всегда, без скидок)
 
-# Магазин (Закупщик)
-SHOPPER_SERVICE_FEE = 200  # Услуга закупщика (с клиента)
-SHOPPER_COMMISSION = 10  # 10 сом комиссия с курьера-закупщика
+# Магазин
+SHOP_DELIVERY_FEE = 150  # Стоимость доставки из магазина (с клиента и таксисту)
+SHOPPER_SERVICE_FEE = 200  # (legacy) Услуга закупщика
+SHOPPER_COMMISSION = 10  # (legacy) комиссия с курьера-закупщика
 TAXI_SHOP_COMMISSION = 10  # 10 сом комиссия с таксиста за доставку из магазина
 
 # Аптека
@@ -392,6 +393,8 @@ CONFIRM_SHOP = """🛒 *Магазин / Дүкөн*
 
 📋 *Список / Тизме:*
 {order_details}
+
+💰 *Доставка / Жеткирүү:* {delivery_fee} сом
 
 ✅ Всё верно? Подтверждаете?
 Баары туурабы? Тастыктайсызбы?"""

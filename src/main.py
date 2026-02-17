@@ -501,7 +501,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('shop_list', order_details)
             user.set_state(config.STATE_CONFIRM_ORDER)
             
-            confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details)
+            confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=config.SHOP_DELIVERY_FEE)
             send_whatsapp(user.phone, confirm_msg)
         else:
             user.set_state(config.STATE_SHOP_LIST)
@@ -683,7 +683,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             user.set_temp_data('shop_list', confirmation["corrected_details"])
         
         order_details = user.get_temp_data('shop_list', '')
-        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details)
+        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=config.SHOP_DELIVERY_FEE)
         send_whatsapp(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PHARMACY:
@@ -877,15 +877,14 @@ def _submit_shop_order(user: User, db) -> tuple:
         details=shop_list
     )
 
-    commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
-
     telegram_msg = f"""🛒 *ДОСТАВКА ИЗ МАГАЗИНА*
 
 📋 *Список покупок:*
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-{commission_info}
+💰 *За доставку:* {config.SHOP_DELIVERY_FEE} сом
+💰 *Комиссия:* {config.TAXI_COMMISSION} сом
 
 Нужно купить и доставить клиенту."""
 
@@ -1089,7 +1088,7 @@ def handle_shop_list(user: User, message: str, db) -> tuple:
     user.set_temp_data('service_type', config.SERVICE_SHOP)
     
     user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.CONFIRM_SHOP.format(order_details=message)
+    confirm_msg = config.CONFIRM_SHOP.format(order_details=message, delivery_fee=config.SHOP_DELIVERY_FEE)
     send_whatsapp(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200

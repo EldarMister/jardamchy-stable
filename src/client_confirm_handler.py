@@ -211,15 +211,14 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
             details=shop_list
         )
 
-        commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
-
         telegram_msg = f"""🛒 *ДОСТАВКА ИЗ МАГАЗИНА*
 
 📋 *Список покупок:*
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-{commission_info}
+💰 *За доставку:* {config.SHOP_DELIVERY_FEE} сом
+💰 *Комиссия:* {config.TAXI_COMMISSION} сом
 
 Нужно купить и доставить клиенту."""
 
@@ -242,9 +241,10 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
 
-        response_msg = """✅ *Заказ подтвержден!*
+        response_msg = f"""✅ *Заказ подтвержден!*
 
 🛒 Заявка отправлена водителям.
+💰 Доставка: *{config.SHOP_DELIVERY_FEE} сом*
 
 ⏱ Водитель скоро свяжется с вами."""
 
