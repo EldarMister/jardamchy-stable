@@ -43,7 +43,8 @@ INTENT_SYSTEM_PROMPT = """Ты — NLU-модуль бота "Жардамчы �
   "from_address": "адрес отправления или null",
   "to_address": "адрес назначения или null",
   "order_details": "детали заказа или null",
-  "cargo_type": "furniture|trash|construction|livestock|other или null"
+  "cargo_type": "furniture|trash|construction|livestock|other или null",
+  "fallback_reply": "короткий ответ как пользоваться ботом; только для unknown, иначе null"
 }"""
 
 # Системный промпт для подтверждения
@@ -65,7 +66,7 @@ CONFIRM_SYSTEM_PROMPT = """Ты определяешь, подтвердил л�
 }"""
 
 
-def _call_gpt(system_prompt: str, user_message: str) -> dict:
+def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 300) -> dict:
     """Вызов OpenAI GPT-4.1-mini API"""
     try:
         if not config.OPENAI_API_KEY:
@@ -86,7 +87,7 @@ def _call_gpt(system_prompt: str, user_message: str) -> dict:
                 {"role": "user", "content": user_message}
             ],
             "temperature": 0.1,
-            "max_tokens": 300
+            "max_tokens": max_tokens
         }
 
         response = requests.post(url, headers=headers, json=payload, timeout=15)
@@ -127,21 +128,35 @@ def parse_user_message(message: str) -> dict:
             "from_address": str or None,
             "to_address": str or None,
             "order_details": str or None,
-            "cargo_type": str or None
+            "cargo_type": str or None,
+            "fallback_reply": str or None
         }
     """
     result = _call_gpt(INTENT_SYSTEM_PROMPT, message)
 
     if not result:
         # Фолбэк на простое определение по ключевым словам
-        return _fallback_intent(message)
+        fallback = _fallback_intent(message)
+        if fallback.get("intent") == "unknown":
+            fallback["fallback_reply"] = _fallback_unknown_reply(message)
+        else:
+            fallback["fallback_reply"] = None
+        return fallback
+
+    intent = result.get("intent", "unknown")
+    fallback_reply = result.get("fallback_reply")
+    if intent == "unknown" and not fallback_reply:
+        fallback_reply = _fallback_unknown_reply(message)
+    if intent != "unknown":
+        fallback_reply = None
 
     return {
-        "intent": result.get("intent", "unknown"),
+        "intent": intent,
         "from_address": result.get("from_address"),
         "to_address": result.get("to_address"),
         "order_details": result.get("order_details"),
-        "cargo_type": result.get("cargo_type")
+        "cargo_type": result.get("cargo_type"),
+        "fallback_reply": fallback_reply
     }
 
 
@@ -199,8 +214,34 @@ def _fallback_intent(message: str) -> dict:
         "from_address": None,
         "to_address": None,
         "order_details": None,
-        "cargo_type": None
+        "cargo_type": None,
+        "fallback_reply": None
     }
+
+
+def _fallback_unknown_reply(message: str) -> str:
+    """Локальный fallback-ответ для неизвестного запроса."""
+    guessed_intent = _fallback_intent(message).get("intent", "unknown")
+    if guessed_intent == "taxi":
+        example = "Такси: от Базара до Мкр 3."
+    elif guessed_intent == "cafe":
+        example = "Еда: пицца и 2 салата."
+    elif guessed_intent == "shop":
+        example = "Магазин: хлеб, молоко, яйца."
+    elif guessed_intent == "pharmacy":
+        example = "Аптека: парацетамол 2 уп."
+    elif guessed_intent == "porter":
+        example = "Портер: перевезти мебель с адреса А на адрес Б."
+    elif guessed_intent == "ant":
+        example = "Муравей: забрать посылку с адреса А и отвезти на адрес Б."
+    else:
+        example = "Такси: от Базара до Мкр 3."
+
+    return (
+        "Я бот Жардамчы GO: такси, еда, магазин, аптека, портер, муравей.\n"
+        "Чтобы сделать заказ, напишите услугу и детали.\n"
+        f"Пример: {example}"
+    )
 
 
 def _fallback_confirmation(message: str) -> dict:

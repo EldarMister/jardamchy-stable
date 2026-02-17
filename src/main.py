@@ -8,7 +8,7 @@ from flask import request, jsonify
 import json
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import config
 from db import get_db, User
@@ -20,6 +20,132 @@ from services import (
 from nlu import parse_user_message, parse_confirmation
 
 logger = logging.getLogger(__name__)
+
+# Unknown/fallback anti-flood settings (IDLE only)
+UNKNOWN_FALLBACK_MAX_ATTEMPTS = 5
+UNKNOWN_FALLBACK_RESET_MINUTES = 15
+UNKNOWN_FALLBACK_COOLDOWN_MINUTES = 10
+
+UNKNOWN_FALLBACK_SERVICES_HINT = (
+    "такси / доставка еды / курьер / магазин / аптека / портер / муравей"
+)
+UNKNOWN_FALLBACK_FINAL_MESSAGE = (
+    "Я бот Жардамчы GO. Чтобы оформить заказ, напишите: "
+    f"{UNKNOWN_FALLBACK_SERVICES_HINT}. "
+    "Иначе я не смогу помочь."
+)
+UNKNOWN_FALLBACK_COOLDOWN_MESSAGE = (
+    "Чтобы оформить заказ, напишите услугу: "
+    f"{UNKNOWN_FALLBACK_SERVICES_HINT}."
+)
+
+_GREETING_TEXT_VARIANTS = {
+    "привет",
+    "салам",
+    "саламс",
+    "салам алейкум",
+    "саламалейкум",
+    "ассалом алейкум",
+    "ассаломалейкум",
+    "алейкум салам",
+    "алейкумсалам",
+    "ало",
+    "эй",
+    "здравствуйте",
+    "добрый день",
+    "добрый вечер",
+}
+_SERVICE_TEXT_HINTS = (
+    "такси", "кафе", "еда", "доставка", "курьер", "груз", "портер", "муравей",
+    "аптека", "магазин", "меню", "order", "заказ"
+)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso_utc(value):
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_loose_text(text: str) -> str:
+    lowered = (text or "").lower().strip()
+    cleaned = re.sub(r"[^\w\s]+", " ", lowered, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _looks_like_greeting(text: str) -> bool:
+    normalized = _normalize_loose_text(text)
+    if not normalized:
+        return False
+    if any(hint in normalized for hint in _SERVICE_TEXT_HINTS):
+        return False
+    compact = normalized.replace(" ", "")
+    return normalized in _GREETING_TEXT_VARIANTS or compact in _GREETING_TEXT_VARIANTS
+
+
+def _reset_unknown_fallback(user: User) -> None:
+    if (
+        user.get_temp_data("fallback_unknown_count", 0) in (0, None)
+        and not user.get_temp_data("fallback_unknown_last_at")
+        and not user.get_temp_data("fallback_unknown_cooldown_until")
+    ):
+        return
+
+    user.set_temp_data("fallback_unknown_count", 0)
+    user.set_temp_data("fallback_unknown_last_at", None)
+    user.set_temp_data("fallback_unknown_cooldown_until", None)
+
+
+def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tuple:
+    now = _utc_now()
+    count_raw = user.get_temp_data("fallback_unknown_count", 0)
+    count = int(count_raw) if isinstance(count_raw, int) else 0
+    last_at = _parse_iso_utc(user.get_temp_data("fallback_unknown_last_at"))
+    cooldown_until = _parse_iso_utc(user.get_temp_data("fallback_unknown_cooldown_until"))
+
+    if not last_at or (now - last_at) >= timedelta(minutes=UNKNOWN_FALLBACK_RESET_MINUTES):
+        count = 0
+        cooldown_until = None
+
+    count += 1
+    user.set_temp_data("fallback_unknown_count", count)
+    user.set_temp_data("fallback_unknown_last_at", now.isoformat())
+
+    if count == UNKNOWN_FALLBACK_MAX_ATTEMPTS:
+        cooldown_until = now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
+        user.set_temp_data("fallback_unknown_cooldown_until", cooldown_until.isoformat())
+        send_whatsapp(user.phone, UNKNOWN_FALLBACK_FINAL_MESSAGE)
+        return jsonify({"status": "ok"}), 200
+
+    if count > UNKNOWN_FALLBACK_MAX_ATTEMPTS:
+        if cooldown_until and now < cooldown_until:
+            logger.info(f"Unknown fallback suppressed for {user.phone} (anti-spam cooldown)")
+            return jsonify({"status": "ok"}), 200
+
+        next_cooldown = now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
+        user.set_temp_data("fallback_unknown_cooldown_until", next_cooldown.isoformat())
+        send_whatsapp(user.phone, UNKNOWN_FALLBACK_COOLDOWN_MESSAGE)
+        return jsonify({"status": "ok"}), 200
+
+    reply = (ai_reply or "").strip()
+    if not reply:
+        reply = (
+            "Я бот Жардамчы GO: такси, еда, магазин, аптека, портер, муравей.\n"
+            "Чтобы сделать заказ, напишите услугу и детали.\n"
+            "Пример: Такси от Базара до Мкр 3."
+        )
+    send_whatsapp(user.phone, reply)
+    return jsonify({"status": "ok"}), 200
 
 
 # =============================================================================
@@ -298,6 +424,7 @@ def handle_whatsapp():
         
         # Обработка кнопок (если есть)
         if button_response:
+            _reset_unknown_fallback(user)
             return handle_button_response(user, button_response, db)
         
         # === ROUTING ===
@@ -314,9 +441,13 @@ def handle_whatsapp():
             cancelled = handle_client_cancel(user, db)
             user.set_state(config.STATE_IDLE)
             user.clear_temp_data()
+            _reset_unknown_fallback(user)
             if not cancelled:
                 send_whatsapp(user.phone, config.ORDER_CANCELLED)
             return jsonify({"status": "ok"}), 200
+
+        if user.current_state != config.STATE_IDLE:
+            _reset_unknown_fallback(user)
 
         if user.current_state == config.STATE_TAXI_REORDER_CHOICE:
             return handle_taxi_reorder_choice(user, incoming_msg, db)
@@ -409,12 +540,16 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         nlu_result = {"intent": selected_intent, "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
     elif any(k in msg_lower for k in menu_keywords):
         nlu_result = {"intent": "cafe", "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+    elif _looks_like_greeting(message):
+        nlu_result = {"intent": "greeting", "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
     else:
         # Используем ИИ для определения намерения
         nlu_result = parse_user_message(message)
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "greeting"}:
+        _reset_unknown_fallback(user)
 
     # === WEB ORDER CODE (W-xxxxx) ===
     # Проверка на код заказа с сайта
@@ -431,6 +566,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
              return jsonify({"status": "ok"}), 200
 
         # Сохраняем контекст заказа
+        _reset_unknown_fallback(user)
         user.set_temp_data('service_type', config.SERVICE_CAFE)
         user.set_temp_data('web_order_code', code)
         user.set_temp_data('cafe_id', order['cafe_id'])
@@ -589,14 +725,17 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         return jsonify({"status": "ok"}), 200
     
     # === ПРИВЕТСТВИЕ или НЕИЗВЕСТНОЕ ===
-    else:
-        # Anti-flood: проверяем rate limiting на приветствие (10 минут)
+    elif intent == "greeting" or _looks_like_greeting(message):
+        _reset_unknown_fallback(user)
         if db.can_send_welcome(user.phone, cooldown_seconds=600):
             send_whatsapp(user.phone, config.WELCOME_MESSAGE)
             db.update_last_welcome(user.phone)
         else:
             logger.info(f"Welcome suppressed for {user.phone} (anti-flood)")
         return jsonify({"status": "ok"}), 200
+
+    else:
+        return _handle_unknown_fallback(user, message, nlu_result.get("fallback_reply"))
 
 
 # =============================================================================
@@ -1543,6 +1682,8 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
     from client_confirm_handler import handle_pharmacy_client_confirm
     
     try:
+        _reset_unknown_fallback(user)
+
         # Такси: выбор цены
         if user.current_state == config.STATE_TAXI_PRICE_CHOICE:
             return handle_taxi_price_choice(user, button_response, db)
