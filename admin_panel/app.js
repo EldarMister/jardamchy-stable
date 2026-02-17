@@ -894,6 +894,37 @@ async function loadMenuSection() {
 function handleMenuCafeChange() {
     loadMenuCategories();
     loadMenuTable();
+    loadGlobalDiscount();
+}
+
+async function loadGlobalDiscount() {
+    const cafeId = document.getElementById('menu-cafe-select').value;
+    if (!cafeId) return;
+    try {
+        const s = await api(`/../menu/api/admin/cafe-settings?cafe_id=${cafeId}`);
+        document.getElementById('global-discount-active').value = s.global_discount_active ? 'true' : 'false';
+        document.getElementById('global-discount-percent').value = s.global_discount_percent || '';
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function saveGlobalDiscount() {
+    const cafeId = document.getElementById('menu-cafe-select').value;
+    if (!cafeId) { toast('Сначала выберите кафе', 'warning'); return; }
+    try {
+        await api('/../menu/api/admin/cafe-settings', {
+            method: 'PUT',
+            body: JSON.stringify({
+                cafe_id: parseInt(cafeId),
+                global_discount_active: document.getElementById('global-discount-active').value === 'true',
+                global_discount_percent: parseFloat(document.getElementById('global-discount-percent').value) || 0
+            })
+        });
+        toast('Глобальная скидка сохранена', 'success');
+    } catch (e) {
+        toast('Ошибка: ' + e.message, 'error');
+    }
 }
 
 async function loadMenuCategories() {
@@ -955,14 +986,16 @@ async function submitAddCategory() {
 function editCategory(id) {
     const cat = menuCategories.find(c => c.id === id);
     if (!cat) return;
-    const newName = prompt('Название категории:', cat.name);
-    if (newName === null) return;
-    const newOrder = prompt('Позиция (число):', cat.sort_order ?? 0);
-    if (newOrder === null) return;
-    submitEditCategory(id, newName.trim(), parseInt(newOrder) || 0);
+    document.getElementById('edit-category-id').value = cat.id;
+    document.getElementById('edit-category-name').value = cat.name;
+    document.getElementById('edit-category-sort').value = cat.sort_order ?? 0;
+    openModal('modal-edit-category');
 }
 
-async function submitEditCategory(id, name, sort_order) {
+async function submitEditCategory() {
+    const id = document.getElementById('edit-category-id').value;
+    const name = document.getElementById('edit-category-name').value.trim();
+    const sort_order = parseInt(document.getElementById('edit-category-sort').value) || 0;
     if (!name) {
         toast('Название не может быть пустым', 'warning');
         return;
@@ -972,6 +1005,7 @@ async function submitEditCategory(id, name, sort_order) {
             method: 'PUT',
             body: JSON.stringify({ name, sort_order })
         });
+        closeModal('modal-edit-category');
         await loadMenuCategories();
         toast('Категория обновлена', 'success');
     } catch (e) {
@@ -990,6 +1024,8 @@ async function deleteCategory(id) {
     }
 }
 
+let menuItemsCache = [];
+
 async function loadMenuTable() {
     const cafeId = document.getElementById('menu-cafe-select').value;
     if (!cafeId) {
@@ -1000,6 +1036,7 @@ async function loadMenuTable() {
     try {
         // Используем относительный путь для выхода из /admin/ префикса
         const items = await api(`/../menu/api/admin/items?cafe_id=${cafeId}`);
+        menuItemsCache = items || [];
         const body = document.getElementById('menu-body');
 
         if (!items || items.length === 0) {
@@ -1007,7 +1044,9 @@ async function loadMenuTable() {
             return;
         }
 
-        body.innerHTML = items.map(i => `
+        body.innerHTML = items.map(i => {
+            const discountLabel = i.discount_active ? `<span class="badge warning" style="font-size:0.7rem;">${i.discount_type === 'percent' ? i.discount_value + '%' : '-' + i.discount_value + 'с'}</span>` : '';
+            return `
             <tr>
                 <td>
                     <div style="display:flex;align-items:center;gap:10px;">
@@ -1017,16 +1056,16 @@ async function loadMenuTable() {
                         <span>${i.name}</span>
                     </div>
                 </td>
-                <td>${i.price} сом</td>
+                <td>${i.price} сом ${discountLabel}</td>
                 <td><span class="badge neutral">${i.category_name || i.category || '—'}</span></td>
                 <td>${i.description ? `<span class="text-muted">${esc(i.description)}</span>` : '—'}</td>
                 <td>${i.is_available ? '<span class="badge success">Да</span>' : '<span class="badge danger">Нет</span>'}</td>
                 <td>
-                    <button class="btn btn-ghost btn-sm" onclick="showEditMenuItemModal(${i.id}, '${i.name.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', ${i.price}, ${i.category_id || 'null'}, '${(i.category || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}', ${i.is_available}, '${(i.image_url || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${(i.description || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}')" title="Редактировать">✏️</button>
+                    <button class="btn btn-ghost btn-sm" onclick="showEditMenuItemModal(${i.id})" title="Редактировать">✏️</button>
                     <button class="btn btn-danger btn-sm" onclick="deleteMenuItem(${i.id})" title="Удалить">🗑️</button>
                 </td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
     } catch (err) {
         console.error(err);
         toast('Ошибка загрузки меню', 'error');
@@ -1099,22 +1138,29 @@ async function deleteMenuItem(id) {
 
 // ============ EDIT MENU ITEM ============
 
-function showEditMenuItemModal(id, name, price, categoryId, category, isAvailable, imageUrl, description) {
+function showEditMenuItemModal(id) {
+    const item = menuItemsCache.find(i => i.id === id);
+    if (!item) return;
     document.getElementById('edit-item-id').value = id;
-    document.getElementById('edit-item-name').value = name;
-    document.getElementById('edit-item-price').value = price;
-    setCategorySelectOptions('edit-item-category', categoryId);
-    document.getElementById('edit-item-description').value = description ? description.replace(/&quot;/g, '"') : '';
-    document.getElementById('edit-item-available').value = isAvailable ? 'true' : 'false';
-    document.getElementById('edit-item-image-url').value = imageUrl || '';
+    document.getElementById('edit-item-name').value = item.name;
+    document.getElementById('edit-item-price').value = item.price;
+    setCategorySelectOptions('edit-item-category', item.category_id);
+    document.getElementById('edit-item-description').value = item.description || '';
+    document.getElementById('edit-item-available').value = item.is_available ? 'true' : 'false';
+    document.getElementById('edit-item-image-url').value = item.image_url || '';
     const fileInput = document.getElementById('edit-item-image-file');
     if (fileInput) fileInput.value = '';
+
+    // Discount fields
+    document.getElementById('edit-item-discount-active').value = item.discount_active ? 'true' : 'false';
+    document.getElementById('edit-item-discount-type').value = item.discount_type || 'percent';
+    document.getElementById('edit-item-discount-value').value = item.discount_value || '';
 
     // Show preview if image exists
     const preview = document.getElementById('edit-image-preview');
     const previewImg = document.getElementById('edit-preview-img');
-    if (imageUrl && imageUrl.length > 0) {
-        previewImg.src = imageUrl;
+    if (item.image_url && item.image_url.length > 0) {
+        previewImg.src = item.image_url;
         preview.style.display = 'block';
     } else {
         preview.style.display = 'none';
@@ -1137,7 +1183,10 @@ async function submitEditMenuItem() {
         category: getCategoryNameById(document.getElementById('edit-item-category').value),
         description: document.getElementById('edit-item-description').value.trim() || null,
         is_available: document.getElementById('edit-item-available').value === 'true',
-        image_url: imageUrl || null
+        image_url: imageUrl || null,
+        discount_active: document.getElementById('edit-item-discount-active').value === 'true',
+        discount_type: document.getElementById('edit-item-discount-type').value,
+        discount_value: parseFloat(document.getElementById('edit-item-discount-value').value) || 0
     };
 
     if (!data.name || isNaN(data.price)) {

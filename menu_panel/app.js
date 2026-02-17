@@ -203,7 +203,7 @@ function renderMenu(items, cafe) {
                     <div class="item-name">${item.name}</div>
                     <div class="text-muted" style="font-size: 0.78rem;">${item.category}</div>
                     ${item.description ? `<div class="text-muted" style="font-size:0.78rem;margin-top:4px;">${item.description}</div>` : ''}
-                    <div class="item-price">${item.price} с</div>
+                    <div class="item-price">${item.old_price ? `<span style="text-decoration:line-through;opacity:0.45;font-size:0.82em;margin-right:4px;">${item.old_price} с</span>` : ''}${item.final_price ?? item.price} с</div>
                 </div>
                 <div class="item-controls" id="controls-${item.id}">
                     ${renderItemControls(item, count)}
@@ -388,7 +388,7 @@ function getCartStats() {
     let total = 0;
     let count = 0;
     Object.values(state.cart.items).forEach(i => {
-        total += i.price * i.count;
+        total += (i.final_price ?? i.price) * i.count;
         count += i.count;
     });
     return { total, count };
@@ -417,15 +417,16 @@ function openCartModal() {
     list.innerHTML = '';
 
     Object.values(state.cart.items).forEach(item => {
+        const fp = item.final_price ?? item.price;
         const div = document.createElement('div');
         div.className = 'cart-item';
         div.innerHTML = `
             <div>
                 <div style="font-weight:600;">${item.name}</div>
-                <div class="text-muted">${item.price} с x ${item.count}</div>
+                <div class="text-muted">${item.old_price ? `<span style="text-decoration:line-through;opacity:0.45;">${item.old_price} с</span> ` : ''}${fp} с x ${item.count}</div>
             </div>
             <div style="font-weight:700;">
-                ${item.price * item.count} с
+                ${fp * item.count} с
             </div>
         `;
         list.appendChild(div);
@@ -448,7 +449,7 @@ function submitOrder() {
         items: Object.values(state.cart.items).map(i => ({
             id: i.id,
             name: i.name,
-            price: i.price,
+            price: i.final_price ?? i.price,
             count: i.count
         })),
         total_price: total

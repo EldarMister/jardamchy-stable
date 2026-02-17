@@ -283,6 +283,18 @@
                             </div>
                         </div>
                     </div>
+                    <div class="card-subheader" id="menu-global-discount-panel">
+                        <div class="filter-group" style="flex-wrap:wrap;gap:8px;align-items:center;">
+                            <span class="filter-label">Глобальная скидка:</span>
+                            <select id="global-discount-active" style="width:100px;">
+                                <option value="false">Выкл</option>
+                                <option value="true">Вкл</option>
+                            </select>
+                            <input type="number" id="global-discount-percent" placeholder="%" min="0" max="100" style="width:70px;">
+                            <span class="text-muted">%</span>
+                            <button class="btn btn-ghost btn-sm" onclick="saveGlobalDiscount()">Сохранить</button>
+                        </div>
+                    </div>
                     <div class="table-container">
                         <div class="table-header">
                             <div class="table-title">🍽️ Меню кафе</div>
@@ -791,6 +803,20 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label>Скидка</label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="edit-item-discount-active" style="width:120px;">
+                            <option value="false">Выкл</option>
+                            <option value="true">Вкл</option>
+                        </select>
+                        <select id="edit-item-discount-type" style="width:100px;">
+                            <option value="percent">%</option>
+                            <option value="amount">сом</option>
+                        </select>
+                        <input type="number" id="edit-item-discount-value" placeholder="0" min="0" style="width:80px;">
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>📷 Фото блюда</label>
                     <div style="display:flex;gap:8px;margin-bottom:8px;">
                         <button type="button" class="btn btn-ghost btn-sm" id="edit-photo-tab-url"
@@ -815,6 +841,25 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="closeModal('modal-edit-item')">Отмена</button>
                 <button class="btn btn-primary" onclick="submitEditMenuItem()">💾 Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Category Modal -->
+    <div class="modal-overlay" id="modal-edit-category">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">✏️ Редактировать категорию</h3>
+                <button class="modal-close" onclick="closeModal('modal-edit-category')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-category-id">
+                <input type="text" id="edit-category-name" placeholder="Название категории">
+                <input type="number" id="edit-category-sort" placeholder="Позиция (порядок)" min="0">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-edit-category')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitEditCategory()">Сохранить</button>
             </div>
         </div>
     </div>

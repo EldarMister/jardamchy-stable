@@ -58,13 +58,30 @@ def list_menu_items_public(cafe_id):
     try:
         db = get_db()
         items = db.list_menu_items(cafe_id)
-        # Фильтруем только доступные
+        settings = db.get_cafe_settings(cafe_id)
+        global_pct = float(settings.get('global_discount_percent') or 0) if settings.get('global_discount_active') else 0
+
         available_items = []
         for i in items:
             if not i.get('is_available'):
                 continue
             item = dict(i)
             item['category'] = i.get('category_name') or i.get('category')
+            base_price = float(item['price'])
+            final_price = base_price
+
+            if item.get('discount_active') and item.get('discount_type'):
+                if item['discount_type'] == 'percent':
+                    final_price = base_price * (1 - float(item.get('discount_value', 0)) / 100)
+                elif item['discount_type'] == 'amount':
+                    final_price = base_price - float(item.get('discount_value', 0))
+            elif global_pct > 0:
+                final_price = base_price * (1 - global_pct / 100)
+
+            final_price = max(round(final_price), 0)
+            item['final_price'] = final_price
+            if final_price < base_price:
+                item['old_price'] = round(base_price)
             available_items.append(item)
         return jsonify(available_items), 200
     except Exception as e:
@@ -191,7 +208,7 @@ def admin_update_item(item_id):
         data = request.get_json()
         db = get_db()
         # Удаляем поля, которые нельзя менять или их нет
-        fields = {k: v for k, v in data.items() if k in ['name', 'price', 'category', 'category_id', 'is_available', 'sort_order', 'image_url', 'description']}
+        fields = {k: v for k, v in data.items() if k in ['name', 'price', 'category', 'category_id', 'is_available', 'sort_order', 'image_url', 'description', 'discount_type', 'discount_value', 'discount_active']}
         if not fields:
             return jsonify({"error": "No valid fields"}), 400
             
@@ -266,4 +283,39 @@ def admin_delete_category(category_id):
         return jsonify({"success": success}), 200
     except Exception as e:
         current_app.logger.exception("Admin delete category failed")
+        return jsonify({"error": str(e)}), 500
+
+# =============================================================================
+# ADMIN API for Cafe Settings (global discount)
+# =============================================================================
+
+@menu_bp.route('/api/admin/cafe-settings', methods=['GET'])
+def admin_get_cafe_settings():
+    cafe_id = request.args.get('cafe_id')
+    if not cafe_id:
+        return jsonify({"error": "cafe_id required"}), 400
+    try:
+        db = get_db()
+        settings = db.get_cafe_settings(int(cafe_id))
+        return jsonify(settings), 200
+    except Exception as e:
+        current_app.logger.exception("Admin get cafe settings failed")
+        return jsonify({"error": str(e)}), 500
+
+@menu_bp.route('/api/admin/cafe-settings', methods=['PUT'])
+def admin_update_cafe_settings():
+    try:
+        data = request.get_json()
+        cafe_id = data.get('cafe_id')
+        if not cafe_id:
+            return jsonify({"error": "cafe_id required"}), 400
+        db = get_db()
+        success = db.update_cafe_settings(
+            int(cafe_id),
+            global_discount_percent=float(data.get('global_discount_percent', 0)),
+            global_discount_active=bool(data.get('global_discount_active', False))
+        )
+        return jsonify({"success": success}), 200
+    except Exception as e:
+        current_app.logger.exception("Admin update cafe settings failed")
         return jsonify({"error": str(e)}), 500

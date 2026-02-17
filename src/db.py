@@ -234,6 +234,31 @@ class Database:
                     END $$;
                 """)
 
+                # Migration: add discount fields to menu_items
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'menu_items' AND column_name = 'discount_type'
+                        ) THEN
+                            ALTER TABLE menu_items ADD COLUMN discount_type VARCHAR(10) DEFAULT NULL;
+                            ALTER TABLE menu_items ADD COLUMN discount_value DECIMAL(10,2) DEFAULT 0;
+                            ALTER TABLE menu_items ADD COLUMN discount_active BOOLEAN DEFAULT FALSE;
+                        END IF;
+                    END $$;
+                """)
+
+                # Глобальные настройки кафе (скидки и пр.)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS cafe_settings (
+                        id SERIAL PRIMARY KEY,
+                        cafe_id INTEGER REFERENCES cafes(id) ON DELETE CASCADE UNIQUE,
+                        global_discount_percent DECIMAL(5,2) DEFAULT 0,
+                        global_discount_active BOOLEAN DEFAULT FALSE
+                    )
+                """)
+
                 # Веб-заказы (корзины с сайта)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS web_orders (
@@ -1402,6 +1427,29 @@ class Database:
             cur.execute("SELECT * FROM menu_items WHERE id = %s", (item_id,))
             row = cur.fetchone()
             return dict(row) if row else None
+
+    # ==========================================================================
+    # CAFE SETTINGS (global discount)
+    # ==========================================================================
+
+    def get_cafe_settings(self, cafe_id: int) -> Dict:
+        with self.get_cursor() as cur:
+            cur.execute("SELECT * FROM cafe_settings WHERE cafe_id = %s", (cafe_id,))
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+            return {"cafe_id": cafe_id, "global_discount_percent": 0, "global_discount_active": False}
+
+    def update_cafe_settings(self, cafe_id: int, global_discount_percent: float = 0, global_discount_active: bool = False) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("""
+                INSERT INTO cafe_settings (cafe_id, global_discount_percent, global_discount_active)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (cafe_id) DO UPDATE SET
+                    global_discount_percent = EXCLUDED.global_discount_percent,
+                    global_discount_active = EXCLUDED.global_discount_active
+            """, (cafe_id, global_discount_percent, global_discount_active))
+            return True
 
     # ==========================================================================
     # WEB ORDERS
