@@ -59,6 +59,9 @@ _SERVICE_TEXT_HINTS = (
     "такси", "кафе", "еда", "доставка", "курьер", "груз", "портер", "муравей",
     "аптека", "магазин", "меню", "order", "заказ"
 )
+_SHORT_VOICE_OK = {
+    "да", "нет", "жок", "ок", "ok", "yes", "no", "1", "2"
+}
 _WHATSAPP_PRIVATE_SUFFIXES = ("@c.us", "@s.whatsapp.net", "@lid")
 _WHATSAPP_GROUP_SUFFIX = "@g.us"
 
@@ -163,6 +166,29 @@ def _normalize_loose_text(text: str) -> str:
     lowered = (text or "").lower().strip()
     cleaned = re.sub(r"[^\w\s]+", " ", lowered, flags=re.UNICODE)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _is_bad_voice_transcription(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return True
+    if raw.startswith("[") and raw.endswith("]"):
+        return True
+
+    normalized = _normalize_loose_text(raw)
+    if not normalized:
+        return True
+    if not any(ch.isalnum() for ch in normalized):
+        return True
+
+    if len(normalized) < 4:
+        if normalized in _SHORT_VOICE_OK:
+            return False
+        if any(hint in normalized for hint in _SERVICE_TEXT_HINTS):
+            return False
+        return True
+
+    return False
 
 
 def _looks_like_greeting(text: str) -> bool:
@@ -433,6 +459,7 @@ def handle_whatsapp():
         media_url = ''
         media_type = ''
         button_response = ''
+        type_message = ''
         
         # 1. Попытка парсинга как JSON (Green API)
         if request.is_json:
@@ -490,11 +517,22 @@ def handle_whatsapp():
         if not user:
             logger.error(f"Failed to get/create user: {sender_phone}")
             return jsonify({"status": "error"}), 500
-        
+
+        is_voice_message = (
+            type_message in ("audioMessage", "pttMessage")
+            or (media_type and media_type.lower().startswith("audio/"))
+        )
+
         # Обработка голосового сообщения
-        if media_type in ['audio/ogg', 'audio/aac'] and media_url:
+        if is_voice_message and media_url:
             logger.info(f"Processing voice from {sender_phone}")
             incoming_msg = speech_to_text(media_url)
+            if _is_bad_voice_transcription(incoming_msg):
+                send_whatsapp(
+                    sender_phone,
+                    "Не расслышал голосовое. Напишите текстом или отправьте голосовое ещё раз, пожалуйста."
+                )
+                return jsonify({"status": "ok"}), 200
         
         # Обработка фото (сохраняем URL)
         if media_type and media_type.startswith('image/'):
@@ -560,7 +598,7 @@ def handle_whatsapp():
                 user,
                 incoming_msg,
                 db,
-                is_voice_input=(media_type in ['audio/ogg', 'audio/aac'])
+                is_voice_input=is_voice_message
             )
         elif user.current_state == config.STATE_TAXI_PRICE_CHOICE:
             return handle_taxi_price_choice(user, incoming_msg, db)
