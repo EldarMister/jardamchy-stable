@@ -436,9 +436,11 @@ def _transcribe_with_whisper(audio_content: bytes) -> str:
         
         files = {
             'file': ('audio.ogg', audio_content, 'audio/ogg'),
-            'model': (None, 'whisper-1')
+            'model': (None, 'whisper-1'),
+            'language': (None, config.WHISPER_LANGUAGE),
+            'prompt': (None, config.WHISPER_PROMPT),
         }
-        
+
         response = requests.post(url, headers=headers, files=files, timeout=60)
         
         if response.status_code == 200:
