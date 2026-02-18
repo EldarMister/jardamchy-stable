@@ -242,7 +242,7 @@ h3 {
 
 .category-card.active {
     border-color: rgba(225, 112, 85, 0.4);
-    background: linear-gradient(135deg, rgba(225,112,85,0.2), rgba(253,203,110,0.08));
+    background: linear-gradient(135deg, rgba(225, 112, 85, 0.2), rgba(253, 203, 110, 0.08));
 }
 
 .category-card:hover {
@@ -385,7 +385,7 @@ h3 {
 /* Food photo area — gradient placeholder */
 .item-photo {
     width: 100%;
-    height: 120px;
+    height: 150px;
     background: linear-gradient(135deg, rgba(225, 112, 85, 0.15) 0%, rgba(253, 203, 110, 0.1) 100%);
     display: flex;
     align-items: center;
@@ -402,7 +402,7 @@ h3 {
 }
 
 .item-details {
-    padding: 14px;
+    padding: 8px;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -424,7 +424,7 @@ h3 {
 }
 
 .item-controls {
-    padding: 0 14px 14px;
+    padding: 0 8px 10px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -432,13 +432,13 @@ h3 {
 }
 
 .qty-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     border: 1px solid var(--border-glass);
     background: var(--bg-glass);
     font-weight: 700;
-    font-size: 1.1rem;
+    font-size: 1rem;
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
@@ -469,7 +469,7 @@ h3 {
     background: var(--accent-gradient);
     color: white;
     border: none;
-    padding: 8px 20px;
+    padding: 6px 20px;
     border-radius: 20px;
     font-weight: 600;
     font-size: 0.85rem;
