@@ -8,7 +8,7 @@ from datetime import datetime
 
 import config
 from db import get_db
-from services import edit_telegram_message, send_telegram_group, delete_telegram_message
+from services import edit_telegram_message, send_telegram_group, delete_telegram_message, send_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,64 @@ def check_pharmacy_timeouts():
 
 
 # =============================================================================
+# AUTO-CANCEL PENDING ORDERS (20 minutes)
+# =============================================================================
+
+def check_pending_order_timeouts():
+    """Автоотмена заказов PENDING/AUCTION/URGENT старше 20 минут"""
+    try:
+        db = get_db()
+        timeout_minutes = config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT // 60
+        stale_orders = db.get_stale_pending_orders(timeout_minutes)
+
+        for order in stale_orders:
+            order_id = order['order_id']
+
+            # Перепроверяем статус (защита от гонки)
+            current = db.get_order(order_id)
+            if not current or current['status'] not in (
+                config.ORDER_STATUS_PENDING,
+                config.ORDER_STATUS_AUCTION,
+                config.ORDER_STATUS_URGENT,
+            ):
+                continue
+
+            # Отменяем заказ
+            db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
+
+            # Удаляем сообщение из Telegram-группы если есть
+            msg_id = order.get('telegram_message_id')
+            chat_id = order.get('chat_id')
+            if msg_id and chat_id:
+                try:
+                    delete_telegram_message(chat_id, int(msg_id))
+                except Exception:
+                    pass
+
+            # Уведомляем клиента в WhatsApp
+            client_phone = order.get('client_phone')
+            if client_phone:
+                send_whatsapp(
+                    client_phone,
+                    f"❌ Ваш заказ #{order_id} был автоматически отменён — "
+                    f"никто не принял его в течение {timeout_minutes} минут."
+                )
+
+            db.log_transaction(
+                "AUTO_CANCEL_TIMEOUT",
+                order_id=order_id,
+                details=f"Order auto-cancelled after {timeout_minutes} min with no executor"
+            )
+            logger.info(f"Order {order_id} auto-cancelled after {timeout_minutes} min")
+
+        return True
+
+    except Exception as e:
+        logger.exception("Error checking pending order timeouts")
+        return False
+
+
+# =============================================================================
 # MAIN CRON RUNNER
 # =============================================================================
 
@@ -223,7 +281,8 @@ def run_all_cron_jobs():
     check_taxi_timeouts()
     check_pharmacy_timeouts()
     check_accepted_order_timeouts()
-    
+    check_pending_order_timeouts()
+
     logger.info("Cron jobs completed")
 
 
@@ -243,9 +302,11 @@ if __name__ == "__main__":
             check_pharmacy_timeouts()
         elif command == "taxi":
             check_taxi_timeouts()
+        elif command == "pending":
+            check_pending_order_timeouts()
         elif command == "all":
             run_all_cron_jobs()
         else:
-            print("Unknown command. Use: cafe, pharmacy, taxi, or all")
+            print("Unknown command. Use: cafe, pharmacy, taxi, pending, or all")
     else:
         run_all_cron_jobs()

@@ -1543,10 +1543,13 @@ function formatMoney(v) {
 function formatDate(dateStr) {
     if (!dateStr) return '—';
     try {
-        const d = new Date(dateStr);
+        // БД хранит UTC без суффикса — добавляем 'Z' чтобы JS правильно распознал как UTC
+        const utcStr = /[Z+\-]\d{2}:?\d{2}$|Z$/.test(dateStr) ? dateStr : dateStr + 'Z';
+        const d = new Date(utcStr);
         return d.toLocaleString('ru-RU', {
             day: '2-digit', month: '2-digit', year: '2-digit',
-            hour: '2-digit', minute: '2-digit'
+            hour: '2-digit', minute: '2-digit',
+            timeZone: 'Asia/Bishkek'  // UTC+6
         });
     } catch {
         return dateStr;
@@ -1581,6 +1584,7 @@ function updateClock() {
     document.getElementById('header-time').textContent = now.toLocaleString('ru-RU', {
         day: '2-digit', month: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZone: 'Asia/Bishkek'  // UTC+6
     });
 }
 

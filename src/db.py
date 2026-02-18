@@ -573,7 +573,23 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row else None
     
-    def update_order_status(self, order_id: str, status: str, 
+    def get_stale_pending_orders(self, minutes: int = 20) -> List[Dict]:
+        """Заказы застрявшие в PENDING/AUCTION/URGENT дольше N минут"""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT o.*, at.telegram_message_id, at.chat_id
+                   FROM orders o
+                   LEFT JOIN auction_timers at ON at.order_id = o.order_id
+                       AND at.is_processed = FALSE
+                   WHERE o.status IN ('PENDING', 'AUCTION', 'URGENT')
+                     AND o.created_at <= CURRENT_TIMESTAMP - INTERVAL '%s minutes'
+                   ORDER BY o.created_at ASC""",
+                (minutes,)
+            )
+            rows = cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
+
+    def update_order_status(self, order_id: str, status: str,
                            provider_id: str = None, driver_id: str = None,
                            price: float = None, ready_time: int = None,
                            driver_assigned_at: datetime = None,
