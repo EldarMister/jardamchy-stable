@@ -270,6 +270,46 @@ def check_pending_order_timeouts():
 
 
 # =============================================================================
+# AUTO-COMPLETE IN_DELIVERY ORDERS (30 minutes)
+# =============================================================================
+
+def check_in_delivery_auto_complete():
+    """Автозавершение заказов IN_DELIVERY старше 30 минут после назначения водителя."""
+    try:
+        db = get_db()
+        timeout_minutes = config.IN_DELIVERY_AUTO_COMPLETE_TIMEOUT // 60
+        stale_orders = db.get_stale_in_delivery_orders(timeout_minutes)
+
+        for order in stale_orders:
+            order_id = order['order_id']
+
+            current = db.get_order(order_id)
+            if not current or current.get('status') != config.ORDER_STATUS_IN_DELIVERY:
+                continue
+            if not current.get('driver_id'):
+                continue
+
+            db.update_order_status(
+                order_id,
+                config.ORDER_STATUS_COMPLETED,
+                completed_at=datetime.now()
+            )
+
+            db.log_transaction(
+                "AUTO_COMPLETE_IN_DELIVERY_TIMEOUT",
+                order_id=order_id,
+                details=f"Order auto-completed after {timeout_minutes} min in IN_DELIVERY"
+            )
+            logger.info(f"Order {order_id} auto-completed after {timeout_minutes} min in IN_DELIVERY")
+
+        return True
+
+    except Exception:
+        logger.exception("Error checking in-delivery auto-complete timeouts")
+        return False
+
+
+# =============================================================================
 # MAIN CRON RUNNER
 # =============================================================================
 
@@ -282,6 +322,7 @@ def run_all_cron_jobs():
     check_pharmacy_timeouts()
     check_accepted_order_timeouts()
     check_pending_order_timeouts()
+    check_in_delivery_auto_complete()
 
     logger.info("Cron jobs completed")
 
@@ -304,9 +345,11 @@ if __name__ == "__main__":
             check_taxi_timeouts()
         elif command == "pending":
             check_pending_order_timeouts()
+        elif command == "in_delivery":
+            check_in_delivery_auto_complete()
         elif command == "all":
             run_all_cron_jobs()
         else:
-            print("Unknown command. Use: cafe, pharmacy, taxi, pending, or all")
+            print("Unknown command. Use: cafe, pharmacy, taxi, pending, in_delivery, or all")
     else:
         run_all_cron_jobs()

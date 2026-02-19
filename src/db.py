@@ -589,6 +589,21 @@ class Database:
             rows = cur.fetchall()
             return [dict(r) for r in rows] if rows else []
 
+    def get_stale_in_delivery_orders(self, minutes: int = 30) -> List[Dict]:
+        """Заказы в IN_DELIVERY дольше N минут с момента назначения водителя."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT *
+                   FROM orders
+                   WHERE status = %s
+                     AND driver_id IS NOT NULL
+                     AND COALESCE(driver_assigned_at, updated_at) <= CURRENT_TIMESTAMP - INTERVAL '%s minutes'
+                   ORDER BY COALESCE(driver_assigned_at, updated_at) ASC""",
+                (config.ORDER_STATUS_IN_DELIVERY, minutes)
+            )
+            rows = cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
+
     def update_order_status(self, order_id: str, status: str,
                            provider_id: str = None, driver_id: str = None,
                            price: float = None, ready_time: int = None,

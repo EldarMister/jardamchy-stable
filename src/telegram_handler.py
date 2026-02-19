@@ -1011,6 +1011,7 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
         
         # Атомарно назначаем водителя
+        now = datetime.now()
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -1021,7 +1022,8 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
                 config.ORDER_STATUS_ACCEPTED,
                 config.ORDER_STATUS_READY,
                 config.ORDER_STATUS_URGENT
-            ]
+            ],
+            driver_assigned_at=now
         )
         if not assigned:
             send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
@@ -1325,6 +1327,7 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
         
         # АТОМАРНЫЙ ЗАХВАТ (доставка может быть назначена на заказ принятый кафе)
+        now = datetime.now()
         assigned = db.assign_order_to_driver(
             order_id,
             config.ORDER_STATUS_IN_DELIVERY,
@@ -1335,7 +1338,8 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                 config.ORDER_STATUS_URGENT,
                 config.ORDER_STATUS_ACCEPTED,
                 config.ORDER_STATUS_READY
-            ]
+            ],
+            driver_assigned_at=now
         )
         if not assigned:
             if order.get('driver_id') == str(user_id):
