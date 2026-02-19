@@ -5,6 +5,7 @@ Natural Language Understanding для Business Assistant GO
 
 import json
 import logging
+import re
 import requests
 
 import config
@@ -102,7 +103,7 @@ CONFIRM_SYSTEM_PROMPT = """Ты определяешь, подтвердил л�
 
 
 def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> dict:
-    """Вызов OpenAI GPT-4.1 API"""
+    """Вызов OpenAI GPT-4.1-mini API"""
     try:
         if not config.OPENAI_API_KEY:
             logger.warning("OpenAI API key not configured")
@@ -116,7 +117,7 @@ def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> d
         }
 
         payload = {
-            "model": "gpt-4.1",
+            "model": "gpt-4.1-mini",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -125,7 +126,7 @@ def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> d
             "max_tokens": max_tokens
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=25)
 
         if response.status_code == 200:
             result = response.json()
@@ -138,7 +139,14 @@ def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> d
                     content = content[:-3]
                 content = content.strip()
 
-            parsed = json.loads(content)
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                # Sometimes model wraps JSON with extra text on long/noisy input.
+                match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+                if not match:
+                    raise
+                parsed = json.loads(match.group(0))
             logger.info(f"GPT response: {parsed}")
             return parsed
         else:
@@ -233,10 +241,18 @@ def parse_confirmation(message: str) -> dict:
 def _fallback_intent(message: str) -> dict:
     """Фолбэк — определение по ключевым словам (если GPT недоступен)"""
     msg_lower = message.lower()
+    msg_trim = (message or "").strip()
+    msg_compact = re.sub(r"\s+", " ", msg_trim).strip()
 
     intent = "unknown"
+    from_address = None
+    to_address = None
 
-    if any(w in msg_lower for w in ["кафе", "еда", "поесть", "тамак", "меню", "мену", "миню", "минйу", "менйу", "мэню", "менюу", "мага меню", "меню керек", "menu"]):
+    has_cafe_keyword = bool(re.search(r"\bкафе\b", msg_lower)) or any(
+        w in msg_lower for w in ["еда", "поесть", "тамак", "меню", "мену", "миню", "минйу", "менйу", "мэню", "менюу", "мага меню", "меню керек", "menu"]
+    )
+
+    if has_cafe_keyword:
         intent = "cafe"
     elif any(w in msg_lower for w in ["магазин", "продукты", "покупки", "дүкөн"]):
         intent = "shop"
@@ -244,17 +260,45 @@ def _fallback_intent(message: str) -> dict:
         intent = "pharmacy"
     elif any(w in msg_lower for w in ["такси", "машина", "поехать", "вези"]):
         intent = "taxi"
-    elif any(w in msg_lower for w in ["муравей", "6", "желмаян", "мелкий груз"]):
+    elif any(w in msg_lower for w in ["муравей", "желмаян", "мелкий груз"]) or msg_compact == "6":
         intent = "ant"
-    elif any(w in msg_lower for w in ["портер", "5", "груз", "перевезти", "мебель", "жүк"]):
+    elif any(w in msg_lower for w in ["портер", "груз", "перевезти", "мебель", "жүк", "жук", "ташыш", "ташуу", "ташыш"]) or msg_compact == "5":
         intent = "porter"
     elif any(w in msg_lower for w in ["салам", "привет", "здравствуйте", "ассалам"]):
         intent = "greeting"
 
+    if intent in {"taxi", "porter", "ant"} and msg_compact:
+        route_match = re.search(
+            r"(?P<from>[^\s,;]+(?:\s+[^\s,;]+){0,4}?(?:дан|ден|тан|тен|нан|нен|дон|дөн))\s+"
+            r"(?P<to>[^\s,;]+(?:\s+[^\s,;]+){0,4}?(?:га|ге|ка|ке|го|до|жа|же))\b",
+            msg_compact,
+            flags=re.IGNORECASE
+        )
+        if route_match:
+            from_address = route_match.group("from").strip()
+            to_address = route_match.group("to").strip()
+            from_address = re.sub(r"(дан|ден|тан|тен|нан|нен|дон|дөн)$", "", from_address, flags=re.IGNORECASE).strip(" ,.-")
+            to_address = re.sub(r"(га|ге|ка|ке|го|до|жа|же)$", "", to_address, flags=re.IGNORECASE).strip(" ,.-")
+            filler_tokens = {
+                "мага", "мне", "керек", "нужно", "надо", "муравей", "портер", "такси",
+                "жүк", "жук", "ташыш", "ташуу", "ташыш", "кереk", "керек"
+            }
+            from_parts = [p for p in from_address.split() if p]
+            if len(from_parts) > 2:
+                from_parts = from_parts[-2:]
+            while len(from_parts) > 1 and from_parts[0].lower() in filler_tokens:
+                from_parts.pop(0)
+            from_address = " ".join(from_parts).strip(" ,.-")
+        else:
+            dash_split = re.split(r"\s*[—-]\s*", msg_compact, maxsplit=1)
+            if len(dash_split) == 2 and dash_split[0].strip() and dash_split[1].strip():
+                from_address = dash_split[0].strip(" ,.-")
+                to_address = dash_split[1].strip(" ,.-")
+
     return {
         "intent": intent,
-        "from_address": None,
-        "to_address": None,
+        "from_address": from_address,
+        "to_address": to_address,
         "order_details": None,
         "cargo_type": None,
         "fallback_reply": None
