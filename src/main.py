@@ -709,13 +709,15 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         to_addr = nlu_result.get("to_address")
         
         if from_addr and to_addr:
-            # ИИ извлёк оба адреса — спрашиваем про цену
+            # ИИ извлёк оба адреса — спрашиваем цену
             user.set_temp_data('service_type', config.SERVICE_TAXI)
             user.set_temp_data('taxi_from', from_addr)
             user.set_temp_data('taxi_to', to_addr)
             user.set_temp_data('taxi_route', f"{from_addr} — {to_addr}")
-            user.set_state(config.STATE_TAXI_PRICE_CHOICE)
-            _send_taxi_price_choice(user.phone, from_addr, to_addr)
+            user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
+            send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
+                from_address=from_addr, to_address=to_addr
+            ))
         else:
             # Адреса не указаны — спрашиваем
             user.set_temp_data('taxi_from', '')
@@ -1017,10 +1019,7 @@ def _submit_taxi_order(user: User, db) -> tuple:
         commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
     
     # Цена в Telegram-сообщении
-    if custom_price:
-        price_display = f"{int(float(custom_price))} сом (цена клиента)"
-    else:
-        price_display = f"{config.TAXI_PRICE_RANGE} сом (договорная)"
+    price_display = f"{int(float(custom_price))} сом (цена клиента)" if custom_price else "договорная"
     
     telegram_msg = config.TAXI_ORDER_TELEGRAM.format(
         route=route,
@@ -1346,7 +1345,7 @@ def handle_shop_list(user: User, message: str, db) -> tuple:
     user.set_temp_data('service_type', config.SERVICE_SHOP)
     
     user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.CONFIRM_SHOP.format(order_details=message, delivery_fee=config.SHOP_DELIVERY_FEE)
+    confirm_msg = config.CONFIRM_SHOP.format(order_details=message)
     send_whatsapp(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
@@ -1558,8 +1557,10 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         user.set_temp_data('taxi_from', from_address)
         user.set_temp_data('taxi_to', to_address)
         user.set_temp_data('taxi_route', f"{from_address} — {to_address}")
-        user.set_state(config.STATE_TAXI_PRICE_CHOICE)
-        _send_taxi_price_choice(user.phone, from_address, to_address)
+        user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
+        send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
+            from_address=from_address, to_address=to_address
+        ))
         return jsonify({"status": "ok"}), 200
 
     # Если сразу извлекли оба адреса
