@@ -1576,12 +1576,27 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
             return jsonify({"status": "ok"}), 200
         return _go_to_price_choice(parsed_from, parsed_to)
 
-    # Для текстового ввода не уточняем адреса, как просил пользователь:
-    # сразу переходим к выбору цены (старый быстрый сценарий).
-    if not is_voice_input:
-        fast_from = parsed_from or msg
-        fast_to = parsed_to or msg
-        return _go_to_price_choice(fast_from, fast_to)
+    # Для текстового ввода — пошаговый сбор адресов (как для голосового)
+    if not is_voice_input and not current_from and not current_to:
+        if parsed_from and not parsed_to:
+            user.set_temp_data('service_type', config.SERVICE_TAXI)
+            user.set_temp_data('taxi_from', parsed_from)
+            _ask_for_to()
+            return jsonify({"status": "ok"}), 200
+        if parsed_to and not parsed_from:
+            user.set_temp_data('service_type', config.SERVICE_TAXI)
+            user.set_temp_data('taxi_to', parsed_to)
+            _ask_for_from()
+            return jsonify({"status": "ok"}), 200
+        # ИИ ничего не распознал — считаем весь текст как адрес отправления
+        single = msg
+        if _is_vague_address(single):
+            send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data('service_type', config.SERVICE_TAXI)
+        user.set_temp_data('taxi_from', single)
+        _ask_for_to()
+        return jsonify({"status": "ok"}), 200
 
     # Для голосового ввода — пошаговый сбор недостающего адреса
     if not current_from and not current_to:
