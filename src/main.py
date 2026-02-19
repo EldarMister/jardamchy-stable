@@ -390,6 +390,60 @@ def _is_concrete_order_details(text: str, service: str) -> bool:
     return False
 
 
+def _sanitize_ant_details(order_details: str, from_addr: str = "", to_addr: str = "", source_text: str = "") -> str:
+    """Keep only cargo item for ant flow, removing route fragments and helper words."""
+    raw = (order_details or source_text or "").strip()
+    if not raw:
+        return ""
+
+    cleaned = raw
+    from_root = (_normalize_loose_text(from_addr).split()[:1] or [""])[0]
+    to_root = (_normalize_loose_text(to_addr).split()[:1] or [""])[0]
+
+    if from_root and to_root:
+        cleaned = re.sub(
+            rf"\b{re.escape(from_root)}\w*\b.*?\b{re.escape(to_root)}\w*\b",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE
+        )
+
+    # Remove endpoint names if they still remain in detail text.
+    for endpoint in (from_addr, to_addr):
+        ep = (endpoint or "").strip()
+        if ep:
+            cleaned = re.sub(re.escape(ep), " ", cleaned, flags=re.IGNORECASE)
+
+    # Remove transport helper phrases to keep only what is being carried.
+    cleaned = re.sub(r"\bташыш\s+керек\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bташуу\s+керек\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bперевезти\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bдоставить\b", " ", cleaned, flags=re.IGNORECASE)
+
+    stopwords = {
+        "мага", "мне", "керек", "нужно", "надо",
+        "муравей", "желмаян", "ташыш", "ташуу", "жук", "жүк"
+    }
+    tokens = []
+    for token in re.split(r"\s+", cleaned):
+        tok = token.strip(" ,.;:!?-—")
+        if not tok:
+            continue
+        lower = tok.lower()
+        if lower in stopwords:
+            continue
+        if re.search(r"(дан|ден|тан|тен|нан|нен|дон|дөн|га|ге|ка|ке|го|до|жа|же|астынан|үстүнөн)$", lower):
+            continue
+        if from_root and lower.startswith(from_root):
+            continue
+        if to_root and lower.startswith(to_root):
+            continue
+        tokens.append(tok)
+
+    normalized = " ".join(tokens).strip()
+    return normalized or raw
+
+
 def _cancel_order_in_group(order_id: str, service_type: str, db, text: str) -> None:
     """Обновить сообщение в группе на 'заказ отменен' и убрать кнопки"""
     timer = db.get_latest_auction_timer(order_id, service_type)
@@ -816,9 +870,14 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     
     # === МУРАВЕЙ ===
     elif intent == "ant":
-        order_details = nlu_result.get("order_details")
         from_addr = nlu_result.get("from_address")
         to_addr = nlu_result.get("to_address")
+        order_details = _sanitize_ant_details(
+            nlu_result.get("order_details"),
+            from_addr=from_addr,
+            to_addr=to_addr,
+            source_text=message
+        )
         
         if order_details and from_addr and to_addr:
             # Всё есть — к подтверждению
@@ -971,16 +1030,31 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         send_whatsapp(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_ANT:
-        if confirmation.get("corrected_details"):
-            user.set_temp_data('ant_details', confirmation["corrected_details"])
         if confirmation.get("corrected_from"):
             user.set_temp_data('ant_from', confirmation["corrected_from"])
         if confirmation.get("corrected_to"):
             user.set_temp_data('ant_to', confirmation["corrected_to"])
-        
-        order_details = user.get_temp_data('ant_details', '')
+
         from_addr = user.get_temp_data('ant_from', '')
         to_addr = user.get_temp_data('ant_to', '')
+        if confirmation.get("corrected_details"):
+            user.set_temp_data(
+                'ant_details',
+                _sanitize_ant_details(
+                    confirmation["corrected_details"],
+                    from_addr=from_addr,
+                    to_addr=to_addr,
+                    source_text=confirmation["corrected_details"]
+                )
+            )
+
+        order_details = _sanitize_ant_details(
+            user.get_temp_data('ant_details', ''),
+            from_addr=from_addr,
+            to_addr=to_addr,
+            source_text=user.get_temp_data('ant_details', '')
+        )
+        user.set_temp_data('ant_details', order_details)
         user.set_temp_data('ant_route', f"{from_addr} — {to_addr}")
         
         confirm_msg = config.CONFIRM_ANT.format(
@@ -1779,9 +1853,14 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
     """Обработка сообщения муравей — ИИ извлекает детали и маршрут"""
     nlu_result = parse_user_message(message)
     
-    order_details = nlu_result.get("order_details") or user.get_temp_data('ant_details', '') or message
     from_addr = nlu_result.get("from_address") or message
     to_addr = nlu_result.get("to_address") or message
+    order_details = _sanitize_ant_details(
+        nlu_result.get("order_details") or user.get_temp_data('ant_details', ''),
+        from_addr=from_addr,
+        to_addr=to_addr,
+        source_text=message
+    )
     
     # Проверка на слишком общий адрес
     if _is_vague_address(from_addr) or _is_vague_address(to_addr):
