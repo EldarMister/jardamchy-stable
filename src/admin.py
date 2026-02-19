@@ -561,7 +561,21 @@ def get_order_detail(order_id):
         if not order:
             return jsonify({"error": "Order not found"}), 404
 
-        return jsonify({"order": _clean_row(order)}), 200
+        order_data = _clean_row(order)
+
+        # Подгружаем информацию о водителе по telegram_id
+        driver_telegram_id = order.get('driver_id')
+        if driver_telegram_id:
+            with db.get_cursor() as cur:
+                cur.execute(
+                    "SELECT name, phone, car_model, plate, driver_type FROM drivers WHERE telegram_id = %s",
+                    (str(driver_telegram_id),)
+                )
+                driver_row = cur.fetchone()
+                if driver_row:
+                    order_data['driver_info'] = _clean_row(dict(driver_row))
+
+        return jsonify({"order": order_data}), 200
 
     except Exception as e:
         logger.exception("Error getting order")

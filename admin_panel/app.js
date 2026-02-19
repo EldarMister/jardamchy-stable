@@ -1465,8 +1465,10 @@ async function openOrderDetail(orderId) {
     try {
         const data = await api(`/orders/${orderId}`);
         const o = data.order;
+        const d = o.driver_info || null;
 
-        const paymentLabels = { cash: '💵 Наличные', mbank: '📱 МБанк', optima: '🏦 Оптима' };
+        const driverTypeLabels = { taxi: '🚖 Такси', porter: '🚛 Портер', ant: '🐜 Муравей' };
+
         const rows = [
             ['ID заказа',       o.order_id || o.id],
             ['Услуга',          serviceTag(o.service_type)],
@@ -1474,11 +1476,8 @@ async function openOrderDetail(orderId) {
             ['Клиент',          o.client_phone || '—'],
             ['Адрес',           o.address || '—'],
             ['Детали',          o.details || '—'],
-            ['Сумма',           `${formatMoney(o.price_total)} сом`],
+            ['Сумма',           `${formatMoney(o.price_total ?? 0)} сом`],
             ['Комиссия',        o.commission ? `${formatMoney(o.commission)} сом` : '—'],
-            ['Оплата',          paymentLabels[o.payment_method] || o.payment_method || '—'],
-            ['Водитель',        o.driver_id || o.provider_id || '—'],
-            ['Назначен в',      o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'],
             ['Тип груза',       o.cargo_type || '—'],
             ['Срочный',         o.is_urgent ? '🔥 Да' : 'Нет'],
             ['Создан',          formatDate(o.created_at)],
@@ -1486,12 +1485,31 @@ async function openOrderDetail(orderId) {
             ['Завершён',        o.completed_at ? formatDate(o.completed_at) : '—'],
         ];
 
-        body.innerHTML = rows.map(([label, value]) => `
+        // Блок информации о водителе
+        const driverRows = d ? [
+            ['Водитель (имя)',   d.name || '—'],
+            ['Тел. водителя',   d.phone || '—'],
+            ['Машина',          d.car_model || '—'],
+            ['Госномер',        d.plate || '—'],
+            ['Тип водителя',    driverTypeLabels[d.driver_type] || d.driver_type || '—'],
+            ['Назначен в',      o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'],
+        ] : [
+            ['Водитель',        o.driver_id || '—'],
+            ['Назначен в',      o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'],
+        ];
+
+        const renderRow = ([label, value]) => `
             <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
                 <span style="color:var(--text-muted);min-width:140px;font-size:13px;flex-shrink:0">${label}</span>
                 <span style="font-size:14px;word-break:break-word">${value ?? '—'}</span>
-            </div>
-        `).join('');
+            </div>`;
+
+        const driverSeparator = `
+            <div style="margin:12px 0 4px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">
+                Исполнитель
+            </div>`;
+
+        body.innerHTML = rows.map(renderRow).join('') + driverSeparator + driverRows.map(renderRow).join('');
     } catch (err) {
         body.innerHTML = '<div style="color:#e05252;padding:20px">Ошибка загрузки данных</div>';
     }
