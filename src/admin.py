@@ -487,6 +487,32 @@ def get_cafe_debt(telegram_id):
         return jsonify({"error": str(e)}), 500
 
 
+@admin_bp.route('/cafes/<telegram_id>/debt', methods=['POST'])
+def update_cafe_debt(telegram_id):
+    """Ручная корректировка долга кафе через админку."""
+    try:
+        data = request.get_json() or {}
+        amount = data.get('amount')
+        reason = data.get('reason', 'Пополнение через админку')
+
+        if amount is None:
+            return jsonify({"error": "amount is required"}), 400
+
+        db = get_db()
+        success, new_debt = db.adjust_cafe_debt(telegram_id, float(amount), reason)
+        if not success:
+            return jsonify({"error": "Cafe not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "new_debt": float(new_debt),
+            "new_balance": float(-new_debt)
+        }), 200
+    except Exception as e:
+        logger.exception("Error updating cafe debt")
+        return jsonify({"error": str(e)}), 500
+
+
 # =============================================================================
 # ORDERS MANAGEMENT
 # =============================================================================

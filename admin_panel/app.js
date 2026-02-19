@@ -688,7 +688,7 @@ async function submitBalanceWithSign(sign) {
     // Determine API path based on entity type
     const pathMap = {
         driver: `/drivers/${telegramId}/balance`,
-        cafe: `/drivers/${telegramId}/balance`,
+        cafe: `/cafes/${telegramId}/debt`,
         pharmacy: `/drivers/${telegramId}/balance`,
         shopper: `/drivers/${telegramId}/balance`,
     };

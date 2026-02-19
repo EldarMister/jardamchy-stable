@@ -938,11 +938,23 @@ class Database:
             return False
     
     def remove_cafe(self, telegram_id: str) -> bool:
-        """Деактивировать кафе"""
+        """Полностью удалить кафе и связанные данные меню/веб-заказов."""
         with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT id FROM cafes WHERE telegram_id = %s", (telegram_id,))
+            cafe = cur.fetchone()
+            if not cafe:
+                return False
+
+            cafe_id = int(cafe['id'])
+
+            # menu_items has FK to cafes and can block delete; clean dependencies first.
+            cur.execute("DELETE FROM menu_items WHERE cafe_id = %s", (cafe_id,))
+            cur.execute("DELETE FROM web_orders WHERE cafe_id = %s", (cafe_id,))
+            cur.execute("DELETE FROM cafe_categories WHERE cafe_id = %s", (cafe_id,))
+            cur.execute("DELETE FROM cafe_settings WHERE cafe_id = %s", (cafe_id,))
             cur.execute(
-                """UPDATE cafes SET is_active = FALSE WHERE telegram_id = %s""",
-                (telegram_id,)
+                """DELETE FROM cafes WHERE id = %s""",
+                (cafe_id,)
             )
             if cur.rowcount > 0:
                 self.log_transaction("CAFE_REMOVED", telegram_id)
@@ -983,6 +995,34 @@ class Database:
             )
             row = cur.fetchone()
             return float(row['debt']) if row else 0
+
+    def adjust_cafe_debt(self, telegram_id: str, amount: float, reason: str = "") -> Tuple[bool, float]:
+        """
+        Ручная корректировка долга кафе.
+        amount > 0: погашение долга (debt уменьшается)
+        amount < 0: увеличение долга (debt увеличивается)
+        """
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE cafes
+                   SET debt = GREATEST(debt - %s, 0)
+                   WHERE telegram_id = %s
+                   RETURNING debt""",
+                (amount, telegram_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                return False, 0
+
+            new_debt = float(row['debt'])
+            action = "CAFE_DEBT_REDUCED" if amount > 0 else "CAFE_DEBT_INCREASED"
+            self.log_transaction(
+                action=action,
+                user_id=telegram_id,
+                amount=abs(float(amount)),
+                details=f"Reason: {reason}"
+            )
+            return True, new_debt
     
     def list_cafes(self, active_only: bool = True) -> List[Dict]:
         """Получить список кафе"""
