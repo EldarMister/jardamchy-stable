@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 
 import config
-from db import get_db
+from db import get_db, get_runtime_setting
 from services import edit_telegram_message, send_telegram_group, delete_telegram_message, send_whatsapp
 
 logger = logging.getLogger(__name__)
@@ -219,7 +219,7 @@ def check_pending_order_timeouts():
     """Автоотмена заказов PENDING/AUCTION/URGENT старше 20 минут"""
     try:
         db = get_db()
-        timeout_minutes = config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT // 60
+        timeout_minutes = int(get_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT)) // 60
         stale_orders = db.get_stale_pending_orders(timeout_minutes)
 
         for order in stale_orders:
@@ -277,7 +277,7 @@ def check_in_delivery_auto_complete():
     """Автозавершение заказов IN_DELIVERY старше 30 минут после назначения водителя."""
     try:
         db = get_db()
-        timeout_minutes = config.IN_DELIVERY_AUTO_COMPLETE_TIMEOUT // 60
+        timeout_minutes = int(get_runtime_setting("in_delivery_auto_complete_timeout", config.IN_DELIVERY_AUTO_COMPLETE_TIMEOUT)) // 60
         stale_orders = db.get_stale_in_delivery_orders(timeout_minutes)
 
         for order in stale_orders:

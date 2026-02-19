@@ -8,10 +8,13 @@ import logging
 from typing import Tuple
 
 import config
-from db import get_db, User
+from db import get_db, User, get_runtime_setting
 from services import send_whatsapp, send_telegram_group
 
 logger = logging.getLogger(__name__)
+
+def _runtime_setting(key: str, default):
+    return get_runtime_setting(key, default)
 
 
 # =============================================================================
@@ -71,7 +74,7 @@ def _confirm_pharmacy_order(user: User, db) -> Tuple[dict, int]:
         
         drug_price = float(selected_bid['price'])
         # Цена для клиента: лекарство + доставка + комиссия таксиста
-        total_price = drug_price + config.PHARMACY_DELIVERY_FEE + config.TAXI_PHARMACY_COMMISSION
+        total_price = drug_price + _runtime_setting("pharmacy_delivery_fee", config.PHARMACY_DELIVERY_FEE) + _runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)
         
         # Обновляем заказ
         db.update_order_status(
@@ -88,7 +91,7 @@ def _confirm_pharmacy_order(user: User, db) -> Tuple[dict, int]:
 {order.get('details', '')}
 
 💵 *Надо выкупить:* {drug_price} сом
-💰 *С клиента взять:* {total_price} сом (включая комиссию {config.TAXI_PHARMACY_COMMISSION} сом)
+💰 *С клиента взять:* {total_price} сом (включая комиссию {_runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)} сом)
 📞 *Клиент:* {user.phone}
 
 💳 *Оплата:* МБанк / Наличные
@@ -113,7 +116,7 @@ def _confirm_pharmacy_order(user: User, db) -> Tuple[dict, int]:
 🚖 Ищем курьера...
 
 💰 К оплате: *{total_price} сом*
-(лекарство {drug_price} сом + доставка {config.PHARMACY_DELIVERY_FEE} сом + комиссия {config.TAXI_PHARMACY_COMMISSION} сом)
+(лекарство {drug_price} сом + доставка {_runtime_setting("pharmacy_delivery_fee", config.PHARMACY_DELIVERY_FEE)} сом + комиссия {_runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)} сом)
 
 ⏱ Ожидайте, курьер скоро свяжется."""
         
@@ -135,7 +138,7 @@ def _confirm_pharmacy_order(user: User, db) -> Tuple[dict, int]:
             user.phone,
             order_id,
             amount=total_price,
-            details=f"Drug: {drug_price}, Delivery: {config.PHARMACY_DELIVERY_FEE}, Commission: {config.TAXI_PHARMACY_COMMISSION}"
+            details=f"Drug: {drug_price}, Delivery: {_runtime_setting('pharmacy_delivery_fee', config.PHARMACY_DELIVERY_FEE)}, Commission: {_runtime_setting('taxi_pharmacy_commission', config.TAXI_PHARMACY_COMMISSION)}"
         )
         
         return {"status": "ok", "message": "Pharmacy order confirmed"}, 200
@@ -217,8 +220,8 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-💰 *За доставку:* {config.SHOP_DELIVERY_FEE} сом
-💰 *Комиссия:* {config.TAXI_COMMISSION} сом
+💰 *За доставку:* {_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE)} сом
+💰 *Комиссия:* {_runtime_setting("taxi_commission", config.TAXI_COMMISSION)} сом
 
 Нужно купить и доставить клиенту."""
 
@@ -235,7 +238,7 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
                 service_type=config.SERVICE_SHOP,
                 telegram_message_id=str(result.get('message_id')),
                 chat_id=config.GROUP_TAXI_ID,
-                timeout_seconds=config.TAXI_RESPONSE_TIMEOUT
+                timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
             )
 
         user.set_state(config.STATE_IDLE)
@@ -244,7 +247,7 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
         response_msg = f"""✅ *Заказ подтвержден!*
 
 🛒 Заявка отправлена водителям.
-💰 Доставка: *{config.SHOP_DELIVERY_FEE} сом*
+💰 Доставка: *{_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE)} сом*
 
 ⏱ Водитель скоро свяжется с вами."""
 

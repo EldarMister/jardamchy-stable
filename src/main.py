@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import config
-from db import get_db, User
+from db import get_db, User, get_runtime_setting
 from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
     send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
@@ -20,6 +20,9 @@ from services import (
 from nlu import parse_user_message, parse_confirmation
 
 logger = logging.getLogger(__name__)
+
+def _runtime_setting(key: str, default):
+    return get_runtime_setting(key, default)
 
 # Unknown/fallback anti-flood settings (IDLE only)
 UNKNOWN_FALLBACK_MAX_ATTEMPTS = 5
@@ -480,7 +483,7 @@ def handle_client_cancel(user: User, db) -> bool:
             db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
             # Уведомляем водителя и возвращаем комиссию
             driver_id = order.get('driver_id')
-            commission = float(order.get('driver_commission') or config.TAXI_COMMISSION)
+            commission = float(order.get('driver_commission') or _runtime_setting("taxi_commission", config.TAXI_COMMISSION))
             if driver_id:
                 if commission > 0:
                     db.update_driver_balance(driver_id, commission, reason=f"Client cancel taxi {order_id}")
@@ -810,7 +813,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('shop_list', order_details)
             user.set_state(config.STATE_CONFIRM_ORDER)
             
-            confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=config.SHOP_DELIVERY_FEE)
+            confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
             send_whatsapp(user.phone, confirm_msg)
         else:
             user.set_state(config.STATE_SHOP_LIST)
@@ -1000,7 +1003,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             user.set_temp_data('shop_list', confirmation["corrected_details"])
         
         order_details = user.get_temp_data('shop_list', '')
-        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=config.SHOP_DELIVERY_FEE)
+        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
         send_whatsapp(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PHARMACY:
@@ -1087,10 +1090,10 @@ def _submit_taxi_order(user: User, db) -> tuple:
     )
     
     # Определяем комиссию для отображения
-    if custom_price and float(custom_price) < config.TAXI_CUSTOM_PRICE_THRESHOLD:
-        commission_info = f"💰 Комиссия: {config.TAXI_CUSTOM_PRICE_COMMISSION} сом"
+    if custom_price and float(custom_price) < _runtime_setting("taxi_custom_price_threshold", config.TAXI_CUSTOM_PRICE_THRESHOLD):
+        commission_info = f"💰 Комиссия: {_runtime_setting('taxi_custom_price_commission', config.TAXI_CUSTOM_PRICE_COMMISSION)} сом"
     else:
-        commission_info = f"💰 Комиссия: {config.TAXI_COMMISSION} сом"
+        commission_info = f"💰 Комиссия: {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом"
     
     # Цена в Telegram-сообщении
     price_display = f"{int(float(custom_price))} сом (цена клиента)" if custom_price else "договорная"
@@ -1115,7 +1118,7 @@ def _submit_taxi_order(user: User, db) -> tuple:
             service_type=config.SERVICE_TAXI,
             telegram_message_id=str(result.get('message_id')),
             chat_id=config.GROUP_TAXI_ID,
-            timeout_seconds=config.TAXI_RESPONSE_TIMEOUT
+            timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
         )
     
     user.set_state(config.STATE_IDLE)
@@ -1160,7 +1163,7 @@ def _submit_cafe_order(user: User, db) -> tuple:
     if web_order_code:
         db.update_web_order_status(web_order_code, 'CONFIRMED', address=str(order_id))
     
-    commission_info = f"💰 Комиссия: {config.CAFE_COMMISSION_PERCENT}%"
+    commission_info = f"💰 Комиссия: {_runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)}%"
     
     telegram_msg = config.CAFE_ORDER_TELEGRAM.format(
         order_id=order_id,
@@ -1185,7 +1188,7 @@ def _submit_cafe_order(user: User, db) -> tuple:
             service_type=config.SERVICE_CAFE,
             telegram_message_id=str(result.get('message_id')),
             chat_id=target_chat_id,
-            timeout_seconds=config.CAFE_AUCTION_TIMEOUT
+            timeout_seconds=int(_runtime_setting("cafe_auction_timeout", config.CAFE_AUCTION_TIMEOUT))
         )
     
     user.set_state(config.STATE_IDLE)
@@ -1214,8 +1217,8 @@ def _submit_shop_order(user: User, db) -> tuple:
 {shop_list}
 
 📞 *Клиент:* {user.phone}
-💰 *За доставку:* {config.SHOP_DELIVERY_FEE} сом
-💰 *Комиссия:* {config.TAXI_COMMISSION} сом
+💰 *За доставку:* {_runtime_setting('shop_delivery_fee', config.SHOP_DELIVERY_FEE)} сом
+💰 *Комиссия:* {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом
 
 Нужно купить и доставить клиенту."""
 
@@ -1232,7 +1235,7 @@ def _submit_shop_order(user: User, db) -> tuple:
             service_type=config.SERVICE_SHOP,
             telegram_message_id=str(result.get('message_id')),
             chat_id=config.GROUP_TAXI_ID,
-            timeout_seconds=config.TAXI_RESPONSE_TIMEOUT
+            timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
         )
 
     send_whatsapp(user.phone, config.ORDER_SENT_GENERIC)
@@ -1474,7 +1477,7 @@ def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
         send_whatsapp(user.phone, "❌ Заказ не найден. Начните заново.")
         return jsonify({"status": "ok"}), 200
 
-    total_price = drug_price + config.PHARMACY_DELIVERY_FEE + config.TAXI_PHARMACY_COMMISSION
+    total_price = drug_price + _runtime_setting("pharmacy_delivery_fee", config.PHARMACY_DELIVERY_FEE) + _runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)
 
     # Записываем адрес, итоговую цену и переводим в готовность к доставке
     db.update_order_status(
@@ -1741,7 +1744,7 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     numbers = re.findall(r'\d+', message)
     if numbers and msg_lower not in ('1', '2'):
         price = int(numbers[0])
-        if price < config.TAXI_CUSTOM_PRICE_MIN:
+        if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
             send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
             return jsonify({"status": "ok"}), 200
 
@@ -1777,7 +1780,7 @@ def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
     
     price = int(numbers[0])
     
-    if price < config.TAXI_CUSTOM_PRICE_MIN:
+    if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
         send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
         return jsonify({"status": "ok"}), 200
     

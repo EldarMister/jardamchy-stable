@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import config
-from db import get_db
+from db import get_db, RUNTIME_SETTING_DEFAULTS
 from services import send_telegram_private, send_telegram_broadcast, send_telegram_group
 
 logger = logging.getLogger(__name__)
@@ -74,8 +74,15 @@ def get_dashboard():
     """Агрегированная статистика для дашборда"""
     try:
         db = get_db()
+        runtime = db.get_runtime_settings()
+        cafe_commission_percent = float(runtime["cafe_commission_percent"])
+        porter_commission = float(runtime["porter_commission"])
+        ant_commission = float(runtime["ant_commission"])
+        taxi_custom_price_commission = float(runtime["taxi_custom_price_commission"])
+        taxi_shop_commission = float(runtime["taxi_shop_commission"])
+        pharmacy_commission_percent = float(runtime["pharmacy_commission_percent"])
 
-        # --- Заказы и заработок по периодам ---
+        # --- Orders and earnings for selected periods ---
         with db.get_cursor() as cur:
             # Сегодня
             cur.execute("""
@@ -139,12 +146,12 @@ def get_dashboard():
                         COALESCE(SUM(
                             CASE WHEN status = 'COMPLETED' THEN
                                 CASE
-                                    WHEN service_type = 'cafe' THEN price_total * 0.05
-                                    WHEN service_type = 'porter' THEN {config.PORTER_COMMISSION}
-                                    WHEN service_type = 'ant' THEN {config.ANT_COMMISSION}
-                                    WHEN service_type = 'pharmacy' THEN price_total * 0.05
-                                    WHEN service_type = 'taxi' THEN GREATEST(COALESCE(commission, 0), {config.TAXI_CUSTOM_PRICE_COMMISSION})
-                                    WHEN service_type = 'shop' THEN {config.TAXI_COMMISSION}
+                                    WHEN service_type = 'cafe' THEN price_total * ({cafe_commission_percent} / 100.0)
+                                    WHEN service_type = 'porter' THEN {porter_commission}
+                                    WHEN service_type = 'ant' THEN {ant_commission}
+                                    WHEN service_type = 'pharmacy' THEN price_total * ({pharmacy_commission_percent} / 100.0)
+                                    WHEN service_type = 'taxi' THEN GREATEST(COALESCE(commission, 0), {taxi_custom_price_commission})
+                                    WHEN service_type = 'shop' THEN {taxi_shop_commission}
                                     ELSE COALESCE(commission, 0)
                                 END
                             ELSE 0 END
@@ -927,19 +934,54 @@ def get_transactions():
 
 @admin_bp.route('/settings', methods=['GET'])
 def get_settings():
-    """Получить текущие настройки"""
+    """Return current runtime settings for admin panel."""
     try:
-        return jsonify({
+        db = get_db()
+        runtime = db.get_runtime_settings()
+
+        response = {
             "is_ramadan": config.IS_RAMADAN,
-            "cafe_commission": config.CAFE_COMMISSION_PERCENT,
-            "taxi_commission": config.TAXI_COMMISSION,
-            "porter_commission": config.PORTER_COMMISSION,
-            "shopper_fee": config.SHOPPER_SERVICE_FEE,
-            "pharmacy_delivery_fee": config.PHARMACY_DELIVERY_FEE
-        }), 200
+            **runtime,
+            # Legacy aliases for gradual UI rollout
+            "cafe_commission": runtime["cafe_commission_percent"],
+            "taxi_commission": runtime["taxi_commission"],
+            "porter_commission": runtime["porter_commission"],
+            "shopper_fee": runtime["shopper_service_fee"],
+            "pharmacy_delivery_fee": runtime["pharmacy_delivery_fee"],
+        }
+        return jsonify(response), 200
 
     except Exception as e:
         logger.exception("Error getting settings")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/settings', methods=['POST'])
+def update_settings():
+    """Batch update runtime settings."""
+    try:
+        data = request.get_json(silent=True) or {}
+        updates = data.get('updates')
+
+        if not isinstance(updates, dict) or not updates:
+            return jsonify({"error": "updates must be a non-empty object"}), 400
+
+        unknown_keys = [key for key in updates.keys() if key not in RUNTIME_SETTING_DEFAULTS]
+        if unknown_keys:
+            return jsonify({"error": f"Unknown settings keys: {', '.join(unknown_keys)}"}), 400
+
+        db = get_db()
+        applied = db.set_runtime_settings(updates, source="admin_panel")
+
+        return jsonify({
+            "success": True,
+            "settings": applied
+        }), 200
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Error updating settings")
         return jsonify({"error": str(e)}), 500
 
 

@@ -6,6 +6,7 @@ Database Module for Business Assistant GO
 
 import json
 import uuid
+import math
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple
 from contextlib import contextmanager
@@ -15,6 +16,57 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
 import config
+
+RUNTIME_SETTING_DEFAULTS: Dict[str, float] = {
+    "cafe_commission_percent": float(config.CAFE_COMMISSION_PERCENT),
+    "taxi_commission": float(config.TAXI_COMMISSION),
+    "porter_commission": float(config.PORTER_COMMISSION),
+    "ant_commission": float(config.ANT_COMMISSION),
+    "shopper_commission": float(config.SHOPPER_COMMISSION),
+    "taxi_shop_commission": float(config.TAXI_SHOP_COMMISSION),
+    "taxi_pharmacy_commission": float(config.TAXI_PHARMACY_COMMISSION),
+    "pharmacy_commission_percent": float(config.PHARMACY_COMMISSION_PERCENT),
+    "taxi_custom_price_commission": float(config.TAXI_CUSTOM_PRICE_COMMISSION),
+    "shop_delivery_fee": float(config.SHOP_DELIVERY_FEE),
+    "shopper_service_fee": float(config.SHOPPER_SERVICE_FEE),
+    "pharmacy_delivery_fee": float(config.PHARMACY_DELIVERY_FEE),
+    "taxi_custom_price_min": float(config.TAXI_CUSTOM_PRICE_MIN),
+    "taxi_custom_price_threshold": float(config.TAXI_CUSTOM_PRICE_THRESHOLD),
+    "cafe_auction_timeout": float(config.CAFE_AUCTION_TIMEOUT),
+    "pharmacy_response_timeout": float(config.PHARMACY_RESPONSE_TIMEOUT),
+    "taxi_response_timeout": float(config.TAXI_RESPONSE_TIMEOUT),
+    "taxi_accepted_timeout": float(config.TAXI_ACCEPTED_TIMEOUT),
+    "pending_order_auto_cancel_timeout": float(config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT),
+    "in_delivery_auto_complete_timeout": float(config.IN_DELIVERY_AUTO_COMPLETE_TIMEOUT),
+}
+
+RUNTIME_TIMEOUT_KEYS = {
+    "cafe_auction_timeout",
+    "pharmacy_response_timeout",
+    "taxi_response_timeout",
+    "taxi_accepted_timeout",
+    "pending_order_auto_cancel_timeout",
+    "in_delivery_auto_complete_timeout",
+}
+
+
+def _normalize_runtime_value(key: str, value: Any) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid value type for {key}: bool is not allowed")
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid value type for {key}: must be numeric")
+
+    if math.isnan(number) or math.isinf(number):
+        raise ValueError(f"Invalid value for {key}: NaN/Infinity is not allowed")
+    if number < 0:
+        raise ValueError(f"Invalid value for {key}: must be >= 0")
+
+    if key in RUNTIME_TIMEOUT_KEYS:
+        return float(int(number))
+    return float(number)
 
 
 class Database:
@@ -313,6 +365,26 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                # Runtime-настройки комиссий/таймаутов с применением без рестарта
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS runtime_settings (
+                        key TEXT PRIMARY KEY,
+                        value NUMERIC NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS runtime_settings_history (
+                        id SERIAL PRIMARY KEY,
+                        key TEXT NOT NULL,
+                        old_value NUMERIC,
+                        new_value NUMERIC NOT NULL,
+                        source TEXT DEFAULT 'system',
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_runtime_settings_history_key ON runtime_settings_history(key)")
             
                 # Таблица для отслеживания таймаутов (аукционы)
                 cur.execute("""
@@ -345,6 +417,9 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_phone)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_auction_timers ON auction_timers(expires_at, is_processed)")
+
+                # Заполняем дефолты runtime-настроек, если ключей еще нет
+                self._seed_runtime_settings(cur)
             
                 # Таблица Telegram-сессий (для регистрации водителей)
                 cur.execute("""
@@ -360,6 +435,103 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_telegram_sessions ON telegram_sessions(telegram_id)")
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
+
+    # ==========================================================================
+    # RUNTIME SETTINGS
+    # ==========================================================================
+
+    def _seed_runtime_settings(self, cur) -> None:
+        for key, default_value in RUNTIME_SETTING_DEFAULTS.items():
+            cur.execute(
+                """INSERT INTO runtime_settings (key, value, updated_at)
+                   VALUES (%s, %s, CURRENT_TIMESTAMP)
+                   ON CONFLICT (key) DO NOTHING""",
+                (key, _normalize_runtime_value(key, default_value))
+            )
+
+    def get_runtime_settings(self) -> Dict[str, float]:
+        settings: Dict[str, float] = {
+            key: (int(value) if key in RUNTIME_TIMEOUT_KEYS else float(value))
+            for key, value in RUNTIME_SETTING_DEFAULTS.items()
+        }
+        with self.get_cursor() as cur:
+            cur.execute("SELECT key, value FROM runtime_settings")
+            for row in cur.fetchall():
+                key = row['key']
+                if key not in settings:
+                    continue
+                value = float(row['value'])
+                settings[key] = int(value) if key in RUNTIME_TIMEOUT_KEYS else value
+        return settings
+
+    def get_runtime_setting(self, key: str, default: float = None) -> float:
+        fallback = RUNTIME_SETTING_DEFAULTS.get(key, 0.0) if default is None else default
+        with self.get_cursor() as cur:
+            cur.execute(
+                "SELECT value FROM runtime_settings WHERE key = %s",
+                (key,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return int(fallback) if key in RUNTIME_TIMEOUT_KEYS else fallback
+            value = float(row['value'])
+            return int(value) if key in RUNTIME_TIMEOUT_KEYS else value
+
+    def set_runtime_settings(self, updates: Dict[str, float], source: str = "admin_panel") -> Dict[str, float]:
+        if not isinstance(updates, dict) or not updates:
+            raise ValueError("updates must be a non-empty object")
+
+        normalized_updates: Dict[str, float] = {}
+        for key, raw_value in updates.items():
+            if key not in RUNTIME_SETTING_DEFAULTS:
+                raise ValueError(f"Unknown setting key: {key}")
+            normalized_updates[key] = _normalize_runtime_value(key, raw_value)
+
+        changed_entries = []
+        applied: Dict[str, float] = {}
+
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "SELECT key, value FROM runtime_settings WHERE key = ANY(%s)",
+                (list(normalized_updates.keys()),)
+            )
+            existing = {row['key']: float(row['value']) for row in cur.fetchall()}
+
+            for key, new_value in normalized_updates.items():
+                old_value = existing.get(key, RUNTIME_SETTING_DEFAULTS[key])
+
+                cur.execute(
+                    """INSERT INTO runtime_settings (key, value, updated_at)
+                       VALUES (%s, %s, CURRENT_TIMESTAMP)
+                       ON CONFLICT (key) DO UPDATE
+                       SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP""",
+                    (key, new_value)
+                )
+
+                applied[key] = int(new_value) if key in RUNTIME_TIMEOUT_KEYS else new_value
+
+                if float(old_value) != float(new_value):
+                    cur.execute(
+                        """INSERT INTO runtime_settings_history (key, old_value, new_value, source, updated_at)
+                           VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)""",
+                        (key, old_value, new_value, source)
+                    )
+                    changed_entries.append({
+                        "key": key,
+                        "old_value": int(old_value) if key in RUNTIME_TIMEOUT_KEYS else float(old_value),
+                        "new_value": int(new_value) if key in RUNTIME_TIMEOUT_KEYS else float(new_value),
+                    })
+
+        if changed_entries:
+            self.log_transaction(
+                action="SETTINGS_UPDATED",
+                details=json.dumps({
+                    "source": source,
+                    "updates": changed_entries
+                }, ensure_ascii=False)
+            )
+
+        return applied
     
     # ==========================================================================
     # USERS METHODS
@@ -873,8 +1045,6 @@ class Database:
                 return False
             
             balance = float(row['balance'])
-            commission = 0 if config.IS_RAMADAN else config.TAXI_COMMISSION
-            
             return balance >= config.MIN_DRIVER_BALANCE
     
     def list_drivers(self, driver_type: str = None, active_only: bool = True) -> List[Dict]:
@@ -978,7 +1148,11 @@ class Database:
     
     def update_cafe_debt(self, telegram_id: str, order_amount: float) -> Tuple[bool, float]:
         """Обновить долг кафе (добавить комиссию)"""
-        commission = order_amount * (config.CAFE_COMMISSION_PERCENT / 100)
+        cafe_commission_percent = self.get_runtime_setting(
+            "cafe_commission_percent",
+            config.CAFE_COMMISSION_PERCENT
+        )
+        commission = order_amount * (cafe_commission_percent / 100)
         
         with self.get_cursor(commit=True) as cur:
             cur.execute(
@@ -1643,3 +1817,11 @@ def get_db() -> Database:
     if _db_instance is None:
         _db_instance = Database()
     return _db_instance
+
+
+def get_runtime_settings() -> Dict[str, float]:
+    return get_db().get_runtime_settings()
+
+
+def get_runtime_setting(key: str, default: float = None) -> float:
+    return get_db().get_runtime_setting(key, default)

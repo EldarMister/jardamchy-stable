@@ -1352,29 +1352,108 @@ async function sendBroadcast() {
 // SETTINGS
 // ============================================================================
 
+const SETTINGS_FIELDS = [
+    { key: 'cafe_commission_percent', id: 'setting-input-cafe_commission_percent', isInt: false },
+    { key: 'taxi_commission', id: 'setting-input-taxi_commission', isInt: false },
+    { key: 'porter_commission', id: 'setting-input-porter_commission', isInt: false },
+    { key: 'ant_commission', id: 'setting-input-ant_commission', isInt: false },
+    { key: 'shopper_commission', id: 'setting-input-shopper_commission', isInt: false },
+    { key: 'taxi_shop_commission', id: 'setting-input-taxi_shop_commission', isInt: false },
+    { key: 'taxi_pharmacy_commission', id: 'setting-input-taxi_pharmacy_commission', isInt: false },
+    { key: 'pharmacy_commission_percent', id: 'setting-input-pharmacy_commission_percent', isInt: false },
+    { key: 'taxi_custom_price_commission', id: 'setting-input-taxi_custom_price_commission', isInt: false },
+    { key: 'shop_delivery_fee', id: 'setting-input-shop_delivery_fee', isInt: false },
+    { key: 'shopper_service_fee', id: 'setting-input-shopper_service_fee', isInt: false },
+    { key: 'pharmacy_delivery_fee', id: 'setting-input-pharmacy_delivery_fee', isInt: false },
+    { key: 'taxi_custom_price_min', id: 'setting-input-taxi_custom_price_min', isInt: true },
+    { key: 'taxi_custom_price_threshold', id: 'setting-input-taxi_custom_price_threshold', isInt: true },
+    { key: 'cafe_auction_timeout', id: 'setting-input-cafe_auction_timeout', isInt: true },
+    { key: 'pharmacy_response_timeout', id: 'setting-input-pharmacy_response_timeout', isInt: true },
+    { key: 'taxi_response_timeout', id: 'setting-input-taxi_response_timeout', isInt: true },
+    { key: 'taxi_accepted_timeout', id: 'setting-input-taxi_accepted_timeout', isInt: true },
+    { key: 'pending_order_auto_cancel_timeout', id: 'setting-input-pending_order_auto_cancel_timeout', isInt: true },
+    { key: 'in_delivery_auto_complete_timeout', id: 'setting-input-in_delivery_auto_complete_timeout', isInt: true },
+];
+
+let runtimeSettingsSnapshot = {};
+
+function fillSettingsInputs(data) {
+    SETTINGS_FIELDS.forEach((field) => {
+        const el = document.getElementById(field.id);
+        if (!el) return;
+        const value = data[field.key];
+        if (value === undefined || value === null) {
+            el.value = '';
+            return;
+        }
+        el.value = field.isInt ? parseInt(value, 10) : value;
+    });
+}
+
 async function loadSettings() {
     try {
         const data = await api('/settings');
-        document.getElementById('setting-ramadan').textContent = data.is_ramadan ? '✅ Включён' : '❌ Выключен';
-        document.getElementById('setting-cafe-comm').textContent = data.cafe_commission + '%';
-        document.getElementById('setting-taxi-comm').textContent = data.taxi_commission + ' сом';
-        document.getElementById('setting-porter-comm').textContent = data.porter_commission + ' сом';
+        runtimeSettingsSnapshot = { ...data };
+
+        document.getElementById('setting-ramadan').textContent = data.is_ramadan ? 'ON' : 'OFF';
+        document.getElementById('setting-cafe-comm').textContent = `${data.cafe_commission}%`;
+        document.getElementById('setting-taxi-comm').textContent = `${data.taxi_commission} som`;
+        document.getElementById('setting-porter-comm').textContent = `${data.porter_commission} som`;
+
+        fillSettingsInputs(data);
     } catch (err) {
-        toast('Ошибка загрузки настроек', 'error');
+        toast('Failed to load settings', 'error');
+    }
+}
+
+async function saveSettings() {
+    try {
+        const updates = {};
+
+        SETTINGS_FIELDS.forEach((field) => {
+            const el = document.getElementById(field.id);
+            if (!el) return;
+
+            const raw = String(el.value || '').trim();
+            if (!raw) return;
+
+            const parsed = field.isInt ? parseInt(raw, 10) : parseFloat(raw);
+            if (!Number.isFinite(parsed)) return;
+
+            const previous = runtimeSettingsSnapshot[field.key];
+            if (previous === undefined || Number(previous) !== Number(parsed)) {
+                updates[field.key] = parsed;
+            }
+        });
+
+        if (Object.keys(updates).length === 0) {
+            toast('No changes', 'success');
+            return;
+        }
+
+        await api('/settings', {
+            method: 'POST',
+            body: JSON.stringify({ updates }),
+        });
+
+        toast('Settings saved', 'success');
+        await loadSettings();
+    } catch (err) {
+        toast('Failed to save settings: ' + err.message, 'error');
     }
 }
 
 async function toggleRamadan() {
-    const current = document.getElementById('setting-ramadan').textContent.includes('Включён');
+    const current = document.getElementById('setting-ramadan').textContent.includes('ON');
     try {
         await api('/settings/ramadan', {
             method: 'POST',
             body: JSON.stringify({ enabled: !current }),
         });
-        toast(`Режим Рамазан ${!current ? 'включён' : 'выключен'}`, 'success');
+        toast(`Ramadan mode ${!current ? 'enabled' : 'disabled'}`, 'success');
         loadSettings();
     } catch (err) {
-        toast('Ошибка: ' + err.message, 'error');
+        toast('Error: ' + err.message, 'error');
     }
 }
 

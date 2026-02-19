@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 
 import config
-from db import get_db
+from db import get_db, get_runtime_setting
 from services import (
     send_whatsapp, send_telegram_private, send_telegram_group,
     edit_telegram_message, delete_telegram_message, format_phone,
@@ -41,6 +41,9 @@ def _cleanup_old_locks():
                 del _callback_locks[k]
 
 logger = logging.getLogger(__name__)
+
+def _runtime_setting(key: str, default):
+    return get_runtime_setting(key, default)
 
 
 # =============================================================================
@@ -369,7 +372,7 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
         # Рассчитываем комиссию (5% всегда, без скидок)
         order_amount = order.get('price_total', 0) or 1000  # Если цена не указана, берем минимум
         commission_added, new_debt = db.update_cafe_debt(user_id, order_amount)
-        commission_info = f"💰 Комиссия ({config.CAFE_COMMISSION_PERCENT}%) добавлена в долг"
+        commission_info = f"💰 Комиссия ({_runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)}%) добавлена в долг"
         
         order_details = (order.get('details') or '').strip()
         details_block = f"\n📋 *Состав заказа:*\n{order_details[:500]}" if order_details else ""
@@ -646,7 +649,7 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         
         # Предопределяем комиссию (без обращения к заказу)
         # Комиссия определяется позже на основе цены заказа
-        commission = config.TAXI_COMMISSION  # default
+        commission = _runtime_setting("taxi_commission", config.TAXI_COMMISSION)  # default
         
         # АТОМАРНЫЙ ЗАХВАТ: одним UPDATE проверяем и назначаем
         now = datetime.now()
@@ -681,8 +684,8 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         
         # Пересчитываем комиссию на основе реальной цены
         custom_price = float(order.get('price_total', 0))
-        if custom_price > 0 and custom_price < config.TAXI_CUSTOM_PRICE_THRESHOLD:
-            commission = config.TAXI_CUSTOM_PRICE_COMMISSION
+        if custom_price > 0 and custom_price < _runtime_setting("taxi_custom_price_threshold", config.TAXI_CUSTOM_PRICE_THRESHOLD):
+            commission = _runtime_setting("taxi_custom_price_commission", config.TAXI_CUSTOM_PRICE_COMMISSION)
             # Обновляем комиссию в заказе
             db.update_order_status(order_id, config.ORDER_STATUS_IN_DELIVERY, driver_commission=commission)
         
@@ -758,7 +761,7 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
             service_type='taxi_accepted',
             telegram_message_id=str(message_id),
             chat_id=chat_id,
-            timeout_seconds=config.TAXI_ACCEPTED_TIMEOUT
+            timeout_seconds=int(_runtime_setting("taxi_accepted_timeout", config.TAXI_ACCEPTED_TIMEOUT))
         )
         
         db.log_transaction("TAXI_ORDER_TAKEN", user_id, order_id)
@@ -912,7 +915,7 @@ def handle_taxi_cancel(data: str, user_id: str, user_name: str,
             _close_taxi_driver_message(chat_id, message_id, "❌ Это устаревшее сообщение. Используйте актуальное.")
             return jsonify({"status": "ok"}), 200
 
-        commission = float(order.get('driver_commission') or config.TAXI_COMMISSION)
+        commission = float(order.get('driver_commission') or _runtime_setting("taxi_commission", config.TAXI_COMMISSION))
         assigned_at = order.get('driver_assigned_at')
         refund = False
         if assigned_at:
@@ -1042,7 +1045,7 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
         # Списываем комиссию
-        commission = config.PORTER_COMMISSION
+        commission = _runtime_setting("porter_commission", config.PORTER_COMMISSION)
         success, new_balance = db.update_driver_balance(
             user_id,
             -commission,
@@ -1120,7 +1123,7 @@ def handle_shop_take(data: str, user_id: str, user_name: str, db) -> tuple:
             return jsonify({"status": "ok"}), 200
         
         # Списываем комиссию 10 сом с закупщика
-        commission = config.SHOPPER_COMMISSION
+        commission = _runtime_setting("shopper_commission", config.SHOPPER_COMMISSION)
         success, new_balance = db.update_driver_balance(
             user_id,
             -commission,
@@ -1176,7 +1179,7 @@ def handle_shop_self_delivery(data: str, user_id: str, db) -> tuple:
 👤 *Курьер:* Закупщик
 📞 Скоро свяжется для уточнения.
 
-💰 Услуга: *{config.SHOPPER_SERVICE_FEE} сом*
+💰 Услуга: *{_runtime_setting('shopper_service_fee', config.SHOPPER_SERVICE_FEE)} сом*
 📦 Товары: по чеку
 
 Курьер доставит самостоятельно."""
@@ -1186,7 +1189,7 @@ def handle_shop_self_delivery(data: str, user_id: str, db) -> tuple:
         # Уведомляем закупщика
         send_telegram_private(
             user_id,
-            f"✅ Клиент уведомлен.\n💰 Ваш заработок: {config.SHOPPER_SERVICE_FEE} сом"
+            f"✅ Клиент уведомлен.\n💰 Ваш заработок: {_runtime_setting('shopper_service_fee', config.SHOPPER_SERVICE_FEE)} сом"
         )
         
         db.log_transaction("SHOP_SELF_DELIVERY", user_id, order_id)
@@ -1214,8 +1217,8 @@ def handle_shop_call_taxi(data: str, user_id: str, chat_id: str, message_id: int
 📋 *Заказ:* #{order_id}
 📦 *Забрать у:* Закупщика
 📍 *Куда:* {order.get('client_phone', '')}
-💰 *С клиента:* Чек + {config.SHOPPER_SERVICE_FEE} сом
-💰 *Таксисту:* Чек + {config.TAXI_SHOP_DELIVERY_FEE} сом
+💰 *С клиента:* Чек + {_runtime_setting('shopper_service_fee', config.SHOPPER_SERVICE_FEE)} сом
+💰 *Таксисту:* Чек + {_runtime_setting('shop_delivery_fee', config.SHOP_DELIVERY_FEE)} сом
 
 📞 *Закупщик:* {user_id}"""
         
@@ -1229,7 +1232,7 @@ def handle_shop_call_taxi(data: str, user_id: str, chat_id: str, message_id: int
         # Уведомляем закупщика
         send_telegram_private(
             user_id,
-            f"✅ Заявка на такси отправлена.\n💰 Ваш заработок: {config.SHOPPER_TAXI_DELIVERY_FEE} сом"
+            f"✅ Заявка на такси отправлена.\n💰 Ваш заработок: {_runtime_setting('shopper_service_fee', config.SHOPPER_SERVICE_FEE)} сом"
         )
         
         # Уведомляем клиента
@@ -1238,7 +1241,7 @@ def handle_shop_call_taxi(data: str, user_id: str, chat_id: str, message_id: int
 👤 *Курьер:* Закупщик
 🚖 *Доставка:* Через такси
 
-💰 Услуга: *{config.SHOPPER_SERVICE_FEE} сом*
+💰 Услуга: *{_runtime_setting('shopper_service_fee', config.SHOPPER_SERVICE_FEE)} сом*
 📦 Товары: по чеку
 
 Ищем такси для доставки..."""
@@ -1312,10 +1315,10 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         
         if service_type == config.SERVICE_SHOP:
             # Доставка из магазина - 10 сом с таксиста
-            commission = config.TAXI_SHOP_COMMISSION
+            commission = _runtime_setting("taxi_shop_commission", config.TAXI_SHOP_COMMISSION)
         elif service_type == config.SERVICE_PHARMACY:
             # Доставка аптеки - 10 сом с таксиста
-            commission = config.TAXI_PHARMACY_COMMISSION
+            commission = _runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)
         
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
