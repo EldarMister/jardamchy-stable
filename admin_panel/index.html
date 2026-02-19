@@ -514,76 +514,72 @@
                     <div class="kpi-grid">
                         <div class="kpi-card">
                             <div class="kpi-header">
-                                <span class="kpi-label">Ramadan Mode</span>
-                                <span class="kpi-icon">SET</span>
+                                <span class="kpi-label">Режим Рамазан</span>
+                                <span class="kpi-icon">🌙</span>
                             </div>
-                            <div class="kpi-value" id="setting-ramadan">-</div>
+                            <div class="kpi-value" id="setting-ramadan">—</div>
                             <button class="btn btn-ghost btn-sm" onclick="toggleRamadan()"
-                                id="btn-ramadan">Toggle</button>
+                                id="btn-ramadan">Переключить</button>
                         </div>
                         <div class="kpi-card">
                             <div class="kpi-header">
-                                <span class="kpi-label">Cafe Commission</span>
-                                <span class="kpi-icon">CAF</span>
+                                <span class="kpi-label">Комиссия Кафе</span>
+                                <span class="kpi-icon">🍔</span>
                             </div>
-                            <div class="kpi-value" id="setting-cafe-comm">-</div>
-                            <div class="kpi-sub">% of order amount</div>
+                            <div class="kpi-value" id="setting-cafe-comm">—</div>
+                            <div class="kpi-sub">% от суммы заказа</div>
                         </div>
                         <div class="kpi-card">
                             <div class="kpi-header">
-                                <span class="kpi-label">Taxi Commission</span>
-                                <span class="kpi-icon">TXI</span>
+                                <span class="kpi-label">Комиссия Такси</span>
+                                <span class="kpi-icon">🚖</span>
                             </div>
-                            <div class="kpi-value" id="setting-taxi-comm">-</div>
-                            <div class="kpi-sub">som per order</div>
+                            <div class="kpi-value" id="setting-taxi-comm">—</div>
+                            <div class="kpi-sub">сом за заказ</div>
                         </div>
                         <div class="kpi-card">
                             <div class="kpi-header">
-                                <span class="kpi-label">Porter Commission</span>
-                                <span class="kpi-icon">PRT</span>
+                                <span class="kpi-label">Комиссия Портер</span>
+                                <span class="kpi-icon">🚛</span>
                             </div>
-                            <div class="kpi-value" id="setting-porter-comm">-</div>
-                            <div class="kpi-sub">som per order</div>
+                            <div class="kpi-value" id="setting-porter-comm">—</div>
+                            <div class="kpi-sub">сом за заказ</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-header">
+                                <span class="kpi-label">Комиссия Муравей</span>
+                                <span class="kpi-icon">🐜</span>
+                            </div>
+                            <div class="kpi-value" id="setting-ant-comm">—</div>
+                            <div class="kpi-sub">сом за заказ</div>
                         </div>
                     </div>
 
                     <div class="table-container">
                         <div class="table-header">
-                            <div class="table-title">Runtime Settings</div>
-                            <button class="btn btn-primary btn-sm" onclick="saveSettings()">Save</button>
+                            <div class="table-title">⚙️ Настройки Таймаутов И Комиссий</div>
+                            <button class="btn btn-primary btn-sm" onclick="saveSettings()">💾 Сохранить</button>
                         </div>
 
-                        <div class="grid-2" style="padding:16px;">
+                        <div class="grid-2" style="padding: 16px;">
                             <div class="kpi-card" style="padding:16px;">
-                                <div class="kpi-header"><span class="kpi-label">Commissions</span></div>
-                                <div class="form-group"><label>Cafe (%)</label><input type="number" id="setting-input-cafe_commission_percent" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Taxi (som)</label><input type="number" id="setting-input-taxi_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Porter (som)</label><input type="number" id="setting-input-porter_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Ant (som)</label><input type="number" id="setting-input-ant_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Shopper (som)</label><input type="number" id="setting-input-shopper_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Taxi Shop (som)</label><input type="number" id="setting-input-taxi_shop_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Taxi Pharmacy (som)</label><input type="number" id="setting-input-taxi_pharmacy_commission" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Pharmacy (%)</label><input type="number" id="setting-input-pharmacy_commission_percent" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Taxi Low Price Comm (som)</label><input type="number" id="setting-input-taxi_custom_price_commission" min="0" step="0.01"></div>
+                                <div class="kpi-header"><span class="kpi-label">💰 Комиссии</span></div>
+                                <div class="form-group"><label>Кафе (%)</label><input type="number" id="setting-input-cafe_commission_percent" min="0" step="0.01"></div>
+                                <div class="form-group"><label>Такси (сом)</label><input type="number" id="setting-input-taxi_commission" min="0" step="0.01"></div>
+                                <div class="form-group"><label>Портер (сом)</label><input type="number" id="setting-input-porter_commission" min="0" step="0.01"></div>
+                                <div class="form-group"><label>Муравей (сом)</label><input type="number" id="setting-input-ant_commission" min="0" step="0.01"></div>
+                                <div class="form-group"><label>Такси: минимальная цена (сом)</label><input type="number" id="setting-input-taxi_custom_price_min" min="0" step="1"></div>
+                                <div class="form-group"><label>Такси: порог низкой цены (сом)</label><input type="number" id="setting-input-taxi_custom_price_threshold" min="0" step="1"></div>
                             </div>
 
                             <div class="kpi-card" style="padding:16px;">
-                                <div class="kpi-header"><span class="kpi-label">Fees and Thresholds</span></div>
-                                <div class="form-group"><label>Shop Delivery (som)</label><input type="number" id="setting-input-shop_delivery_fee" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Shopper Service (som)</label><input type="number" id="setting-input-shopper_service_fee" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Pharmacy Delivery (som)</label><input type="number" id="setting-input-pharmacy_delivery_fee" min="0" step="0.01"></div>
-                                <div class="form-group"><label>Taxi Custom Min (som)</label><input type="number" id="setting-input-taxi_custom_price_min" min="0" step="1"></div>
-                                <div class="form-group"><label>Taxi Low Price Threshold (som)</label><input type="number" id="setting-input-taxi_custom_price_threshold" min="0" step="1"></div>
-                            </div>
-
-                            <div class="kpi-card" style="padding:16px;">
-                                <div class="kpi-header"><span class="kpi-label">Timeouts (sec)</span></div>
-                                <div class="form-group"><label>Cafe Auction Timeout</label><input type="number" id="setting-input-cafe_auction_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>Pharmacy Response Timeout</label><input type="number" id="setting-input-pharmacy_response_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>Taxi Response Timeout</label><input type="number" id="setting-input-taxi_response_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>Taxi Accepted Cleanup</label><input type="number" id="setting-input-taxi_accepted_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>Pending Auto Cancel</label><input type="number" id="setting-input-pending_order_auto_cancel_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>In Delivery Auto Complete</label><input type="number" id="setting-input-in_delivery_auto_complete_timeout" min="0" step="1"></div>
+                                <div class="kpi-header"><span class="kpi-label">⏱️ Таймауты (секунды)</span></div>
+                                <div class="form-group"><label>Кафе: аукцион</label><input type="number" id="setting-input-cafe_auction_timeout" min="0" step="1"></div>
+                                <div class="form-group"><label>Аптека: ожидание ответа</label><input type="number" id="setting-input-pharmacy_response_timeout" min="0" step="1"></div>
+                                <div class="form-group"><label>Такси: ожидание водителя</label><input type="number" id="setting-input-taxi_response_timeout" min="0" step="1"></div>
+                                <div class="form-group"><label>Такси: очистка принятого</label><input type="number" id="setting-input-taxi_accepted_timeout" min="0" step="1"></div>
+                                <div class="form-group"><label>Автоотмена PENDING</label><input type="number" id="setting-input-pending_order_auto_cancel_timeout" min="0" step="1"></div>
+                                <div class="form-group"><label>Автозавершение IN_DELIVERY</label><input type="number" id="setting-input-in_delivery_auto_complete_timeout" min="0" step="1"></div>
                             </div>
                         </div>
                     </div>
