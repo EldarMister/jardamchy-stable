@@ -248,7 +248,7 @@ async function loadOrders() {
         }
 
         body.innerHTML = data.orders.map((o) => `
-            <tr>
+            <tr style="cursor:pointer" onclick="openOrderDetail('${o.order_id || o.id}')">
                 <td>${o.order_id || o.id || '—'}</td>
                 <td>${serviceTag(o.service_type)}</td>
                 <td>${statusBadge(o.status)}</td>
@@ -1454,6 +1454,48 @@ function renderServiceChart(containerId, services) {
 // ============================================================================
 // MODALS
 // ============================================================================
+
+async function openOrderDetail(orderId) {
+    const body = document.getElementById('modal-order-detail-body');
+    const title = document.getElementById('modal-order-detail-title');
+    title.textContent = `📋 Заказ ${orderId}`;
+    body.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted)">Загрузка...</div>';
+    openModal('modal-order-detail');
+
+    try {
+        const data = await api(`/orders/${orderId}`);
+        const o = data.order;
+
+        const paymentLabels = { cash: '💵 Наличные', mbank: '📱 МБанк', optima: '🏦 Оптима' };
+        const rows = [
+            ['ID заказа',       o.order_id || o.id],
+            ['Услуга',          serviceTag(o.service_type)],
+            ['Статус',          statusBadge(o.status)],
+            ['Клиент',          o.client_phone || '—'],
+            ['Адрес',           o.address || '—'],
+            ['Детали',          o.details || '—'],
+            ['Сумма',           `${formatMoney(o.price_total)} сом`],
+            ['Комиссия',        o.commission ? `${formatMoney(o.commission)} сом` : '—'],
+            ['Оплата',          paymentLabels[o.payment_method] || o.payment_method || '—'],
+            ['Водитель',        o.driver_id || o.provider_id || '—'],
+            ['Назначен в',      o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'],
+            ['Тип груза',       o.cargo_type || '—'],
+            ['Срочный',         o.is_urgent ? '🔥 Да' : 'Нет'],
+            ['Создан',          formatDate(o.created_at)],
+            ['Обновлён',        formatDate(o.updated_at)],
+            ['Завершён',        o.completed_at ? formatDate(o.completed_at) : '—'],
+        ];
+
+        body.innerHTML = rows.map(([label, value]) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <span style="color:var(--text-muted);min-width:140px;font-size:13px;flex-shrink:0">${label}</span>
+                <span style="font-size:14px;word-break:break-word">${value ?? '—'}</span>
+            </div>
+        `).join('');
+    } catch (err) {
+        body.innerHTML = '<div style="color:#e05252;padding:20px">Ошибка загрузки данных</div>';
+    }
+}
 
 function openModal(id) {
     document.getElementById(id).classList.add('show');

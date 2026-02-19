@@ -931,6 +931,19 @@
         </div>
     </div>
 
+    <!-- Модальное окно деталей заказа -->
+    <div class="modal-overlay" id="modal-order-detail">
+        <div class="modal" style="max-width:580px">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modal-order-detail-title">📋 Заказ</h3>
+                <button class="modal-close" onclick="closeModal('modal-order-detail')">✕</button>
+            </div>
+            <div class="modal-body" id="modal-order-detail-body">
+                <div style="text-align:center;padding:30px;color:var(--text-muted)">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
