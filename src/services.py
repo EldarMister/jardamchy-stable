@@ -436,7 +436,7 @@ def _transcribe_with_whisper(audio_content: bytes) -> str:
         
         files = {
             'file': ('audio.ogg', audio_content, 'audio/ogg'),
-            'model': (None, 'whisper-1'),
+            'model': (None, 'gpt-4o-mini-transcribe'),
             'language': (None, config.WHISPER_LANGUAGE),
             'prompt': (None, config.WHISPER_PROMPT),
         }
