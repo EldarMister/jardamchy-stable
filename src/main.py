@@ -773,7 +773,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('taxi_route', f"{from_addr} — {to_addr}")
             user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
             send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
-                from_address=from_addr, to_address=to_addr
+                from_address=from_addr, to_address=to_addr,
+                min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
             ))
         else:
             # Адреса не указаны — спрашиваем
@@ -1089,11 +1090,8 @@ def _submit_taxi_order(user: User, db) -> tuple:
         price=price_value
     )
     
-    # Определяем комиссию для отображения
-    if custom_price and float(custom_price) < _runtime_setting("taxi_custom_price_threshold", config.TAXI_CUSTOM_PRICE_THRESHOLD):
-        commission_info = f"💰 Комиссия: {_runtime_setting('taxi_custom_price_commission', config.TAXI_CUSTOM_PRICE_COMMISSION)} сом"
-    else:
-        commission_info = f"💰 Комиссия: {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом"
+    # Комиссия всегда фиксированная
+    commission_info = f"💰 Комиссия: {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом"
     
     # Цена в Telegram-сообщении
     price_display = f"{int(float(custom_price))} сом (цена клиента)" if custom_price else "договорная"
@@ -1784,7 +1782,9 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     price = _extract_price(message) if msg_lower not in ('1', '2') else None
     if price is not None:
         if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
-            send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
+            send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW.format(
+                min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
+            ))
             return jsonify({"status": "ok"}), 200
 
         user.set_temp_data('taxi_custom_price', price)
@@ -1794,7 +1794,9 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     # Клиент хочет предложить свою цену (кнопкой/словом)
     if msg_lower in ('btn_taxi_custom', 'да', 'yes', 'ооба', 'ообо', '1'):
         user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
+        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT.format(
+            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
+        ))
         return jsonify({"status": "ok"}), 200
     
     # Клиент отказался — сразу стандартный тариф
@@ -1812,7 +1814,9 @@ def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
     price = _extract_price(message)
 
     if price is None:
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
+        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT.format(
+            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
+        ))
         return jsonify({"status": "ok"}), 200
     
     if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):

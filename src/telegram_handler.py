@@ -682,13 +682,6 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         # Заказ захвачен - получаем данные для уведомлений
         order = db.get_order(order_id)
         
-        # Пересчитываем комиссию на основе реальной цены
-        custom_price = float(order.get('price_total', 0))
-        if custom_price > 0 and custom_price < _runtime_setting("taxi_custom_price_threshold", config.TAXI_CUSTOM_PRICE_THRESHOLD):
-            commission = _runtime_setting("taxi_custom_price_commission", config.TAXI_CUSTOM_PRICE_COMMISSION)
-            # Обновляем комиссию в заказе
-            db.update_order_status(order_id, config.ORDER_STATUS_IN_DELIVERY, driver_commission=commission)
-        
         # Сразу обновляем сообщение в группе
         updated_text = f"""🚖 *ЗАКАЗ ЗАБРАН* ✅
 

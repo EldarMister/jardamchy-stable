@@ -40,9 +40,9 @@ TAXI_PHARMACY_COMMISSION = 10  # 10 сом комиссия с таксиста 
 # Такси
 TAXI_COMMISSION = 10  # Фиксированная комиссия 10 сом
 TAXI_PRICE_RANGE = "100-150"  # Диапазон цен
-TAXI_CUSTOM_PRICE_MIN = 50        # Минимальная цена клиента
-TAXI_CUSTOM_PRICE_THRESHOLD = 70  # Если цена < 70 → сниженная комиссия
-TAXI_CUSTOM_PRICE_COMMISSION = 5  # Сниженная комиссия (5 сом вместо 10)
+TAXI_CUSTOM_PRICE_MIN = 70        # Минимальная цена клиента
+TAXI_CUSTOM_PRICE_THRESHOLD = 0   # Не используется
+TAXI_CUSTOM_PRICE_COMMISSION = 0  # Не используется
 
 # Портер
 PORTER_COMMISSION = 20  # Комиссия с портер 20 сом
@@ -382,17 +382,17 @@ TAXI_ASK_PRICE_PROMPT = """🚖 *Такси*
 
 🛣 *Маршрут:* {from_address} — {to_address}
 
-💰 Введите вашу цену (минимум 50 сом):
-Өз бааңызды жазыңыз (минимум 50 сом):"""
+💰 Введите вашу цену (минимум {min_price} сом):
+Өз бааңызды жазыңыз (минимум {min_price} сом):"""
 
-TAXI_CUSTOM_PRICE_PROMPT = """💰 Введите вашу цену (минимум 50 сом):
-Өзүңүздүн бааңызды жазыңыз (минимум 50 сом):"""
+TAXI_CUSTOM_PRICE_PROMPT = """💰 Введите вашу цену (минимум {min_price} сом):
+Өзүңүздүн бааңызды жазыңыз (минимум {min_price} сом):"""
 
-TAXI_CUSTOM_PRICE_TOO_LOW = """❌ Минимальная цена — 50 сом.
-Минималдуу баа — 50 сом.
+TAXI_CUSTOM_PRICE_TOO_LOW = """❌ Минимальная цена — {min_price} сом.
+Минималдуу баа — {min_price} сом.
 
-💰 Введите цену от 50 сом:
-Бааны 50 сомдон жазыңыз:"""
+💰 Введите цену от {min_price} сом:
+Бааны {min_price} сомдон жазыңыз:"""
 
 CONFIRM_CAFE = """🍔 *Кафе*
 
