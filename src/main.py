@@ -1733,6 +1733,46 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
     return _go_to_price_choice(current_from, current_to)
 
 
+def _extract_price(text: str) -> int | None:
+    """Извлекает цену из текста: цифры или числительные (рус/кырг)."""
+    nums = re.findall(r'\d+', text)
+    if nums:
+        return int(nums[0])
+
+    t = text.lower().strip()
+    t = re.sub(r'\bсом(ов)?\b', '', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+
+    # Порядок важен: составные формы до компонентов
+    WORDS = [
+        ('тысяча', 1000), ('тысячи', 1000), ('тысяч', 1000), ('миң', 1000),
+        ('девятьсот', 900), ('восемьсот', 800), ('семьсот', 700), ('шестьсот', 600),
+        ('пятьсот', 500), ('четыреста', 400), ('триста', 300), ('двести', 200), ('сто', 100),
+        ('беш жүз', 500), ('төрт жүз', 400), ('үч жүз', 300), ('эки жүз', 200), ('жүз', 100),
+        ('девяносто', 90), ('восемьдесят', 80), ('семьдесят', 70), ('шестьдесят', 60),
+        ('пятьдесят', 50), ('сорок', 40), ('тридцать', 30), ('двадцать', 20),
+        ('токсон', 90), ('сексен', 80), ('жетимиш', 70), ('алтымыш', 60),
+        ('элүү', 50), ('кырк', 40), ('отуз', 30), ('жыйырма', 20),
+        ('девятнадцать', 19), ('восемнадцать', 18), ('семнадцать', 17), ('шестнадцать', 16),
+        ('пятнадцать', 15), ('четырнадцать', 14), ('тринадцать', 13), ('двенадцать', 12),
+        ('одиннадцать', 11), ('десять', 10),
+        ('девять', 9), ('восемь', 8), ('семь', 7), ('шесть', 6), ('пять', 5),
+        ('четыре', 4), ('три', 3), ('две', 2), ('два', 2), ('одна', 1), ('один', 1),
+        ('тогуз', 9), ('сегиз', 8), ('жети', 7), ('алты', 6), ('беш', 5),
+        ('төрт', 4), ('үч', 3), ('эки', 2), ('бир', 1), ('он', 10),
+    ]
+
+    total = 0
+    found = False
+    for word, val in WORDS:
+        if word in t:
+            total += val
+            t = t.replace(word, '', 1)
+            found = True
+
+    return total if found and total > 0 else None
+
+
 def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     """Обработка выбора: предложить свою цену или нет"""
     msg_lower = message.lower().strip()
@@ -1740,10 +1780,9 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     from_addr = user.get_temp_data('taxi_from', '')
     to_addr = user.get_temp_data('taxi_to', '')
     
-    # Если клиент сразу прислал число, воспринимаем как предложенную цену
-    numbers = re.findall(r'\d+', message)
-    if numbers and msg_lower not in ('1', '2'):
-        price = int(numbers[0])
+    # Если клиент сразу прислал число или назвал цену голосом
+    price = _extract_price(message) if msg_lower not in ('1', '2') else None
+    if price is not None:
         if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
             send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
             return jsonify({"status": "ok"}), 200
@@ -1770,15 +1809,11 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
 
 def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
     """Обработка ввода своей цены клиентом"""
-    # Извлекаем число из сообщения
-    import re
-    numbers = re.findall(r'\d+', message)
-    
-    if not numbers:
+    price = _extract_price(message)
+
+    if price is None:
         send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
         return jsonify({"status": "ok"}), 200
-    
-    price = int(numbers[0])
     
     if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
         send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
