@@ -1820,9 +1820,11 @@ def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
         return jsonify({"status": "ok"}), 200
     
     if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW)
+        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW.format(
+            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
+        ))
         return jsonify({"status": "ok"}), 200
-    
+
     # Сохраняем цену и сразу отправляем заказ в поиск водителя
     user.set_temp_data('taxi_custom_price', price)
     return _submit_taxi_order(user, db)
