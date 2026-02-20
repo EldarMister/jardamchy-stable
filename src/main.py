@@ -1868,28 +1868,28 @@ def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
 
 def handle_porter_route(user: User, message: str, db) -> tuple:
     """Обработка маршрута портер — переход к подтверждению"""
-    nlu_result = parse_user_message(message)
-
-    from_addr = nlu_result.get("from_address")
-    to_addr = nlu_result.get("to_address")
-
-    # Если NLU не распознал from — берём всё сообщение как from
-    if not from_addr:
-        from_addr = message
-
-    # Если to не указан — переспрашиваем (не дублируем from в to)
-    if not to_addr:
-        user.set_temp_data('porter_from_partial', from_addr)
-        send_whatsapp(user.phone, "📍 Куда везем? / Кайда ташыйбыз?")
-        return jsonify({"status": "ok"}), 200
-
-    # Если пришёл только to (сохранён from из предыдущего шага)
-    saved_from = user.get_temp_data('porter_from_partial')
-    if saved_from and not nlu_result.get("from_address"):
-        from_addr = saved_from
-        user.set_temp_data('porter_from_partial', None)
-
     cargo_type = user.get_temp_data('porter_cargo_type', 'other')
+    saved_from = user.get_temp_data('porter_from_partial')
+
+    if saved_from:
+        # Уже ждём куда — берём сообщение как to_addr напрямую, без NLU
+        from_addr = saved_from
+        to_addr = message.strip()
+        user.set_temp_data('porter_from_partial', None)
+    else:
+        # Первый ввод — парсим NLU
+        nlu_result = parse_user_message(message)
+        from_addr = nlu_result.get("from_address")
+        to_addr = nlu_result.get("to_address")
+
+        if not from_addr:
+            from_addr = message
+
+        if not to_addr:
+            # to не найден — сохраняем from и спрашиваем куда
+            user.set_temp_data('porter_from_partial', from_addr)
+            send_whatsapp(user.phone, "📍 Куда везем? / Кайда ташыйбыз?")
+            return jsonify({"status": "ok"}), 200
     
     # Проверка на слишком общий адрес
     if _is_vague_address(from_addr) or _is_vague_address(to_addr):
