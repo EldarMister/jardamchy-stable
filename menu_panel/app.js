@@ -465,8 +465,8 @@ function showSuccess(data) {
     state.cart = { cafeId: null, items: {} };
     updateCartBar();
 
-    // Сразу открываем WhatsApp без показа модального окна
-    window.open(data.whatsapp_link, '_blank');
+    // Открываем WhatsApp (window.location.href работает на iOS, window.open блокируется)
+    window.location.href = data.whatsapp_link;
     
     // Показываем простое уведомление об успехе
     alert('Заказ оформлен! Открылся WhatsApp для отправки заказа.');
