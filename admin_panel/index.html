@@ -70,6 +70,9 @@
                 <div class="nav-item" data-section="settings">
                     <span class="nav-item-icon">⚙️</span> Настройки
                 </div>
+                <div class="nav-item" data-section="order-mgmt">
+                    <span class="nav-item-icon">🛠️</span> Управление
+                </div>
             </nav>
         </aside>
 
@@ -584,6 +587,20 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- ====== ORDER MANAGEMENT ====== -->
+                <div class="section" id="sec-order-mgmt">
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">🛠️ Управление заказами</div>
+                            <button class="btn btn-primary btn-sm" onclick="openCreateOrder()">➕ Создать заказ</button>
+                        </div>
+                        <div id="order-mgmt-list">
+                            <div class="empty-state">Загрузка...</div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </main>
 
@@ -977,6 +994,54 @@
             </div>
             <div class="modal-body" id="modal-order-detail-body">
                 <div style="text-align:center;padding:30px;color:var(--text-muted)">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Order Modal -->
+    <div class="modal-overlay" id="modal-create-order">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">➕ Создать заказ</h3>
+                <button class="modal-close" onclick="closeModal('modal-create-order')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Услуга *</label>
+                    <select id="co-service" onchange="onCoServiceChange()">
+                        <option value="taxi">🚖 Такси</option>
+                        <option value="cafe">🍔 Кафе</option>
+                        <option value="pharmacy">💊 Аптека</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Телефон клиента * (без +)</label>
+                    <input type="text" id="co-phone" placeholder="996XXXXXXXXX">
+                </div>
+                <div class="form-group">
+                    <label id="co-details-label">Маршрут (Откуда — Куда) *</label>
+                    <textarea id="co-details" rows="2" placeholder="Базар — Северная 12"></textarea>
+                </div>
+                <div class="form-group" id="co-address-group" style="display:none;">
+                    <label>Адрес доставки</label>
+                    <input type="text" id="co-address" placeholder="ул. Ленина 5">
+                </div>
+                <div class="form-group">
+                    <label>Оплата</label>
+                    <select id="co-payment">
+                        <option value="cash">Наличные</option>
+                        <option value="mbank">mBank</option>
+                        <option value="optima">Optima</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Цена (сом, 0 = договорная)</label>
+                    <input type="number" id="co-price" value="0" min="0" step="1">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-create-order')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitCreateOrder()">Создать</button>
             </div>
         </div>
     </div>

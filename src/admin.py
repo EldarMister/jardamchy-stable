@@ -615,6 +615,50 @@ def get_order_detail(order_id):
         return jsonify({"error": str(e)}), 500
 
 
+@admin_bp.route('/orders', methods=['POST'])
+def create_order_admin():
+    """Создать заказ из админки"""
+    try:
+        db = get_db()
+        body = request.json or {}
+        client_phone = body.get('client_phone', '').strip()
+        service_type = body.get('service_type', '').strip()
+        details = body.get('details', '').strip()
+        if not client_phone or not service_type or not details:
+            return jsonify({"error": "client_phone, service_type, details обязательны"}), 400
+        order_id = db.create_order(
+            client_phone=client_phone,
+            service_type=service_type,
+            details=details,
+            address=body.get('address') or None,
+            payment_method=body.get('payment_method') or None,
+            price=float(body.get('price') or 0),
+        )
+        return jsonify({"order_id": order_id}), 201
+    except Exception as e:
+        logger.exception("Error creating order from admin")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/orders/<order_id>', methods=['PATCH'])
+def patch_order_admin(order_id):
+    """Сменить статус заказа из админки"""
+    try:
+        db = get_db()
+        body = request.json or {}
+        status = body.get('status', '').strip().upper()
+        valid = {'PENDING', 'AUCTION', 'ACCEPTED', 'READY', 'IN_DELIVERY', 'COMPLETED', 'CANCELLED', 'URGENT'}
+        if status not in valid:
+            return jsonify({"error": f"Недопустимый статус: {status}"}), 400
+        ok = db.update_order_status(order_id, status)
+        if not ok:
+            return jsonify({"error": "Заказ не найден"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error patching order from admin")
+        return jsonify({"error": str(e)}), 500
+
+
 # =============================================================================
 # PHARMACIES
 # =============================================================================

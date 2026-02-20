@@ -94,6 +94,7 @@ const sectionTitles = {
     users: '👥 Пользователи',
     broadcast: '📢 Рассылка',
     settings: '⚙️ Настройки',
+    'order-mgmt': '🛠️ Управление заказами',
 };
 
 function navigate(section) {
@@ -137,6 +138,7 @@ function loadSectionData(section) {
         case 'users': loadUsers(); break;
         case 'settings': loadSettings(); break;
         case 'menu': loadMenuSection(); break;
+        case 'order-mgmt': loadOrderMgmt(); break;
     }
 }
 
@@ -1761,3 +1763,122 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentSection === 'dashboard') loadDashboard();
     }, REFRESH_INTERVAL);
 });
+
+// ============================================================================
+// ORDER MANAGEMENT
+// ============================================================================
+
+async function loadOrderMgmt() {
+    try {
+        const data = await api('/orders?limit=100');
+        const active = (data.orders || []).filter(
+            o => !['COMPLETED', 'CANCELLED'].includes(o.status)
+        );
+        renderOrderMgmt(active);
+    } catch (err) {
+        toast('Ошибка загрузки заказов', 'error');
+    }
+}
+
+function renderOrderMgmt(orders) {
+    const el = document.getElementById('order-mgmt-list');
+    if (!orders.length) {
+        el.innerHTML = '<div class="empty-state">Нет активных заказов</div>';
+        return;
+    }
+    const statuses = ['PENDING', 'AUCTION', 'ACCEPTED', 'READY', 'IN_DELIVERY', 'COMPLETED', 'CANCELLED', 'URGENT'];
+    const rows = orders.map(o => {
+        const svc = SERVICE_LABELS[o.service_type] || { icon: '?', name: o.service_type };
+        const st = STATUS_LABELS[o.status] || { label: o.status, cls: '' };
+        const opts = statuses.map(s =>
+            `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`
+        ).join('');
+        return `<tr>
+          <td>${o.order_id}</td>
+          <td>${svc.icon} ${svc.name}</td>
+          <td><span class="badge badge-${st.cls}">${st.label}</span></td>
+          <td>${o.client_phone || '—'}</td>
+          <td>${o.details || '—'}</td>
+          <td>${o.price_total ? o.price_total + ' сом' : '—'}</td>
+          <td style="white-space:nowrap;">
+            <select id="st-sel-${o.order_id}">${opts}</select>
+            <button class="btn btn-ghost btn-sm" onclick="applyOrderStatus('${o.order_id}')">✔</button>
+            <button class="btn btn-danger btn-sm" onclick="cancelOrder('${o.order_id}')">✕</button>
+          </td>
+        </tr>`;
+    }).join('');
+    el.innerHTML = `<table class="data-table"><thead><tr>
+        <th>ID</th><th>Услуга</th><th>Статус</th><th>Клиент</th><th>Детали</th><th>Сумма</th><th>Действия</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function openCreateOrder() {
+    document.getElementById('co-service').value = 'taxi';
+    document.getElementById('co-phone').value = '';
+    document.getElementById('co-details').value = '';
+    document.getElementById('co-address').value = '';
+    document.getElementById('co-price').value = '0';
+    onCoServiceChange();
+    openModal('modal-create-order');
+}
+
+function onCoServiceChange() {
+    const svc = document.getElementById('co-service').value;
+    const detailsLabel = document.getElementById('co-details-label');
+    const addrGroup = document.getElementById('co-address-group');
+    if (svc === 'taxi') {
+        detailsLabel.textContent = 'Маршрут (Откуда — Куда) *';
+        addrGroup.style.display = 'none';
+    } else if (svc === 'cafe') {
+        detailsLabel.textContent = 'Состав заказа *';
+        addrGroup.style.display = '';
+    } else {
+        detailsLabel.textContent = 'Что нужно (лекарства, описание) *';
+        addrGroup.style.display = 'none';
+    }
+}
+
+async function submitCreateOrder() {
+    const body = {
+        service_type: document.getElementById('co-service').value,
+        client_phone: document.getElementById('co-phone').value.trim(),
+        details: document.getElementById('co-details').value.trim(),
+        address: document.getElementById('co-address').value.trim() || null,
+        payment_method: document.getElementById('co-payment').value,
+        price: parseFloat(document.getElementById('co-price').value) || 0,
+    };
+    if (!body.client_phone || !body.details) {
+        toast('Заполните телефон и детали заказа', 'error');
+        return;
+    }
+    try {
+        const res = await api('/orders', { method: 'POST', body: JSON.stringify(body) });
+        toast(`Заказ создан: ${res.order_id}`, 'success');
+        closeModal('modal-create-order');
+        loadOrderMgmt();
+    } catch (err) {
+        toast('Ошибка создания заказа', 'error');
+    }
+}
+
+async function cancelOrder(orderId) {
+    if (!confirm(`Отменить заказ ${orderId}?`)) return;
+    try {
+        await api(`/orders/${orderId}`, { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) });
+        toast('Заказ отменён', 'success');
+        loadOrderMgmt();
+    } catch (err) {
+        toast('Ошибка отмены', 'error');
+    }
+}
+
+async function applyOrderStatus(orderId) {
+    const status = document.getElementById(`st-sel-${orderId}`).value;
+    try {
+        await api(`/orders/${orderId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+        toast(`Статус обновлён → ${status}`, 'success');
+        loadOrderMgmt();
+    } catch (err) {
+        toast('Ошибка смены статуса', 'error');
+    }
+}
