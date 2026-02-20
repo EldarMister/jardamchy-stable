@@ -1841,7 +1841,7 @@ def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
     cargo_type = nlu_result.get("cargo_type")
     if not cargo_type:
         msg_lower = message.lower()
-        if any(word in msg_lower for word in ["1", "мебель", "furniture"]):
+        if any(word in msg_lower for word in ["1", "мебель", "furniture", "эмерек"]):
             cargo_type = "furniture"
         elif any(word in msg_lower for word in ["2", "мусор", "trash", "таштанды"]):
             cargo_type = "trash"
@@ -1849,6 +1849,12 @@ def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
             cargo_type = "construction"
         elif any(word in msg_lower for word in ["4", "скот", "животные", "livestock", "мал"]):
             cargo_type = "livestock"
+        elif any(word in msg_lower for word in ["5", "продукт", "азык", "groceries", "еда", "тамак"]):
+            cargo_type = "groceries"
+        elif any(word in msg_lower for word in ["6", "вещи", "сумк", "bags", "баштык", "одежд"]):
+            cargo_type = "bags"
+        elif any(word in msg_lower for word in ["7", "техник", "appliances", "телевизор", "холодильник"]):
+            cargo_type = "appliances"
         else:
             cargo_type = "other"
     
@@ -1863,9 +1869,26 @@ def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
 def handle_porter_route(user: User, message: str, db) -> tuple:
     """Обработка маршрута портер — переход к подтверждению"""
     nlu_result = parse_user_message(message)
-    
-    from_addr = nlu_result.get("from_address") or message
-    to_addr = nlu_result.get("to_address") or message
+
+    from_addr = nlu_result.get("from_address")
+    to_addr = nlu_result.get("to_address")
+
+    # Если NLU не распознал from — берём всё сообщение как from
+    if not from_addr:
+        from_addr = message
+
+    # Если to не указан — переспрашиваем (не дублируем from в to)
+    if not to_addr:
+        user.set_temp_data('porter_from_partial', from_addr)
+        send_whatsapp(user.phone, "📍 Куда везем? / Кайда ташыйбыз?")
+        return jsonify({"status": "ok"}), 200
+
+    # Если пришёл только to (сохранён from из предыдущего шага)
+    saved_from = user.get_temp_data('porter_from_partial')
+    if saved_from and not nlu_result.get("from_address"):
+        from_addr = saved_from
+        user.set_temp_data('porter_from_partial', None)
+
     cargo_type = user.get_temp_data('porter_cargo_type', 'other')
     
     # Проверка на слишком общий адрес
