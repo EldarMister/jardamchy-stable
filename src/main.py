@@ -1658,7 +1658,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         user.set_temp_data('taxi_route', f"{from_address} — {to_address}")
         user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
         send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
-            from_address=from_address, to_address=to_address
+            from_address=from_address, to_address=to_address,
+            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
         ))
         return jsonify({"status": "ok"}), 200
 
