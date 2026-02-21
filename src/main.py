@@ -856,7 +856,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_state(config.STATE_CONFIRM_ORDER)
             
             confirm_msg = config.CONFIRM_PORTER.format(
-                cargo_type=config.CARGO_TYPES.get(cargo_type, cargo_type),
+                cargo_type=cargo_type,
                 from_address=from_addr,
                 to_address=to_addr
             )
@@ -1027,7 +1027,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         user.set_temp_data('porter_route', f"{from_addr} — {to_addr}")
         
         confirm_msg = config.CONFIRM_PORTER.format(
-            cargo_type=config.CARGO_TYPES.get(cargo_type, cargo_type),
+            cargo_type=cargo_type,
             from_address=from_addr,
             to_address=to_addr
         )
@@ -1268,8 +1268,16 @@ def _submit_pharmacy_order(user: User, db) -> tuple:
             "text": "💊 У нас есть (указать цену)",
             "callback": f"pharm_bid_{order_id}"
         }]
-        send_telegram_group(config.GROUP_PHARMACY_ID, telegram_msg, buttons)
-    
+        result = send_telegram_group(config.GROUP_PHARMACY_ID, telegram_msg, buttons)
+        if result:
+            db.create_auction_timer(
+                order_id=order_id,
+                service_type=config.SERVICE_PHARMACY,
+                telegram_message_id=str(result.get('message_id')),
+                chat_id=config.GROUP_PHARMACY_ID,
+                timeout_seconds=int(_runtime_setting("pharmacy_response_timeout", config.PHARMACY_RESPONSE_TIMEOUT))
+            )
+
     user.set_state(config.STATE_PHARMACY_WAIT_PRICE)
     user.set_temp_data('pharmacy_order_id', order_id)
     
@@ -1293,7 +1301,7 @@ def _submit_porter_order(user: User, db) -> tuple:
     )
     
     telegram_msg = config.PORTER_ORDER_TELEGRAM.format(
-        cargo_type=config.CARGO_TYPES.get(cargo_type, cargo_type),
+        cargo_type=cargo_type,
         route=route,
         phone=user.phone
     )
@@ -1302,9 +1310,17 @@ def _submit_porter_order(user: User, db) -> tuple:
         "text": "🚛 Взять груз",
         "callback": f"porter_take_{order_id}"
     }]
-    
-    send_telegram_group(config.GROUP_PORTER_ID, telegram_msg, buttons)
-    
+
+    result = send_telegram_group(config.GROUP_PORTER_ID, telegram_msg, buttons)
+    if result:
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type=config.SERVICE_PORTER,
+            telegram_message_id=str(result.get('message_id')),
+            chat_id=config.GROUP_PORTER_ID,
+            timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT))
+        )
+
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
     
@@ -1336,9 +1352,17 @@ def _submit_ant_order(user: User, db) -> tuple:
         "text": "🐜 Взять заказ",
         "callback": f"ant_take_{order_id}"
     }]
-    
-    send_telegram_group(config.GROUP_ANT_ID, telegram_msg, buttons)
-    
+
+    result = send_telegram_group(config.GROUP_ANT_ID, telegram_msg, buttons)
+    if result:
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type=config.SERVICE_ANT,
+            telegram_message_id=str(result.get('message_id')),
+            chat_id=config.GROUP_ANT_ID,
+            timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT))
+        )
+
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
     
@@ -1835,29 +1859,9 @@ def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
 # =============================================================================
 
 def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
-    """Обработка типа груза — ИИ определяет"""
-    nlu_result = parse_user_message(message)
-    
-    cargo_type = nlu_result.get("cargo_type")
-    if not cargo_type:
-        msg_lower = message.lower()
-        if any(word in msg_lower for word in ["1", "мебель", "furniture", "эмерек"]):
-            cargo_type = "furniture"
-        elif any(word in msg_lower for word in ["2", "мусор", "trash", "таштанды"]):
-            cargo_type = "trash"
-        elif any(word in msg_lower for word in ["3", "строй", "construction", "курулуш"]):
-            cargo_type = "construction"
-        elif any(word in msg_lower for word in ["4", "скот", "животные", "livestock", "мал"]):
-            cargo_type = "livestock"
-        elif any(word in msg_lower for word in ["5", "продукт", "азык", "groceries", "еда", "тамак"]):
-            cargo_type = "groceries"
-        elif any(word in msg_lower for word in ["6", "вещи", "сумк", "bags", "баштык", "одежд"]):
-            cargo_type = "bags"
-        elif any(word in msg_lower for word in ["7", "техник", "appliances", "телевизор", "холодильник"]):
-            cargo_type = "appliances"
-        else:
-            cargo_type = "other"
-    
+    """Обработка типа груза — сохраняем дословно"""
+    cargo_type = message.strip()
+
     user.set_temp_data('porter_cargo_type', cargo_type)
     user.set_state(config.STATE_PORTER_ROUTE)
     
@@ -1903,7 +1907,7 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
     user.set_state(config.STATE_CONFIRM_ORDER)
     
     confirm_msg = config.CONFIRM_PORTER.format(
-        cargo_type=config.CARGO_TYPES.get(cargo_type, cargo_type),
+        cargo_type=cargo_type,
         from_address=from_addr,
         to_address=to_addr
     )

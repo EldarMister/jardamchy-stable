@@ -751,8 +751,13 @@ class Database:
             cur.execute(
                 """SELECT o.*, at.telegram_message_id, at.chat_id
                    FROM orders o
-                   LEFT JOIN auction_timers at ON at.order_id = o.order_id
-                       AND at.is_processed = FALSE
+                   LEFT JOIN LATERAL (
+                       SELECT telegram_message_id, chat_id
+                       FROM auction_timers
+                       WHERE order_id = o.order_id
+                       ORDER BY created_at ASC
+                       LIMIT 1
+                   ) at ON TRUE
                    WHERE o.status IN ('PENDING', 'AUCTION', 'URGENT')
                      AND o.created_at <= CURRENT_TIMESTAMP - INTERVAL '%s minutes'
                    ORDER BY o.created_at ASC""",
