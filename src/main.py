@@ -1550,7 +1550,7 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
     """Обработка ответа клиента после отмены водителем: повторить заказ или начать новый."""
     msg_lower = (message or "").lower().strip()
 
-    yes_words = {"да", "ооба", "yes", "1", "btn_taxi_reorder_yes"}
+    yes_words = {"да", "оа", "ооба", "yes", "1", "btn_taxi_reorder_yes"}
     no_words = {"нет", "жок", "no", "2", "btn_taxi_reorder_no"}
 
     if msg_lower in yes_words:
@@ -1591,11 +1591,9 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
         send_whatsapp(user.phone, config.TAXI_PROMPT)
         return jsonify({"status": "ok"}), 200
 
-    send_whatsapp(
-        user.phone,
-        "🚖 Повторить тот же заказ?\n"
-        "Ооба болсо *Да*, жаңы маршрут болсо *Нет/Жок* деп жазыңыз."
-    )
+    # Нераспознанный ответ — не повторяем вопрос (только 1 раз), сбрасываем состояние
+    user.clear_temp_data()
+    user.set_state(config.STATE_INITIAL)
     return jsonify({"status": "ok"}), 200
 
 
