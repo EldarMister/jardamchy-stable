@@ -660,6 +660,43 @@ def patch_order_admin(order_id):
 
 
 # =============================================================================
+# CAFE SETTINGS (global discount)
+# =============================================================================
+
+@admin_bp.route('/cafe-settings', methods=['GET'])
+def admin_cafe_settings_get():
+    try:
+        db = get_db()
+        cafe_id = request.args.get('cafe_id')
+        if not cafe_id:
+            return jsonify({"error": "cafe_id required"}), 400
+        settings = db.get_cafe_settings(int(cafe_id))
+        return jsonify(settings), 200
+    except Exception as e:
+        logger.exception("Error getting cafe settings")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/cafe-settings', methods=['PUT'])
+def admin_cafe_settings_put():
+    try:
+        db = get_db()
+        data = request.get_json() or {}
+        cafe_id = data.get('cafe_id')
+        if not cafe_id:
+            return jsonify({"error": "cafe_id required"}), 400
+        success = db.update_cafe_settings(
+            int(cafe_id),
+            global_discount_percent=float(data.get('global_discount_percent', 0)),
+            global_discount_active=bool(data.get('global_discount_active', False))
+        )
+        return jsonify({"success": success}), 200
+    except Exception as e:
+        logger.exception("Error updating cafe settings")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
 # PHARMACIES
 # =============================================================================
 

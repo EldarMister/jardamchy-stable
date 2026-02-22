@@ -174,8 +174,8 @@ function renderDashboard(data) {
                 <span class="kpi-label">Выручка сегодня</span>
                 <span class="kpi-icon">💰</span>
             </div>
-            <div class="kpi-value">${formatMoney(today.revenue)} сом</div>
-            <div class="kpi-sub">Комиссия: ${formatMoney(today.commission)} сом</div>
+            <div class="kpi-value">${formatMoney(today.commission)} сом</div>
+            <div class="kpi-sub">Общий оборот: ${formatMoney(today.revenue)} сом</div>
         </div>
         <div class="kpi-card pink">
             <div class="kpi-header">
@@ -923,7 +923,7 @@ async function loadGlobalDiscount() {
     const cafeId = document.getElementById('menu-cafe-select').value;
     if (!cafeId) return;
     try {
-        const s = await api(`/../menu/api/admin/cafe-settings?cafe_id=${cafeId}`);
+        const s = await api(`/cafe-settings?cafe_id=${cafeId}`);
         document.getElementById('global-discount-active').value = s.global_discount_active ? 'true' : 'false';
         document.getElementById('global-discount-percent').value = s.global_discount_percent || '';
     } catch (e) {
@@ -935,7 +935,7 @@ async function saveGlobalDiscount() {
     const cafeId = document.getElementById('menu-cafe-select').value;
     if (!cafeId) { toast('Сначала выберите кафе', 'warning'); return; }
     try {
-        await api('/../menu/api/admin/cafe-settings', {
+        await api('/cafe-settings', {
             method: 'PUT',
             body: JSON.stringify({
                 cafe_id: parseInt(cafeId),
