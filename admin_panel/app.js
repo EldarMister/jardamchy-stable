@@ -175,7 +175,6 @@ function renderDashboard(data) {
                 <span class="kpi-icon">💰</span>
             </div>
             <div class="kpi-value">${formatMoney(today.commission)} сом</div>
-            <div class="kpi-sub">Общий оборот: ${formatMoney(today.revenue)} сом</div>
         </div>
         <div class="kpi-card pink">
             <div class="kpi-header">
@@ -774,14 +773,14 @@ function renderStats(data) {
                 <span class="kpi-label">Выручка ${periodNames[statsPeriod]}</span>
                 <span class="kpi-icon">💰</span>
             </div>
-            <div class="kpi-value">${formatMoney(p.revenue)} сом</div>
+            <div class="kpi-value">${formatMoney(p.commission)} сом</div>
         </div>
         <div class="kpi-card pink">
             <div class="kpi-header">
-                <span class="kpi-label">Комиссия ${periodNames[statsPeriod]}</span>
+                <span class="kpi-label">Общий оборот ${periodNames[statsPeriod]}</span>
                 <span class="kpi-icon">🏦</span>
             </div>
-            <div class="kpi-value">${formatMoney(p.commission)} сом</div>
+            <div class="kpi-value">${formatMoney(p.revenue)} сом</div>
         </div>
         <div class="kpi-card info">
             <div class="kpi-header">
