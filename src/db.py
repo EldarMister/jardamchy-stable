@@ -1340,19 +1340,19 @@ class Database:
             return [dict(row) for row in cur.fetchall()]
 
     def get_latest_auction_timer(self, order_id: str, service_type: str = None) -> Optional[Dict]:
-        """Получить последний таймер по заказу"""
+        """Получить последний таймер по заказу (независимо от is_processed — нужен message_id для редактирования)"""
         with self.get_cursor() as cur:
             if service_type:
                 cur.execute(
                     """SELECT * FROM auction_timers
-                       WHERE order_id = %s AND service_type = %s AND is_processed = FALSE
+                       WHERE order_id = %s AND service_type = %s
                        ORDER BY id DESC LIMIT 1""",
                     (order_id, service_type)
                 )
             else:
                 cur.execute(
                     """SELECT * FROM auction_timers
-                       WHERE order_id = %s AND is_processed = FALSE
+                       WHERE order_id = %s
                        ORDER BY id DESC LIMIT 1""",
                     (order_id,)
                 )
