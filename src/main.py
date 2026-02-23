@@ -776,7 +776,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
             send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
                 from_address=from_addr, to_address=to_addr,
-                min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
             ))
         else:
             # Адреса не указаны — спрашиваем
@@ -1705,7 +1704,6 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
         send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
             from_address=from_address, to_address=to_address,
-            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
         ))
         return jsonify({"status": "ok"}), 200
 
@@ -1865,11 +1863,9 @@ def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
     # Клиент хочет предложить свою цену (кнопкой/словом)
     if msg_lower in ('btn_taxi_custom', 'да', 'yes', 'ооба', 'ообо', '1'):
         user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT.format(
-            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
-        ))
+        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
         return jsonify({"status": "ok"}), 200
-    
+
     # Клиент отказался — сразу стандартный тариф
     if msg_lower in ('btn_taxi_standard', 'нет', 'no', 'жок', '2'):
         user.set_temp_data('taxi_custom_price', None)
@@ -1885,9 +1881,7 @@ def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
     price = _extract_price(message)
 
     if price is None:
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT.format(
-            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
-        ))
+        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
         return jsonify({"status": "ok"}), 200
     
     if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
