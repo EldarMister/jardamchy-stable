@@ -68,6 +68,84 @@ _SHORT_VOICE_OK = {
 _WHATSAPP_PRIVATE_SUFFIXES = ("@c.us", "@s.whatsapp.net", "@lid")
 _WHATSAPP_GROUP_SUFFIX = "@g.us"
 
+FLOW_SWITCH_PENDING_KEY = "flow_switch_pending"
+FLOW_SWITCH_MODE_INTENT_CONFLICT = "intent_conflict"
+FLOW_SWITCH_MODE_STALE_RESUME = "stale_resume"
+
+FLOW_SWITCH_BUTTON_YES = "btn_switch_yes"
+FLOW_SWITCH_BUTTON_NO = "btn_switch_no"
+FLOW_STALE_BUTTON_NEW = "btn_stale_new"
+FLOW_STALE_BUTTON_CONTINUE = "btn_stale_continue"
+
+FLOW_SWITCH_SCOPE = {
+    config.SERVICE_TAXI,
+    config.SERVICE_CAFE,
+    config.SERVICE_PORTER,
+    config.SERVICE_ANT,
+}
+FLOW_STALE_TTL_MINUTES = {
+    config.SERVICE_TAXI: 45,
+    config.SERVICE_CAFE: 240,
+    config.SERVICE_PORTER: 240,
+    config.SERVICE_ANT: 240,
+}
+FLOW_LABELS = {
+    config.SERVICE_TAXI: "Такси",
+    config.SERVICE_CAFE: "Кафе/Меню",
+    config.SERVICE_PORTER: "Груз",
+    config.SERVICE_ANT: "Муравей",
+}
+FLOW_LABELS_LOWER = {
+    config.SERVICE_TAXI: "такси",
+    config.SERVICE_CAFE: "кафе",
+    config.SERVICE_PORTER: "груз",
+    config.SERVICE_ANT: "муравей",
+}
+FLOW_BY_STATE = {
+    config.STATE_TAXI_ROUTE: config.SERVICE_TAXI,
+    config.STATE_TAXI_PRICE_CHOICE: config.SERVICE_TAXI,
+    config.STATE_TAXI_CUSTOM_PRICE: config.SERVICE_TAXI,
+    config.STATE_TAXI_REORDER_CHOICE: config.SERVICE_TAXI,
+    config.STATE_CAFE_ORDER: config.SERVICE_CAFE,
+    config.STATE_CAFE_ADDRESS: config.SERVICE_CAFE,
+    config.STATE_PORTER_CARGO_TYPE: config.SERVICE_PORTER,
+    config.STATE_PORTER_ROUTE: config.SERVICE_PORTER,
+    config.STATE_ANT_ROUTE: config.SERVICE_ANT,
+}
+EXPECTED_STEP_BY_STATE = {
+    config.STATE_TAXI_ROUTE: "ожидаю маршрут",
+    config.STATE_TAXI_PRICE_CHOICE: "ожидаю выбор тарифа",
+    config.STATE_TAXI_CUSTOM_PRICE: "ожидаю цену",
+    config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
+    config.STATE_CAFE_ORDER: "ожидаю список блюд",
+    config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
+    config.STATE_PORTER_CARGO_TYPE: "ожидаю тип груза",
+    config.STATE_PORTER_ROUTE: "ожидаю маршрут груза",
+    config.STATE_ANT_ROUTE: "ожидаю описание и маршрут",
+    config.STATE_CONFIRM_ORDER: "ожидаю подтверждение заказа",
+}
+
+FLOW_SWITCH_IGNORE_MESSAGES = {
+    "да", "ооба", "ok", "ок", "yes", "ага",
+    "нет", "жок", "no",
+    "продолжить", "continue",
+    "1", "2",
+}
+INTENT_KEYWORDS_CAFE = (
+    "кафе", "еда", "меню", "menu", "роллы", "рол", "пицца",
+    "ашкана", "тамак", "поесть", "жейм",
+)
+INTENT_KEYWORDS_TAXI = (
+    "такси", "taxi", "машина", "уехать", "поехать",
+    "откуда", "куда", "кайдан", "кайда", "унаа",
+)
+INTENT_KEYWORDS_ANT = (
+    "муравей", "желмаян",
+)
+INTENT_KEYWORDS_PORTER = (
+    "груз", "перевезти", "портер", "таш", "кум", "мал", "жүк", "жук",
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -215,6 +293,444 @@ def _reset_unknown_fallback(user: User) -> None:
     user.set_temp_data("fallback_unknown_count", 0)
     user.set_temp_data("fallback_unknown_last_at", None)
     user.set_temp_data("fallback_unknown_cooldown_until", None)
+
+
+def _resolve_active_flow(user: User) -> str | None:
+    flow = FLOW_BY_STATE.get(user.current_state)
+    if flow:
+        return flow
+    if user.current_state == config.STATE_CONFIRM_ORDER:
+        service_type = (user.get_temp_data("service_type") or "").strip().lower()
+        if service_type:
+            return service_type
+    return None
+
+
+def _resolve_flow_label(flow: str) -> str:
+    return FLOW_LABELS.get(flow, flow or "сценарию")
+
+
+def _resolve_flow_label_lower(flow: str) -> str:
+    return FLOW_LABELS_LOWER.get(flow, (flow or "сценарию").lower())
+
+
+def _resolve_expected_step(state: str) -> str:
+    return EXPECTED_STEP_BY_STATE.get(state, "ожидаю данные")
+
+
+def _extract_flow_keyword_intent(message: str) -> str | None:
+    normalized = _normalize_loose_text(message)
+    if not normalized or normalized in FLOW_SWITCH_IGNORE_MESSAGES:
+        return None
+
+    def _contains_any(keywords: tuple[str, ...]) -> bool:
+        tokens = normalized.split()
+        for keyword in keywords:
+            key = keyword.strip().lower()
+            if not key:
+                continue
+            if " " in key and key in normalized:
+                return True
+            if len(key) <= 3:
+                if key in tokens:
+                    return True
+                continue
+            if key in tokens or key in normalized:
+                return True
+        return False
+
+    if _contains_any(INTENT_KEYWORDS_ANT):
+        return config.SERVICE_ANT
+    if _contains_any(INTENT_KEYWORDS_CAFE):
+        return config.SERVICE_CAFE
+    if _contains_any(INTENT_KEYWORDS_TAXI):
+        return config.SERVICE_TAXI
+    if _contains_any(INTENT_KEYWORDS_PORTER):
+        return config.SERVICE_PORTER
+    return None
+
+
+def _get_user_updated_at_utc(user: User) -> datetime | None:
+    raw_value = getattr(user, "updated_at", None)
+    if raw_value is None:
+        return None
+
+    if isinstance(raw_value, datetime):
+        if raw_value.tzinfo is None:
+            return raw_value.replace(tzinfo=timezone.utc)
+        return raw_value.astimezone(timezone.utc)
+
+    if isinstance(raw_value, str):
+        return _parse_iso_utc(raw_value)
+
+    return None
+
+
+def _is_active_flow_stale(user: User, active_flow: str) -> bool:
+    ttl_minutes = FLOW_STALE_TTL_MINUTES.get(active_flow)
+    if not ttl_minutes:
+        return False
+
+    updated_at = _get_user_updated_at_utc(user)
+    if not updated_at:
+        return False
+
+    return (_utc_now() - updated_at) >= timedelta(minutes=ttl_minutes)
+
+
+def _build_flow_switch_pending(
+    mode: str,
+    user: User,
+    from_flow: str,
+    source_message: str,
+    to_flow: str | None = None,
+) -> dict:
+    return {
+        "mode": mode,
+        "from_flow": from_flow,
+        "to_flow": to_flow,
+        "source_message": source_message,
+        "state_snapshot": {
+            "state": user.current_state,
+            "service_type": user.get_temp_data("service_type"),
+        },
+        "created_at": _utc_now().isoformat(),
+    }
+
+
+def _set_flow_switch_pending(user: User, pending: dict) -> None:
+    user.set_temp_data(FLOW_SWITCH_PENDING_KEY, pending)
+
+
+def _clear_flow_switch_pending(user: User) -> None:
+    user.set_temp_data(FLOW_SWITCH_PENDING_KEY, None)
+
+
+def _get_flow_switch_pending(user: User) -> dict | None:
+    pending = user.get_temp_data(FLOW_SWITCH_PENDING_KEY)
+    if isinstance(pending, dict) and pending.get("mode"):
+        return pending
+    return None
+
+
+def _send_intent_conflict_prompt(user: User, pending: dict) -> None:
+    from_flow = pending.get("from_flow")
+    to_flow = pending.get("to_flow")
+    state_snapshot = pending.get("state_snapshot") or {}
+    current_state = state_snapshot.get("state", user.current_state)
+    expected_step = _resolve_expected_step(current_state)
+
+    from_label = _resolve_flow_label(from_flow)
+    to_label = _resolve_flow_label(to_flow)
+    from_lower = _resolve_flow_label_lower(from_flow)
+
+    prompt = (
+        f"Похоже, вы хотите перейти к {to_label}, но у вас не завершен {from_label} "
+        f"({expected_step}).\n"
+        f"Отменить текущий и перейти к {to_label}?"
+    )
+    buttons = [
+        {"text": "✅ Перейти", "id": FLOW_SWITCH_BUTTON_YES},
+        {"text": f"❌ Продолжить {from_lower}", "id": FLOW_SWITCH_BUTTON_NO},
+    ]
+    if not send_whatsapp_buttons(user.phone, prompt, buttons):
+        send_whatsapp(user.phone, prompt + "\n1. Перейти\n2. Продолжить")
+
+
+def _send_stale_flow_prompt(user: User, pending: dict) -> None:
+    from_flow = pending.get("from_flow")
+    state_snapshot = pending.get("state_snapshot") or {}
+    current_state = state_snapshot.get("state", user.current_state)
+    flow_label = _resolve_flow_label(from_flow)
+    expected_step = _resolve_expected_step(current_state)
+    prompt = (
+        f"Сценарий {flow_label} устарел ({expected_step}).\n"
+        "Продолжить прошлый заказ или начать новый?"
+    )
+    buttons = [
+        {"text": "✅ Начать новый", "id": FLOW_STALE_BUTTON_NEW},
+        {"text": "↩️ Продолжить прошлый", "id": FLOW_STALE_BUTTON_CONTINUE},
+    ]
+    if not send_whatsapp_buttons(user.phone, prompt, buttons):
+        send_whatsapp(user.phone, prompt + "\n1. Начать новый\n2. Продолжить прошлый")
+
+
+def _resend_confirm_step(user: User) -> bool:
+    service_type = (user.get_temp_data("service_type") or "").strip().lower()
+    if service_type == config.SERVICE_TAXI:
+        from_addr = user.get_temp_data("taxi_from", "")
+        to_addr = user.get_temp_data("taxi_to", "")
+        custom_price = user.get_temp_data("taxi_custom_price")
+        if custom_price:
+            try:
+                price = int(float(custom_price))
+            except (TypeError, ValueError):
+                price = custom_price
+            msg = config.CONFIRM_TAXI_CUSTOM_PRICE.format(
+                from_address=from_addr,
+                to_address=to_addr,
+                price=price,
+            )
+        else:
+            msg = config.CONFIRM_TAXI.format(
+                from_address=from_addr,
+                to_address=to_addr,
+            )
+        send_whatsapp(user.phone, msg)
+        return True
+
+    if service_type == config.SERVICE_CAFE:
+        send_whatsapp(
+            user.phone,
+            config.CONFIRM_CAFE.format(
+                order_details=user.get_temp_data("cafe_order_details", ""),
+                address=user.get_temp_data("cafe_address", ""),
+            ),
+        )
+        return True
+
+    if service_type == config.SERVICE_PORTER:
+        send_whatsapp(
+            user.phone,
+            config.CONFIRM_PORTER.format(
+                cargo_type=user.get_temp_data("porter_cargo_type", "other"),
+                from_address=user.get_temp_data("porter_from", ""),
+                to_address=user.get_temp_data("porter_to", ""),
+            ),
+        )
+        return True
+
+    if service_type == config.SERVICE_ANT:
+        send_whatsapp(
+            user.phone,
+            config.CONFIRM_ANT.format(
+                order_details=user.get_temp_data("ant_details", ""),
+                from_address=user.get_temp_data("ant_from", ""),
+                to_address=user.get_temp_data("ant_to", ""),
+            ),
+        )
+        return True
+
+    return False
+
+
+def _resend_current_step_prompt(user: User) -> None:
+    state = user.current_state
+    if state == config.STATE_TAXI_ROUTE:
+        send_whatsapp(user.phone, config.TAXI_PROMPT)
+        return
+    if state == config.STATE_TAXI_PRICE_CHOICE:
+        _send_taxi_price_choice(
+            user.phone,
+            user.get_temp_data("taxi_from", ""),
+            user.get_temp_data("taxi_to", ""),
+        )
+        return
+    if state == config.STATE_TAXI_CUSTOM_PRICE:
+        from_addr = user.get_temp_data("taxi_from", "")
+        to_addr = user.get_temp_data("taxi_to", "")
+        if from_addr and to_addr:
+            send_whatsapp(
+                user.phone,
+                config.TAXI_ASK_PRICE_PROMPT.format(
+                    from_address=from_addr,
+                    to_address=to_addr,
+                ),
+            )
+        else:
+            send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
+        return
+    if state == config.STATE_TAXI_REORDER_CHOICE:
+        send_whatsapp(
+            user.phone,
+            "Продолжим прошлый заказ такси.\n"
+            "1. Повторить заказ\n"
+            "2. Новый маршрут",
+        )
+        return
+    if state == config.STATE_CAFE_ORDER:
+        send_whatsapp(user.phone, config.CAFE_PROMPT)
+        return
+    if state == config.STATE_CAFE_ADDRESS:
+        send_whatsapp(user.phone, config.CAFE_ADDRESS_PROMPT)
+        return
+    if state == config.STATE_PORTER_CARGO_TYPE:
+        send_whatsapp(user.phone, config.PORTER_CARGO_PROMPT)
+        return
+    if state == config.STATE_PORTER_ROUTE:
+        send_whatsapp(user.phone, config.PORTER_ROUTE_PROMPT)
+        return
+    if state == config.STATE_ANT_ROUTE:
+        send_whatsapp(user.phone, config.ANT_PROMPT)
+        return
+    if state == config.STATE_CONFIRM_ORDER and _resend_confirm_step(user):
+        return
+
+    send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+
+
+def _abort_active_flow(user: User, db, pending: dict, reason: str) -> None:
+    details = {
+        "reason": reason,
+        "mode": pending.get("mode"),
+        "from_flow": pending.get("from_flow"),
+        "to_flow": pending.get("to_flow"),
+        "state_snapshot": pending.get("state_snapshot"),
+        "source_message": pending.get("source_message"),
+    }
+    db.log_transaction(
+        "WHATSAPP_FLOW_ABORTED",
+        user.phone,
+        details=json.dumps(details, ensure_ascii=False),
+    )
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    _reset_unknown_fallback(user)
+
+
+def _parse_pending_decision(mode: str, message: str) -> str | None:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return None
+
+    if mode == FLOW_SWITCH_MODE_INTENT_CONFLICT:
+        accept_values = {
+            FLOW_SWITCH_BUTTON_YES,
+            "1",
+            "да",
+            "ооба",
+            "yes",
+            "перейти",
+            "switch",
+        }
+        continue_values = {
+            FLOW_SWITCH_BUTTON_NO,
+            "2",
+            "нет",
+            "жок",
+            "no",
+            "продолжить",
+            "continue",
+        }
+        if normalized in accept_values or "перейти" in normalized:
+            return "switch"
+        if normalized in continue_values or "продолжить" in normalized:
+            return "continue"
+        return None
+
+    if mode == FLOW_SWITCH_MODE_STALE_RESUME:
+        new_values = {
+            FLOW_STALE_BUTTON_NEW,
+            "1",
+            "да",
+            "ооба",
+            "yes",
+            "начать новый",
+            "новый",
+            "заново",
+        }
+        continue_values = {
+            FLOW_STALE_BUTTON_CONTINUE,
+            "2",
+            "нет",
+            "жок",
+            "no",
+            "продолжить",
+            "continue",
+        }
+        if normalized in new_values or "начать новый" in normalized or "заново" in normalized:
+            return "new"
+        if normalized in continue_values or "продолжить" in normalized:
+            return "continue"
+        return None
+
+    return None
+
+
+def _handle_flow_switch_pending(user: User, message: str, db) -> tuple | None:
+    pending = _get_flow_switch_pending(user)
+    if not pending:
+        return None
+
+    mode = pending.get("mode")
+    decision = _parse_pending_decision(mode, message)
+    if not decision:
+        if mode == FLOW_SWITCH_MODE_INTENT_CONFLICT:
+            _send_intent_conflict_prompt(user, pending)
+        elif mode == FLOW_SWITCH_MODE_STALE_RESUME:
+            _send_stale_flow_prompt(user, pending)
+        return jsonify({"status": "ok"}), 200
+
+    source_message = (pending.get("source_message") or "").strip() or message
+
+    if mode == FLOW_SWITCH_MODE_INTENT_CONFLICT:
+        if decision == "switch":
+            _abort_active_flow(user, db, pending, "intent_conflict_switch")
+            return handle_idle_state(user, source_message, db)
+        _clear_flow_switch_pending(user)
+        _resend_current_step_prompt(user)
+        return jsonify({"status": "ok"}), 200
+
+    if mode == FLOW_SWITCH_MODE_STALE_RESUME:
+        if decision == "new":
+            _abort_active_flow(user, db, pending, "stale_start_new")
+            return handle_idle_state(user, source_message, db)
+        _clear_flow_switch_pending(user)
+        _resend_current_step_prompt(user)
+        return jsonify({"status": "ok"}), 200
+
+    _clear_flow_switch_pending(user)
+    return None
+
+
+def _maybe_prompt_flow_switch(user: User, message: str) -> tuple | None:
+    if user.current_state == config.STATE_IDLE:
+        return None
+
+    active_flow = _resolve_active_flow(user)
+    if active_flow not in FLOW_SWITCH_SCOPE:
+        return None
+
+    if _is_active_flow_stale(user, active_flow):
+        pending = _build_flow_switch_pending(
+            mode=FLOW_SWITCH_MODE_STALE_RESUME,
+            user=user,
+            from_flow=active_flow,
+            source_message=message,
+        )
+        _set_flow_switch_pending(user, pending)
+        logger.info(
+            "Flow stale prompt for %s: flow=%s state=%s",
+            user.phone,
+            active_flow,
+            user.current_state,
+        )
+        _send_stale_flow_prompt(user, pending)
+        return jsonify({"status": "ok"}), 200
+
+    detected_flow = _extract_flow_keyword_intent(message)
+    if not detected_flow or detected_flow == active_flow:
+        return None
+    if detected_flow not in FLOW_SWITCH_SCOPE:
+        return None
+
+    pending = _build_flow_switch_pending(
+        mode=FLOW_SWITCH_MODE_INTENT_CONFLICT,
+        user=user,
+        from_flow=active_flow,
+        to_flow=detected_flow,
+        source_message=message,
+    )
+    _set_flow_switch_pending(user, pending)
+    logger.info(
+        "Flow switch prompt for %s: from=%s to=%s state=%s",
+        user.phone,
+        active_flow,
+        detected_flow,
+        user.current_state,
+    )
+    _send_intent_conflict_prompt(user, pending)
+    return jsonify({"status": "ok"}), 200
 
 
 def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tuple:
@@ -598,8 +1114,15 @@ def handle_whatsapp():
         
         # Обработка кнопок (если есть)
         if button_response:
+            pending_result = _handle_flow_switch_pending(user, button_response, db)
+            if pending_result:
+                return pending_result
             _reset_unknown_fallback(user)
             return handle_button_response(user, button_response, db)
+
+        pending_result = _handle_flow_switch_pending(user, incoming_msg, db)
+        if pending_result:
+            return pending_result
         
         # === ROUTING ===
         
@@ -622,6 +1145,9 @@ def handle_whatsapp():
 
         if user.current_state != config.STATE_IDLE:
             _reset_unknown_fallback(user)
+            switch_prompt_result = _maybe_prompt_flow_switch(user, incoming_msg)
+            if switch_prompt_result:
+                return switch_prompt_result
 
         if user.current_state == config.STATE_TAXI_REORDER_CHOICE:
             return handle_taxi_reorder_choice(user, incoming_msg, db)

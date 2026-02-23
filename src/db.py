@@ -552,7 +552,8 @@ class Database:
                     name=row['name'] or '',
                     current_state=row['current_state'],
                     temp_data=dict(row['temp_data']) if row['temp_data'] else {},
-                    language=row['language']
+                    language=row['language'],
+                    updated_at=row.get('updated_at')
                 )
             
             # Создаем нового пользователя
@@ -577,7 +578,8 @@ class Database:
                 name=row['name'] or '',
                 current_state=row['current_state'],
                 temp_data={},
-                language=row['language']
+                language=row['language'],
+                updated_at=row.get('updated_at')
             )
     
     def update_user(self, user: 'User') -> bool:
@@ -1787,17 +1789,20 @@ class User:
     
     def __init__(self, phone: str, name: str = "", 
                  current_state: str = config.STATE_IDLE, 
-                 temp_data: Dict = None, language: str = "ru"):
+                 temp_data: Dict = None, language: str = "ru",
+                 updated_at: datetime = None):
         self.phone = phone
         self.name = name
         self.current_state = current_state
         self.temp_data = temp_data or {}
         self.language = language
+        self.updated_at = updated_at
     
     def set_state(self, state: str):
         """Установить состояние пользователя"""
         try:
             self.current_state = state
+            self.updated_at = datetime.utcnow()
             db = get_db()
             db.set_user_state(self.phone, state)
         except Exception as e:
@@ -1810,6 +1815,7 @@ class User:
         """Установить временные данные"""
         try:
             self.temp_data[key] = value
+            self.updated_at = datetime.utcnow()
             db = get_db()
             db.set_user_temp_data(self.phone, key, value)
         except Exception as e:
@@ -1825,6 +1831,7 @@ class User:
     def clear_temp_data(self):
         """Очистить временные данные"""
         self.temp_data = {}
+        self.updated_at = datetime.utcnow()
         db = get_db()
         db.clear_user_temp_data(self.phone)
 
