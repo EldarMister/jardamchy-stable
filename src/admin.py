@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import config
 from db import get_db, RUNTIME_SETTING_DEFAULTS
-from services import send_telegram_private, send_telegram_broadcast, send_telegram_group
+from services import send_telegram_private, send_telegram_broadcast, send_telegram_group, edit_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -653,6 +653,24 @@ def patch_order_admin(order_id):
         ok = db.update_order_status(order_id, status)
         if not ok:
             return jsonify({"error": "Заказ не найден"}), 404
+
+        # При отмене — редактируем сообщение в Telegram-группе
+        if status == 'CANCELLED':
+            try:
+                timer = db.get_latest_auction_timer(order_id)
+                if timer:
+                    chat_id = timer.get('chat_id')
+                    message_id = timer.get('telegram_message_id')
+                    if chat_id and message_id:
+                        edit_telegram_message(
+                            chat_id, int(message_id),
+                            "❌ *ЗАКАЗ ОТМЕНЁН*\n\nАдмин отменил заказ.",
+                            buttons=[]
+                        )
+                    db.mark_auction_processed(timer['id'])
+            except Exception:
+                logger.exception("Failed to edit group message on admin cancel order_id=%s", order_id)
+
         return jsonify({"ok": True}), 200
     except Exception as e:
         logger.exception("Error patching order from admin")

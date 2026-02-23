@@ -146,7 +146,8 @@ STATE_SHOP_WAIT_PRICE = "SHOP_WAIT_PRICE"
 STATE_SHOP_DELIVERY_CHOICE = "SHOP_DELIVERY_CHOICE"
 
 # Аптека
-STATE_PHARMACY_WAIT_RX = "PHARMACY_WAIT_RX"
+STATE_PHARMACY_WAIT_RX = "PHARMACY_WAIT_RX"             # Ждём название лекарства или ответ на вопрос о рецепте
+STATE_PHARMACY_WAIT_PRESCRIPTION = "PHARMACY_WAIT_PRESCRIPTION"  # Ждём фото/текст рецепта
 STATE_PHARMACY_WAIT_PRICE = "PHARMACY_WAIT_PRICE"
 STATE_PHARMACY_CONFIRM = "PHARMACY_CONFIRM"
 STATE_PHARMACY_ADDRESS = "PHARMACY_ADDRESS"
@@ -332,10 +333,21 @@ SHOP_CONFIRM_PROMPT = """🛒 *Подтверждение / Тастыктоо*
 # Аптека
 PHARMACY_PROMPT = """💊 *Аптека / Дарыкана*
 
-Это по назначению врача? / Бул дарыгердин дайындоосубу?
+Напишите название лекарства / Дарынын атын жазыңыз"""
 
-✅ *Да* - Пришлите фото рецепта / Рецептин сүрөтүн жөнөтүңүз
-✍️ *Нет* - Напишите название лекарства / Дарынын атын жазыңыз"""
+PHARMACY_ASK_RX = """💊 *Аптека / Дарыкана*
+
+📝 *Лекарство:* {medication}
+
+Это рецептурный препарат? / Дарыгердин жазып берген дарысыбы?
+
+✅ *Да / Ооба* — рецептурное
+❌ *Нет / Жок* — без рецепта"""
+
+PHARMACY_ASK_PRESCRIPTION_UPLOAD = """💊 *Аптека / Дарыкана*
+
+Отправьте фото рецепта или напишите его описание.
+Рецептин сүрөтүн жөнөтүңүз же текст менен жазыңыз."""
 
 PHARMACY_SEARCHING = """💊 *Ищем лекарство... / Дары издеп жатабыз...*
 

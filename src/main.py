@@ -646,6 +646,8 @@ def handle_whatsapp():
         # Аптека
         elif user.current_state == config.STATE_PHARMACY_WAIT_RX:
             return handle_pharmacy_request(user, incoming_msg, media_url, db)
+        elif user.current_state == config.STATE_PHARMACY_WAIT_PRESCRIPTION:
+            return handle_pharmacy_prescription_rx(user, incoming_msg, media_url, db)
         elif user.current_state == config.STATE_PHARMACY_ADDRESS:
             return handle_pharmacy_delivery_address(user, incoming_msg, db)
         
@@ -825,19 +827,18 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === АПТЕКА ===
     elif intent == "pharmacy":
         order_details = nlu_result.get("order_details")
-        
+        user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+
         if order_details:
-            # ИИ извлёк название лекарства — к подтверждению
-            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+            # ИИ извлёк название лекарства — спросить про рецепт
             user.set_temp_data('pharmacy_request', order_details)
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            
-            confirm_msg = config.CONFIRM_PHARMACY.format(order_details=order_details)
-            send_whatsapp(user.phone, confirm_msg)
+            user.set_state(config.STATE_PHARMACY_WAIT_RX)
+            send_whatsapp(user.phone, config.PHARMACY_ASK_RX.format(medication=order_details))
         else:
+            # Название неизвестно — попросить написать
             user.set_state(config.STATE_PHARMACY_WAIT_RX)
             send_whatsapp(user.phone, config.PHARMACY_PROMPT)
-        
+
         return jsonify({"status": "ok"}), 200
     
     # === ПОРТЕР ===
@@ -1261,22 +1262,22 @@ def _submit_pharmacy_order(user: User, db) -> tuple:
         phone=user.phone
     )
     
+    buttons = [{
+        "text": "💊 У нас есть (указать цену)",
+        "callback": f"pharm_bid_{order_id}"
+    }]
     if media_url:
-        send_telegram_photo(config.GROUP_PHARMACY_ID, media_url, telegram_msg)
+        result = send_telegram_photo(config.GROUP_PHARMACY_ID, media_url, telegram_msg, buttons=buttons)
     else:
-        buttons = [{
-            "text": "💊 У нас есть (указать цену)",
-            "callback": f"pharm_bid_{order_id}"
-        }]
         result = send_telegram_group(config.GROUP_PHARMACY_ID, telegram_msg, buttons)
-        if result:
-            db.create_auction_timer(
-                order_id=order_id,
-                service_type=config.SERVICE_PHARMACY,
-                telegram_message_id=str(result.get('message_id')),
-                chat_id=config.GROUP_PHARMACY_ID,
-                timeout_seconds=int(_runtime_setting("pharmacy_response_timeout", config.PHARMACY_RESPONSE_TIMEOUT))
-            )
+    if result:
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type=config.SERVICE_PHARMACY,
+            telegram_message_id=str(result.get('message_id')),
+            chat_id=config.GROUP_PHARMACY_ID,
+            timeout_seconds=int(_runtime_setting("pharmacy_response_timeout", config.PHARMACY_RESPONSE_TIMEOUT))
+        )
 
     user.set_state(config.STATE_PHARMACY_WAIT_PRICE)
     user.set_temp_data('pharmacy_order_id', order_id)
@@ -1455,18 +1456,67 @@ def handle_shop_list(user: User, message: str, db) -> tuple:
 # =============================================================================
 
 def handle_pharmacy_request(user: User, message: str, media_url: str, db) -> tuple:
-    """Обработка запроса в аптеку — переход к подтверждению"""
-    request_text = message if message else "(фото рецепта)"
-    user.set_temp_data('pharmacy_request', request_text)
-    user.set_temp_data('service_type', config.SERVICE_PHARMACY)
-    
+    """Обработка STATE_PHARMACY_WAIT_RX: либо ждём название лекарства, либо ответ да/нет на вопрос о рецепте"""
+    msg_lower = (message or "").lower().strip()
+    yes_words = {"да", "ооба", "yes", "ия", "oo"}
+    no_words  = {"нет", "жок", "no", "нет."}
+
+    existing_request = (user.get_temp_data('pharmacy_request', '') or '').strip()
+
+    if existing_request:
+        # Уже знаем лекарство — клиент отвечает да/нет на вопрос о рецепте
+        if msg_lower in yes_words:
+            user.set_state(config.STATE_PHARMACY_WAIT_PRESCRIPTION)
+            send_whatsapp(user.phone, config.PHARMACY_ASK_PRESCRIPTION_UPLOAD)
+        else:
+            # "нет" или любой другой ответ → без рецепта, к подтверждению
+            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            confirm_msg = config.CONFIRM_PHARMACY.format(order_details=existing_request)
+            send_whatsapp(user.phone, confirm_msg)
+    else:
+        # Ещё не знаем лекарство — клиент пишет название или отправляет фото рецепта
+        if media_url:
+            # Прислали фото рецепта без названия
+            user.set_temp_data('pharmacy_media_url', media_url)
+            medication = message.strip() if message and message.strip() else "(фото рецепта)"
+            user.set_temp_data('pharmacy_request', medication)
+            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
+            send_whatsapp(user.phone, confirm_msg)
+        elif message and message.strip():
+            # Написал название лекарства → теперь спросим про рецепт
+            medication = message.strip()
+            user.set_temp_data('pharmacy_request', medication)
+            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+            send_whatsapp(user.phone, config.PHARMACY_ASK_RX.format(medication=medication))
+            # Остаёмся в STATE_PHARMACY_WAIT_RX — теперь отвечает да/нет
+        else:
+            send_whatsapp(user.phone, config.PHARMACY_PROMPT)
+
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_pharmacy_prescription_rx(user: User, message: str, media_url: str, db) -> tuple:
+    """Получили фото или текст рецепта — добавляем к запросу и переходим к подтверждению"""
     if media_url:
         user.set_temp_data('pharmacy_media_url', media_url)
-    
+
+    medication = (user.get_temp_data('pharmacy_request', '') or '').strip()
+    if message and message.strip() and not media_url:
+        # Текстовое описание рецепта
+        medication = f"{medication} (рецепт: {message.strip()})"
+        user.set_temp_data('pharmacy_request', medication)
+    elif media_url:
+        # Фото рецепта — дополним пометкой
+        medication = f"{medication} + фото рецепта"
+        user.set_temp_data('pharmacy_request', medication)
+
+    user.set_temp_data('service_type', config.SERVICE_PHARMACY)
     user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.CONFIRM_PHARMACY.format(order_details=request_text)
+    confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
     send_whatsapp(user.phone, confirm_msg)
-    
     return jsonify({"status": "ok"}), 200
 
 
