@@ -646,11 +646,21 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                 f"📌 Пополните баланс и попробуйте снова."
             )
             return jsonify({"status": "ok"}), 200
-        
+
+        # Проверяем: нет ли у водителя уже активного заказа
+        active = db.get_driver_active_order(user_id)
+        if active and str(active.get('order_id')) != str(order_id):
+            send_telegram_private(
+                user_id,
+                f"⚠️ У вас уже есть активный заказ #{active['order_id']}.\n\n"
+                f"Завершите или отмените текущий заказ перед тем, как брать новый."
+            )
+            return jsonify({"status": "ok"}), 200
+
         # Предопределяем комиссию (без обращения к заказу)
         # Комиссия определяется позже на основе цены заказа
         commission = _runtime_setting("taxi_commission", config.TAXI_COMMISSION)  # default
-        
+
         # АТОМАРНЫЙ ЗАХВАТ: одним UPDATE проверяем и назначаем
         now = datetime.now()
         assigned = db.assign_order_to_driver(
@@ -998,14 +1008,24 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
-        
+
         if not driver:
             send_telegram_private(
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
             return jsonify({"status": "ok"}), 200
-        
+
+        # Проверяем: нет ли у портера уже активного заказа
+        active = db.get_driver_active_order(user_id)
+        if active and str(active.get('order_id')) != str(order_id):
+            send_telegram_private(
+                user_id,
+                f"⚠️ У вас уже есть активный заказ #{active['order_id']}.\n\n"
+                f"Завершите или отмените текущий заказ перед тем, как брать новый."
+            )
+            return jsonify({"status": "ok"}), 200
+
         # Атомарно назначаем водителя
         now = datetime.now()
         assigned = db.assign_order_to_driver(

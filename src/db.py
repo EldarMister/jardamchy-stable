@@ -1538,6 +1538,22 @@ class Database:
     # DRIVER STATISTICS
     # ==========================================================================
     
+    def get_driver_active_order(self, driver_id: str) -> Optional[Dict]:
+        """Вернуть активный заказ водителя (если есть незавершённый)"""
+        active_statuses = [
+            'PENDING', 'AUCTION', 'ACCEPTED', 'IN_DELIVERY', 'READY', 'URGENT'
+        ]
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT order_id, service_type, status, details
+                   FROM orders
+                   WHERE driver_id = %s AND status = ANY(%s)
+                   ORDER BY created_at DESC LIMIT 1""",
+                (str(driver_id), active_statuses)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     def get_driver_order_stats(self, telegram_id: str) -> Dict:
         """Получить статистику заказов водителя"""
         with self.get_cursor() as cur:

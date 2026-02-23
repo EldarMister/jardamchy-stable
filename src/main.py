@@ -1101,7 +1101,6 @@ def _submit_taxi_order(user: User, db) -> tuple:
         route=route,
         price=price_display,
         commission_info=commission_info,
-        phone=user.phone
     )
     
     buttons = [{
@@ -1304,7 +1303,6 @@ def _submit_porter_order(user: User, db) -> tuple:
     telegram_msg = config.PORTER_ORDER_TELEGRAM.format(
         cargo_type=cargo_type,
         route=route,
-        phone=user.phone
     )
     
     buttons = [{
