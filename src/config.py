@@ -79,15 +79,21 @@ SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
 # API КЛЮЧИ
 # =============================================================================
 
-# WhatsApp (Twilio или GREEN API)
-WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "green")  # "twilio" или "green"
+# WhatsApp (Cloud API, Twilio или GREEN API)
+WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "cloud")  # "cloud", "green" или "twilio"
 
-# GREEN API Settings
+# WhatsApp Cloud API Settings (Meta Graph API)
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "jardamchy_verify")
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v22.0")
+
+# GREEN API Settings (legacy)
 GREEN_API_INSTANCE = os.getenv("GREEN_API_INSTANCE", "")
 GREEN_API_TOKEN = os.getenv("GREEN_API_TOKEN", "")
 GREEN_API_URL = f"https://api.green-api.com/waInstance{GREEN_API_INSTANCE}"
 
-# Twilio Settings (альтернатива)
+# Twilio Settings (legacy)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")

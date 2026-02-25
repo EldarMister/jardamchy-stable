@@ -57,15 +57,31 @@ def create_app():
     
     # Регистрация роутов
     from main import handle_whatsapp, health_check
-    
+
     @app.route('/whatsapp_webhook', methods=['POST'])
     def whatsapp_webhook():
         return handle_whatsapp()
-    
+
+    # WhatsApp Cloud API webhook (GET — верификация, POST — сообщения)
+    @app.route('/webhook', methods=['GET'])
+    def webhook_verify():
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        if mode == 'subscribe' and token == config.WHATSAPP_VERIFY_TOKEN:
+            logger.info("WhatsApp Cloud API webhook verified")
+            return challenge, 200
+        logger.warning(f"Webhook verify failed: mode={mode} token={token}")
+        return 'Forbidden', 403
+
+    @app.route('/webhook', methods=['POST'])
+    def webhook_receive():
+        return handle_whatsapp()
+
     @app.route('/telegram_webhook', methods=['POST'])
     def telegram_webhook():
         return handle_telegram_webhook()
-    
+
     @app.route('/health', methods=['GET'])
     def health():
         return health_check()

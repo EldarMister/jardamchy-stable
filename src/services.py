@@ -18,7 +18,9 @@ import config
 
 def send_whatsapp(phone: str, message: str) -> bool:
     """Отправить сообщение в WhatsApp"""
-    if config.WHATSAPP_PROVIDER == "twilio":
+    if config.WHATSAPP_PROVIDER == "cloud":
+        return _send_whatsapp_cloud(phone, message)
+    elif config.WHATSAPP_PROVIDER == "twilio":
         return _send_whatsapp_twilio(phone, message)
     else:
         return _send_whatsapp_green(phone, message)
@@ -77,10 +79,133 @@ def _send_whatsapp_twilio(phone: str, message: str) -> bool:
         return False
 
 
+def _send_whatsapp_cloud(phone: str, message: str) -> bool:
+    """Отправить текстовое сообщение через WhatsApp Cloud API (Meta Graph API)"""
+    try:
+        url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "text",
+            "text": {"body": message, "preview_url": False},
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            print(f"[Cloud API] Message sent to {phone}")
+            return True
+        else:
+            print(f"[Cloud API] Error: {response.text}")
+            return False
+    except Exception as e:
+        print(f"[Cloud API] Exception: {e}")
+        return False
+
+
+def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) -> bool:
+    """Отправить интерактивное сообщение с кнопками через Cloud API (макс 3, заголовок макс 20 симв)"""
+    try:
+        url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+
+        cloud_buttons = []
+        for btn in buttons[:3]:
+            btn_id = (btn.get("id") or btn.get("text") or "btn")[:256]
+            btn_title = btn.get("text", "")[:20]
+            cloud_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": btn_title}})
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": message},
+                "action": {"buttons": cloud_buttons},
+            },
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            return True
+        else:
+            print(f"[Cloud API Buttons] Error: {response.text}, fallback to plain text")
+            return _send_whatsapp_cloud(phone, message)
+    except Exception as e:
+        print(f"[Cloud API Buttons] Exception: {e}")
+        return False
+
+
+def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") -> bool:
+    """Отправить изображение через Cloud API по публичному URL"""
+    try:
+        url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "image",
+            "image": {"link": image_url, "caption": caption},
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[Cloud API Image] Exception: {e}")
+        return False
+
+
+def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
+    """Скачать медиа из Cloud API по media_id (требует Bearer токен)"""
+    try:
+        # Шаг 1: получаем download URL из media_id
+        meta_url = f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}/{media_id}"
+        headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}"}
+        meta_resp = requests.get(meta_url, headers=headers, timeout=30)
+        if meta_resp.status_code != 200:
+            print(f"[Cloud API Media] Error getting URL for {media_id}: {meta_resp.text}")
+            return None
+        download_url = meta_resp.json().get("url")
+        if not download_url:
+            print(f"[Cloud API Media] No URL in response for {media_id}")
+            return None
+
+        # Шаг 2: скачиваем байты с авторизацией
+        dl_resp = requests.get(download_url, headers=headers, timeout=60)
+        if dl_resp.status_code != 200:
+            print(f"[Cloud API Media] Download failed {dl_resp.status_code}")
+            return None
+        return dl_resp.content
+    except Exception as e:
+        print(f"[Cloud API Media] Exception: {e}")
+        return None
+
+
 def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool:
     """Отправить интерактивное сообщение с кнопками в WhatsApp"""
     try:
-        if config.WHATSAPP_PROVIDER == "twilio":
+        if config.WHATSAPP_PROVIDER == "cloud":
+            return _send_whatsapp_buttons_cloud(phone, message, buttons)
+        elif config.WHATSAPP_PROVIDER == "twilio":
             return _send_whatsapp_buttons_twilio(phone, message, buttons)
         else:
             return _send_whatsapp_buttons_green(phone, message, buttons)
@@ -144,7 +269,9 @@ def _send_whatsapp_buttons_twilio(phone: str, message: str, buttons: List[Dict])
 def send_whatsapp_image(phone: str, image_url: str, caption: str = "") -> bool:
     """Отправить изображение в WhatsApp"""
     try:
-        if config.WHATSAPP_PROVIDER == "twilio":
+        if config.WHATSAPP_PROVIDER == "cloud":
+            return _send_whatsapp_image_cloud(phone, image_url, caption)
+        elif config.WHATSAPP_PROVIDER == "twilio":
             return _send_whatsapp_image_twilio(phone, image_url, caption)
         else:
             return _send_whatsapp_image_green(phone, image_url, caption)
@@ -310,17 +437,25 @@ def answer_telegram_callback(callback_query_id: str, text: str = "",
 
 def send_telegram_photo(chat_id: str, photo_url: str, caption: str = "",
                         buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
-    """Отправить фото в Telegram"""
+    """Отправить фото в Telegram. Поддерживает cloud_media: URL (Cloud API)."""
     try:
+        # Cloud API фото — скачиваем байты и загружаем как файл
+        if photo_url.startswith("cloud_media:"):
+            media_id = photo_url.split(":", 1)[1]
+            photo_bytes = _download_cloud_media_bytes(media_id)
+            if photo_bytes:
+                return _send_telegram_photo_bytes(chat_id, photo_bytes, caption, buttons)
+            return None
+
         url = f"{config.TELEGRAM_API_URL}/sendPhoto"
-        
+
         payload = {
             "chat_id": chat_id,
             "photo": photo_url,
             "caption": caption,
             "parse_mode": "Markdown"
         }
-        
+
         if buttons:
             inline_keyboard = []
             for btn in buttons:
@@ -328,19 +463,54 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str = "",
                     "text": btn["text"],
                     "callback_data": btn["callback"]
                 }])
-            
             payload["reply_markup"] = {"inline_keyboard": inline_keyboard}
-        
+
         response = requests.post(url, json=payload, timeout=30)
-        
+
         if response.status_code == 200:
             return response.json().get("result")
         else:
             print(f"Telegram photo error: {response.text}")
             return None
-            
+
     except Exception as e:
         print(f"Exception sending Telegram photo: {e}")
+        return None
+
+
+def _send_telegram_photo_bytes(chat_id: str, photo_bytes: bytes, caption: str = "",
+                                buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
+    """Загрузить фото в Telegram как multipart/form-data (для Cloud API медиа)"""
+    try:
+        url = f"{config.TELEGRAM_API_URL}/sendPhoto"
+
+        data: dict = {
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "Markdown",
+        }
+
+        if buttons:
+            inline_keyboard = []
+            for btn in buttons:
+                inline_keyboard.append([{
+                    "text": btn["text"],
+                    "callback_data": btn["callback"]
+                }])
+            data["reply_markup"] = json.dumps({"inline_keyboard": inline_keyboard})
+
+        files = {"photo": ("photo.jpg", photo_bytes, "image/jpeg")}
+
+        response = requests.post(url, data=data, files=files, timeout=30)
+
+        if response.status_code == 200:
+            return response.json().get("result")
+        else:
+            print(f"Telegram photo bytes error: {response.text}")
+            return None
+
+    except Exception as e:
+        print(f"Exception sending Telegram photo bytes: {e}")
         return None
 
 
@@ -411,15 +581,21 @@ def speech_to_text(audio_url: str) -> str:
     try:
         if not config.OPENAI_API_KEY:
             return "[Распознавание голоса недоступно - нет API ключа]"
-        
-        # Скачиваем аудио файл
+
+        # Cloud API media — скачиваем через Bearer токен
+        if audio_url.startswith("cloud_media:"):
+            media_id = audio_url.split(":", 1)[1]
+            audio_bytes = _download_cloud_media_bytes(media_id)
+            if not audio_bytes:
+                return "[Ошибка загрузки аудио]"
+            return _transcribe_with_whisper(audio_bytes)
+
+        # Обычный URL (Green API / Twilio) — прямая загрузка
         audio_response = requests.get(audio_url, timeout=30)
-        
         if audio_response.status_code != 200:
             return "[Ошибка загрузки аудио]"
-        
         return _transcribe_with_whisper(audio_response.content)
-            
+
     except Exception as e:
         print(f"Exception in speech_to_text: {e}")
         return "[Ошибка распознавания голоса]"

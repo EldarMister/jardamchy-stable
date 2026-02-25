@@ -231,6 +231,61 @@ def _extract_green_message_payload(message_data: dict) -> tuple:
     return (incoming_msg or "").strip(), media_url, media_type, (button_response or "").strip(), type_message
 
 
+def _extract_cloud_sender(value: dict) -> tuple:
+    """Извлечь номер отправителя из Cloud API webhook (entry.changes.value)."""
+    messages = value.get("messages", [])
+    if not messages:
+        return "", "private", ""
+    sender = (messages[0].get("from") or "").strip()
+    digits = "".join(ch for ch in sender if ch.isdigit())
+    return digits, "private", sender
+
+
+def _extract_cloud_message_payload(value: dict) -> tuple:
+    """Нормализовать входящие поля Cloud API для разных типов сообщений."""
+    incoming_msg = ""
+    media_url = ""
+    media_type = ""
+    button_response = ""
+    type_message = ""
+
+    messages = value.get("messages", [])
+    if not messages:
+        return incoming_msg, media_url, media_type, button_response, type_message
+
+    msg = messages[0]
+    msg_type = (msg.get("type") or "").strip()
+    type_message = msg_type
+
+    if msg_type == "text":
+        incoming_msg = msg.get("text", {}).get("body", "")
+    elif msg_type in ("audio", "voice"):
+        audio_data = msg.get("audio") or msg.get("voice") or {}
+        media_id = audio_data.get("id", "")
+        if media_id:
+            media_url = f"cloud_media:{media_id}"
+            media_type = "audio/ogg"
+    elif msg_type == "image":
+        image_data = msg.get("image", {})
+        media_id = image_data.get("id", "")
+        if media_id:
+            media_url = f"cloud_media:{media_id}"
+            media_type = "image/jpeg"
+        incoming_msg = image_data.get("caption", "")
+    elif msg_type == "interactive":
+        interactive = msg.get("interactive", {})
+        btn_reply = interactive.get("button_reply", {})
+        list_reply = interactive.get("list_reply", {})
+        button_response = btn_reply.get("id", "") or list_reply.get("id", "")
+        incoming_msg = btn_reply.get("title", "") or list_reply.get("title", "")
+    elif msg_type == "button":
+        btn = msg.get("button", {})
+        button_response = btn.get("payload", "")
+        incoming_msg = btn.get("text", "")
+
+    return (incoming_msg or "").strip(), media_url, media_type, (button_response or "").strip(), type_message
+
+
 def _parse_iso_utc(value):
     if not value or not isinstance(value, str):
         return None
@@ -1034,41 +1089,65 @@ def handle_whatsapp():
         button_response = ''
         type_message = ''
         
-        # 1. Попытка парсинга как JSON (Green API)
+        # 1. Попытка парсинга как JSON (Cloud API или Green API)
         if request.is_json:
             data = request.get_json()
-            
-            # Проверяем тип вебхука Green API
-            type_webhook = data.get('typeWebhook', '')
-            
-            # Обработка входящего сообщения
-            if type_webhook == 'incomingCall':
-                return jsonify({"status": "ignored"}), 200
 
-            if type_webhook == 'incomingMessageReceived':
-                sender_data = data.get('senderData', {})
-                message_data = data.get('messageData', {})
+            # --- WhatsApp Cloud API (Meta Graph API) ---
+            if data.get('object') == 'whatsapp_business_account':
+                entry = (data.get('entry') or [{}])[0]
+                changes = (entry.get('changes') or [{}])[0]
+                value = changes.get('value') or {}
 
-                sender_phone, sender_kind, raw_sender = _extract_green_sender(sender_data)
-                incoming_msg, media_url, media_type, button_response, type_message = _extract_green_message_payload(message_data)
+                # Только статусы доставки — игнорируем
+                if 'statuses' in value and 'messages' not in value:
+                    return jsonify({"status": "ignored"}), 200
 
-                logger.info(
-                    f"Green webhook type={type_message} sender_kind={sender_kind} sender={raw_sender}"
-                )
+                if 'messages' not in value:
+                    return jsonify({"status": "ignored"}), 200
 
-                # Игнорируем группы/невалидные sender id, чтобы не ломать маршрут клиента.
+                sender_phone, sender_kind, raw_sender = _extract_cloud_sender(value)
+                incoming_msg, media_url, media_type, button_response, type_message = _extract_cloud_message_payload(value)
+
+                logger.info(f"Cloud webhook type={type_message} sender={sender_phone}")
+
                 if not sender_phone:
-                    logger.warning(f"Green webhook skipped: empty sender ({raw_sender})")
+                    logger.warning(f"Cloud webhook skipped: empty sender")
                     return jsonify({"status": "ignored"}), 200
 
-                # Технические сообщения без текста/медиа не пропускаем в NLU.
                 if not incoming_msg and not media_url and not button_response:
-                    logger.info(f"Green webhook ignored: empty payload type={type_message}")
+                    logger.info(f"Cloud webhook ignored: empty payload type={type_message}")
                     return jsonify({"status": "ignored"}), 200
-                
-            elif type_webhook == 'outgoingMessageStatus':
-                return jsonify({"status": "ignored"}), 200
-                
+
+            # --- Green API ---
+            else:
+                type_webhook = data.get('typeWebhook', '')
+
+                if type_webhook == 'incomingCall':
+                    return jsonify({"status": "ignored"}), 200
+
+                if type_webhook == 'incomingMessageReceived':
+                    sender_data = data.get('senderData', {})
+                    message_data = data.get('messageData', {})
+
+                    sender_phone, sender_kind, raw_sender = _extract_green_sender(sender_data)
+                    incoming_msg, media_url, media_type, button_response, type_message = _extract_green_message_payload(message_data)
+
+                    logger.info(
+                        f"Green webhook type={type_message} sender_kind={sender_kind} sender={raw_sender}"
+                    )
+
+                    if not sender_phone:
+                        logger.warning(f"Green webhook skipped: empty sender ({raw_sender})")
+                        return jsonify({"status": "ignored"}), 200
+
+                    if not incoming_msg and not media_url and not button_response:
+                        logger.info(f"Green webhook ignored: empty payload type={type_message}")
+                        return jsonify({"status": "ignored"}), 200
+
+                elif type_webhook == 'outgoingMessageStatus':
+                    return jsonify({"status": "ignored"}), 200
+
         # 2. Попытка парсинга как Form Data (Twilio)
         if not sender_phone:
             incoming_msg = request.values.get('Body', '').strip()
@@ -1092,7 +1171,7 @@ def handle_whatsapp():
             return jsonify({"status": "error"}), 500
 
         is_voice_message = (
-            type_message in ("audioMessage", "pttMessage")
+            type_message in ("audioMessage", "pttMessage", "audio", "voice")
             or (media_type and media_type.lower().startswith("audio/"))
         )
 
