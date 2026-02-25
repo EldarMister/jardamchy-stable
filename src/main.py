@@ -15,7 +15,7 @@ from db import get_db, User, get_runtime_setting
 from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
     send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
-    speech_to_text, format_phone, format_currency
+    speech_to_text, format_phone, format_currency, send_confirmation_buttons
 )
 from nlu import parse_user_message, parse_confirmation
 
@@ -149,6 +149,12 @@ INTENT_KEYWORDS_PORTER = (
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _send_confirm_with_buttons(phone: str, msg: str) -> None:
+    """Отправить сообщение подтверждения + кнопки Да/Нет (только Cloud API)."""
+    send_whatsapp(phone, msg)
+    send_confirmation_buttons(phone)
 
 
 def _extract_green_sender(sender_data: dict) -> tuple:
@@ -531,11 +537,11 @@ def _resend_confirm_step(user: User) -> bool:
                 from_address=from_addr,
                 to_address=to_addr,
             )
-        send_whatsapp(user.phone, msg)
+        _send_confirm_with_buttons(user.phone, msg)
         return True
 
     if service_type == config.SERVICE_CAFE:
-        send_whatsapp(
+        _send_confirm_with_buttons(
             user.phone,
             config.CONFIRM_CAFE.format(
                 order_details=user.get_temp_data("cafe_order_details", ""),
@@ -545,7 +551,7 @@ def _resend_confirm_step(user: User) -> bool:
         return True
 
     if service_type == config.SERVICE_PORTER:
-        send_whatsapp(
+        _send_confirm_with_buttons(
             user.phone,
             config.CONFIRM_PORTER.format(
                 cargo_type=user.get_temp_data("porter_cargo_type", "other"),
@@ -556,7 +562,7 @@ def _resend_confirm_step(user: User) -> bool:
         return True
 
     if service_type == config.SERVICE_ANT:
-        send_whatsapp(
+        _send_confirm_with_buttons(
             user.phone,
             config.CONFIRM_ANT.format(
                 order_details=user.get_temp_data("ant_details", ""),
@@ -1421,7 +1427,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_state(config.STATE_CONFIRM_ORDER)
             
             confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
-            send_whatsapp(user.phone, confirm_msg)
+            _send_confirm_with_buttons(user.phone, confirm_msg)
         else:
             user.set_state(config.STATE_SHOP_LIST)
             send_whatsapp(user.phone, config.SHOP_PROMPT)
@@ -1465,7 +1471,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
                 from_address=from_addr,
                 to_address=to_addr
             )
-            send_whatsapp(user.phone, confirm_msg)
+            _send_confirm_with_buttons(user.phone, confirm_msg)
         elif cargo_type:
             # Есть тип груза, нет маршрута
             user.set_temp_data('porter_cargo_type', cargo_type)
@@ -1502,7 +1508,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
                 from_address=from_addr,
                 to_address=to_addr
             )
-            send_whatsapp(user.phone, confirm_msg)
+            _send_confirm_with_buttons(user.phone, confirm_msg)
         else:
             user.set_state(config.STATE_ANT_ROUTE)
             if order_details:
@@ -1587,7 +1593,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             from_address=from_addr,
             to_address=to_addr
         )
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_CAFE:
         if confirmation.get("corrected_details"):
@@ -1602,7 +1608,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             order_details=order_details,
             address=address
         )
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_SHOP:
         if confirmation.get("corrected_details"):
@@ -1610,7 +1616,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         
         order_details = user.get_temp_data('shop_list', '')
         confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PHARMACY:
         if confirmation.get("corrected_details"):
@@ -1618,7 +1624,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         
         order_details = user.get_temp_data('pharmacy_request', '')
         confirm_msg = config.CONFIRM_PHARMACY.format(order_details=order_details)
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PORTER:
         if confirmation.get("corrected_from"):
@@ -1636,7 +1642,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             from_address=from_addr,
             to_address=to_addr
         )
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_ANT:
         if confirmation.get("corrected_from"):
@@ -1671,7 +1677,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
             from_address=from_addr,
             to_address=to_addr
         )
-        send_whatsapp(user.phone, confirm_msg)
+        _send_confirm_with_buttons(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
 
@@ -2006,7 +2012,7 @@ def handle_cafe_address(user: User, message: str, db) -> tuple:
         order_details=order_details,
         address=message
     )
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
 
@@ -2033,7 +2039,7 @@ def handle_web_order_address(user: User, message: str, db) -> tuple:
         order_details=details,
         address=message
     )
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     return jsonify({"status": "ok"}), 200
 
 
@@ -2048,7 +2054,7 @@ def handle_shop_list(user: User, message: str, db) -> tuple:
     
     user.set_state(config.STATE_CONFIRM_ORDER)
     confirm_msg = config.CONFIRM_SHOP.format(order_details=message)
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
 
@@ -2075,7 +2081,7 @@ def handle_pharmacy_request(user: User, message: str, media_url: str, db) -> tup
             user.set_temp_data('service_type', config.SERVICE_PHARMACY)
             user.set_state(config.STATE_CONFIRM_ORDER)
             confirm_msg = config.CONFIRM_PHARMACY.format(order_details=existing_request)
-            send_whatsapp(user.phone, confirm_msg)
+            _send_confirm_with_buttons(user.phone, confirm_msg)
     else:
         # Ещё не знаем лекарство — клиент пишет название или отправляет фото рецепта
         if media_url:
@@ -2086,7 +2092,7 @@ def handle_pharmacy_request(user: User, message: str, media_url: str, db) -> tup
             user.set_temp_data('service_type', config.SERVICE_PHARMACY)
             user.set_state(config.STATE_CONFIRM_ORDER)
             confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
-            send_whatsapp(user.phone, confirm_msg)
+            _send_confirm_with_buttons(user.phone, confirm_msg)
         elif message and message.strip():
             # Написал название лекарства → теперь спросим про рецепт
             medication = message.strip()
@@ -2118,7 +2124,7 @@ def handle_pharmacy_prescription_rx(user: User, message: str, media_url: str, db
     user.set_temp_data('service_type', config.SERVICE_PHARMACY)
     user.set_state(config.STATE_CONFIRM_ORDER)
     confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     return jsonify({"status": "ok"}), 200
 
 
@@ -2557,7 +2563,7 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
         from_address=from_addr,
         to_address=to_addr
     )
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
 
@@ -2597,7 +2603,7 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
         from_address=from_addr,
         to_address=to_addr
     )
-    send_whatsapp(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     
     return jsonify({"status": "ok"}), 200
 
@@ -2609,20 +2615,42 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
 def handle_button_response(user: User, button_response: str, db) -> tuple:
     """Обработка нажатия кнопок в WhatsApp"""
     from client_confirm_handler import handle_pharmacy_client_confirm
-    
+
     try:
         _reset_unknown_fallback(user)
+
+        # Универсальное подтверждение заказа (Cloud API кнопки Да/Нет)
+        if user.current_state == config.STATE_CONFIRM_ORDER:
+            if button_response == "confirm_yes":
+                service_type = user.get_temp_data('service_type', '')
+                if service_type == config.SERVICE_TAXI:
+                    return _submit_taxi_order(user, db)
+                elif service_type == config.SERVICE_CAFE:
+                    return _submit_cafe_order(user, db)
+                elif service_type == config.SERVICE_SHOP:
+                    return _submit_shop_order(user, db)
+                elif service_type == config.SERVICE_PHARMACY:
+                    return _submit_pharmacy_order(user, db)
+                elif service_type == config.SERVICE_PORTER:
+                    return _submit_porter_order(user, db)
+                elif service_type == config.SERVICE_ANT:
+                    return _submit_ant_order(user, db)
+            elif button_response == "confirm_no":
+                user.set_state(config.STATE_IDLE)
+                user.clear_temp_data()
+                send_whatsapp(user.phone, config.ORDER_CANCELLED)
+                return jsonify({"status": "ok"}), 200
 
         # Такси: выбор цены
         if user.current_state == config.STATE_TAXI_PRICE_CHOICE:
             return handle_taxi_price_choice(user, button_response, db)
-        
+
         # Аптека: подтверждение
         if user.current_state == config.STATE_PHARMACY_CONFIRM:
             return handle_pharmacy_client_confirm(user, button_response, db)
-        
+
         return jsonify({"status": "ok"}), 200
-        
+
     except Exception as e:
         logger.exception("Error handling button response")
         return jsonify({"status": "error", "message": str(e)}), 500

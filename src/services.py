@@ -200,6 +200,17 @@ def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
         return None
 
 
+def send_confirmation_buttons(phone: str) -> bool:
+    """Отправить кнопки 'Да / Нет' для подтверждения заказа (Cloud API)"""
+    if config.WHATSAPP_PROVIDER != "cloud":
+        return False
+    buttons = [
+        {"id": "confirm_yes", "text": "✅ Да"},
+        {"id": "confirm_no", "text": "❌ Нет"},
+    ]
+    return _send_whatsapp_buttons_cloud(phone, "Подтверждаете заказ?", buttons)
+
+
 def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool:
     """Отправить интерактивное сообщение с кнопками в WhatsApp"""
     try:
