@@ -150,10 +150,10 @@ def _utc_now() -> datetime:
 
 
 def _send_confirm_with_buttons(phone: str, msg: str) -> None:
-    """Отправить подтверждение + кнопки Да/Нет в одном сообщении."""
-    buttons = [{"id": "confirm_yes", "text": "✅ Да"}, {"id": "confirm_no", "text": "❌ Нет"}]
+    """Отправить подтверждение + кнопки Ооба/Жок в одном сообщении."""
+    buttons = [{"id": "confirm_yes", "text": "✅ Ооба"}, {"id": "confirm_no", "text": "❌ Жок"}]
     if config.WHATSAPP_PROVIDER == "cloud":
-        send_whatsapp_buttons(phone, msg, buttons)
+        send_whatsapp_buttons(phone, msg, buttons, include_cancel=False)
     else:
         send_whatsapp(phone, msg)
         send_confirmation_buttons(phone)
@@ -2643,7 +2643,9 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             elif button_response == "confirm_no":
                 user.set_state(config.STATE_IDLE)
                 user.clear_temp_data()
-                send_whatsapp(user.phone, config.ORDER_CANCELLED)
+                _reset_unknown_fallback(user)
+                send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+                db.update_last_welcome(user.phone)
                 return jsonify({"status": "ok"}), 200
 
         # Аптека: подтверждение

@@ -263,16 +263,17 @@ def send_confirmation_buttons(phone: str) -> bool:
     if config.WHATSAPP_PROVIDER != "cloud":
         return False
     buttons = [
-        {"id": "confirm_yes", "text": "вњ… Р”Р°"},
-        {"id": "confirm_no", "text": "вќЊ РќРµС‚"},
+        {"id": "confirm_yes", "text": "✅ Ооба"},
+        {"id": "confirm_no", "text": "❌ Жок"},
     ]
-    return _send_whatsapp_buttons_cloud(phone, "РџРѕРґС‚РІРµСЂР¶РґР°РµС‚Рµ Р·Р°РєР°Р·?", _with_cancel_button(buttons))
+    return _send_whatsapp_buttons_cloud(phone, "Тастыктайсызбы?", buttons)
 
 
-def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool:
+def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict], include_cancel: bool = True) -> bool:
     """РћС‚РїСЂР°РІРёС‚СЊ РёРЅС‚РµСЂР°РєС‚РёРІРЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ СЃ РєРЅРѕРїРєР°РјРё РІ WhatsApp"""
     try:
-        buttons = _with_cancel_button(buttons)
+        if include_cancel:
+            buttons = _with_cancel_button(buttons)
         if config.WHATSAPP_PROVIDER == "cloud":
             return _send_whatsapp_buttons_cloud(phone, message, buttons)
         elif config.WHATSAPP_PROVIDER == "twilio":
