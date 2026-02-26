@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import config
 from db import get_db, RUNTIME_SETTING_DEFAULTS
-from services import send_telegram_private, send_telegram_broadcast, send_telegram_group, edit_telegram_message
+from services import send_telegram_private, send_telegram_broadcast, send_telegram_group, edit_telegram_message, send_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -1154,6 +1154,32 @@ def unblock_chat_user(phone):
         return jsonify({"success": True}), 200
     except Exception as e:
         logger.exception("Error unblocking user")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/chats/<phone>/send', methods=['POST'])
+def send_chat_message(phone):
+    """Отправить сообщение пользователю из админ-панели."""
+    try:
+        data = request.get_json(silent=True) or {}
+        message = (data.get('message') or '').strip()
+        if not message:
+            return jsonify({"error": "Message is required"}), 400
+        if len(message) > 4000:
+            return jsonify({"error": "Message is too long (max 4000 chars)"}), 400
+
+        ok = send_whatsapp(phone, message)
+        if not ok:
+            return jsonify({"error": "Failed to send WhatsApp message"}), 500
+
+        # Cloud provider already logs outgoing messages with wa_message_id.
+        if config.WHATSAPP_PROVIDER != "cloud":
+            db = get_db()
+            db.save_message(phone=phone, direction='out', body=message, msg_type='text')
+
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.exception("Error sending chat message from admin panel")
         return jsonify({"error": str(e)}), 500
 
 

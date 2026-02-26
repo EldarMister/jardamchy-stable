@@ -1573,3 +1573,21 @@ textarea:focus {
     border: none;
 }
 .btn-success:hover { opacity: 0.88; }
+
+.chat-compose-panel {
+    display: flex;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-glass);
+    background: rgba(0,0,0,0.18);
+}
+.chat-reply-input {
+    flex: 1;
+    min-height: 44px;
+    max-height: 120px;
+    resize: vertical;
+}
+.chat-reply-send {
+    flex-shrink: 0;
+    min-width: 120px;
+}

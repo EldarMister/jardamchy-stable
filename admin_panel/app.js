@@ -1930,13 +1930,21 @@ async function openChat(phone) {
     document.getElementById('sec-chat-detail').classList.add('active');
     document.getElementById('header-title').textContent = `💬 +${phone}`;
     document.getElementById('chat-detail-title').textContent = `+${phone}`;
+    const input = document.getElementById('chat-reply-input');
+    if (input) {
+        input.value = '';
+        input.focus();
+    }
     loadBlockStatus(phone);
+    await loadChatMessages(phone);
+}
 
+async function loadChatMessages(phone) {
     const wrap = document.getElementById('chat-messages-wrap');
     wrap.innerHTML = '<div class="empty-state">Загрузка...</div>';
 
     try {
-        const messages = await api(`/chats/${phone}`);
+        const messages = await api(`/chats/${encodeURIComponent(phone)}`);
         if (!messages.length) {
             wrap.innerHTML = '<div class="empty-state">Нет сообщений</div>';
             return;
@@ -1956,7 +1964,6 @@ async function openChat(phone) {
                 </div>
             </div>`;
         }).join('');
-        // Скролл вниз
         wrap.scrollTop = wrap.scrollHeight;
     } catch (err) {
         wrap.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
@@ -2005,5 +2012,37 @@ async function unblockUser() {
         loadBlockStatus(currentChatPhone);
     } catch (_) {
         toast('Ошибка разблокировки', 'error');
+    }
+}
+
+function handleChatReplyKeydown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage();
+    }
+}
+
+async function sendChatMessage() {
+    if (!currentChatPhone) return;
+    const input = document.getElementById('chat-reply-input');
+    if (!input) return;
+    const message = (input.value || '').trim();
+    if (!message) {
+        toast('Введите сообщение', 'error');
+        return;
+    }
+
+    try {
+        await api(`/chats/${encodeURIComponent(currentChatPhone)}/send`, {
+            method: 'POST',
+            body: JSON.stringify({ message }),
+            headers: { 'Content-Type': 'application/json' },
+        });
+        input.value = '';
+        await loadChatMessages(currentChatPhone);
+        loadChats();
+        toast('Сообщение отправлено', 'success');
+    } catch (err) {
+        toast('Ошибка отправки: ' + err.message, 'error');
     }
 }

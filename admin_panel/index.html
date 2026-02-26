@@ -628,6 +628,16 @@
                         </div>
                         <div id="chat-messages-wrap" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:8px;">
                         </div>
+                        <div class="chat-compose-panel" style="flex-shrink:0;">
+                            <textarea
+                                id="chat-reply-input"
+                                class="chat-reply-input"
+                                rows="2"
+                                placeholder="Напишите сообщение клиенту..."
+                                onkeydown="handleChatReplyKeydown(event)"
+                            ></textarea>
+                            <button class="btn btn-primary btn-sm chat-reply-send" onclick="sendChatMessage()">Отправить</button>
+                        </div>
                     </div>
                 </div>
 
