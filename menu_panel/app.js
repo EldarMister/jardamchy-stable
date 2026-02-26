@@ -4,6 +4,9 @@
 
 const API_BASE = '/menu/api';
 
+// DOM cache — populated on DOMContentLoaded to avoid repeated querySelector calls
+const DOM = {};
+
 // State
 let state = {
     cafes: [],
@@ -20,10 +23,21 @@ let state = {
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
-    loadCafes();
+    DOM.cafeGrid = document.getElementById('cafeGrid');
+    DOM.menuList = document.getElementById('menuList');
+    DOM.categoryStrip = document.getElementById('categoryStrip');
+    DOM.categoryBackBar = document.getElementById('categoryBackBar');
+    DOM.cartBar = document.getElementById('cartBar');
+    DOM.barTotal = document.getElementById('barTotal');
+    DOM.barCount = document.getElementById('barCount');
+    DOM.loader = document.getElementById('loader');
+    DOM.pageTitle = document.getElementById('pageTitle');
+    DOM.backBtn = document.getElementById('backBtn');
+    DOM.cartModal = document.getElementById('cartModal');
+    DOM.cartItemsList = document.getElementById('cartItemsList');
+    DOM.cartModalTotal = document.getElementById('cartModalTotal');
 
-    // Check if we have a saved cart in localStorage?
-    // For MVP, start fresh.
+    loadCafes();
 });
 
 // --- API Calls ---
@@ -106,14 +120,14 @@ async function sendOrder(orderData) {
 
 // --- Rendering ---
 function renderCafes(cafes) {
-    const grid = document.getElementById('cafeGrid');
-    grid.innerHTML = '';
+    DOM.cafeGrid.innerHTML = '';
 
     if (cafes.length === 0) {
-        grid.innerHTML = '<p class="text-muted" style="text-align:center;">Нет активных кафе</p>';
+        DOM.cafeGrid.innerHTML = '<p class="text-muted" style="text-align:center;">Нет активных кафе</p>';
         return;
     }
 
+    const frag = document.createDocumentFragment();
     cafes.forEach(cafe => {
         const card = document.createElement('div');
         card.className = 'cafe-card';
@@ -129,26 +143,26 @@ function renderCafes(cafes) {
                 </div>
             </div>
         `;
-        grid.appendChild(card);
+        frag.appendChild(card);
     });
+    DOM.cafeGrid.appendChild(frag);
 }
 
 function renderMenu(items, cafe) {
-    const list = document.getElementById('menuList');
-    list.innerHTML = '';
+    DOM.menuList.innerHTML = '';
 
     // Update header
-    document.getElementById('pageTitle').innerText = cafe.name;
-    document.getElementById('backBtn').style.display = 'block';
+    DOM.pageTitle.innerText = cafe.name;
+    DOM.backBtn.style.display = 'block';
 
     if (items.length === 0) {
-        list.innerHTML = '<p class="text-muted" style="text-align:center;">Меню пусто</p>';
+        DOM.menuList.innerHTML = '<p class="text-muted" style="text-align:center;">Меню пусто</p>';
         return;
     }
 
     // Фильтрация по активной категории
     if (!state.activeCategory) {
-        list.innerHTML = '<p class="text-muted" style="text-align:center;">Выберите категорию, чтобы увидеть блюда</p>';
+        DOM.menuList.innerHTML = '<p class="text-muted" style="text-align:center;">Выберите категорию, чтобы увидеть блюда</p>';
         updateCategoryVisibility();
         return;
     }
@@ -182,11 +196,12 @@ function renderMenu(items, cafe) {
     };
     const defaultEmoji = '🍽️';
 
+    const frag = document.createDocumentFragment();
     Object.keys(grouped).forEach(cat => {
         const header = document.createElement('div');
         header.className = 'category-header';
         header.innerHTML = `<div class="category-title">${cat}</div>`;
-        list.appendChild(header);
+        frag.appendChild(header);
 
         grouped[cat].forEach(item => {
             const div = document.createElement('div');
@@ -209,9 +224,10 @@ function renderMenu(items, cafe) {
                     ${renderItemControls(item, count)}
                 </div>
             `;
-            list.appendChild(div);
+            frag.appendChild(div);
         });
     });
+    DOM.menuList.appendChild(frag);
 
     updateCartBar();
     updateCategoryBack();
@@ -230,17 +246,16 @@ function deriveCategoriesFromItems(items) {
 }
 
 function renderCategories() {
-    const wrap = document.getElementById('categoryStrip');
-    if (!wrap) return;
-    wrap.innerHTML = '';
+    if (!DOM.categoryStrip) return;
+    DOM.categoryStrip.innerHTML = '';
 
     // Показываем категории только когда не выбрана активная
     if (state.activeCategory) {
-        wrap.style.display = 'none';
+        DOM.categoryStrip.style.display = 'none';
         return;
     }
 
-    wrap.style.display = 'grid';
+    DOM.categoryStrip.style.display = 'grid';
 
     // Сортируем категории по sort_order (ASC), затем по имени (ASC)
     const sortedCategories = [...state.categories].sort((a, b) => {
@@ -252,6 +267,7 @@ function renderCategories() {
 
     const cats = [{ id: 'all', name: 'Все блюда' }, ...sortedCategories];
 
+    const frag = document.createDocumentFragment();
     cats.forEach(cat => {
         const card = document.createElement('div');
         card.className = 'category-card';
@@ -268,8 +284,9 @@ function renderCategories() {
                 <div class="cat-name">${cat.name}</div>
             </div>
         `;
-        wrap.appendChild(card);
+        frag.appendChild(card);
     });
+    DOM.categoryStrip.appendChild(frag);
 }
 
 function resetCategorySelection() {
@@ -281,30 +298,28 @@ function resetCategorySelection() {
 }
 
 function updateCategoryBack() {
-    const back = document.getElementById('categoryBackBar');
     if (state.activeCategory && state.activeCategory !== 'all') {
-        back.style.display = 'block';
+        DOM.categoryBackBar.style.display = 'block';
     } else {
-        back.style.display = 'none';
+        DOM.categoryBackBar.style.display = 'none';
     }
 }
 
 function updateHeaderTitle() {
     const base = state.currentCafe ? state.currentCafe.name : 'Jardamchy GO 🍔';
     if (state.activeCategory && state.activeCategory !== 'all' && state.activeCategoryName) {
-        document.getElementById('pageTitle').innerText = `${base} • ${state.activeCategoryName}`;
+        DOM.pageTitle.innerText = `${base} • ${state.activeCategoryName}`;
     } else {
-        document.getElementById('pageTitle').innerText = base;
+        DOM.pageTitle.innerText = base;
     }
 }
 
 function updateCategoryVisibility() {
-    const wrap = document.getElementById('categoryStrip');
-    if (!wrap) return;
+    if (!DOM.categoryStrip) return;
     if (state.activeCategory) {
-        wrap.style.display = 'none';
+        DOM.categoryStrip.style.display = 'none';
     } else {
-        wrap.style.display = 'grid';
+        DOM.categoryStrip.style.display = 'grid';
     }
 }
 function renderItemControls(item, count) {
@@ -328,8 +343,8 @@ function goHome() {
     state.activeCategory = null;
     state.activeCategoryName = null;
     updateCategoryBack();
-    document.getElementById('pageTitle').innerText = 'Jardamchy GO 🍔';
-    document.getElementById('backBtn').style.display = 'none';
+    DOM.pageTitle.innerText = 'Jardamchy GO 🍔';
+    DOM.backBtn.style.display = 'none';
     switchView('cafeListView');
 }
 
@@ -339,7 +354,7 @@ function switchView(viewId) {
 }
 
 function showLoader(show) {
-    document.getElementById('loader').style.display = show ? 'block' : 'none';
+    DOM.loader.style.display = show ? 'block' : 'none';
 }
 
 function updateItem(itemId, change) {
@@ -397,14 +412,13 @@ function getCartStats() {
 function updateCartBar() {
     const { total, count } = getCartStats();
 
-    document.getElementById('barTotal').innerText = `${total} с`;
-    document.getElementById('barCount').innerText = `${count} блюд`;
+    DOM.barTotal.innerText = `${total} с`;
+    DOM.barCount.innerText = `${count} блюд`;
 
-    const bar = document.getElementById('cartBar');
     if (count > 0) {
-        bar.classList.add('visible');
+        DOM.cartBar.classList.add('visible');
     } else {
-        bar.classList.remove('visible');
+        DOM.cartBar.classList.remove('visible');
     }
 }
 
@@ -413,9 +427,9 @@ function openCartModal() {
     const { total } = getCartStats();
     if (total === 0) return;
 
-    const list = document.getElementById('cartItemsList');
-    list.innerHTML = '';
+    DOM.cartItemsList.innerHTML = '';
 
+    const frag = document.createDocumentFragment();
     Object.values(state.cart.items).forEach(item => {
         const fp = item.final_price ?? item.price;
         const div = document.createElement('div');
@@ -429,15 +443,16 @@ function openCartModal() {
                 ${fp * item.count} с
             </div>
         `;
-        list.appendChild(div);
+        frag.appendChild(div);
     });
+    DOM.cartItemsList.appendChild(frag);
 
-    document.getElementById('cartModalTotal').innerText = `${total} с`;
-    document.getElementById('cartModal').classList.add('active');
+    DOM.cartModalTotal.innerText = `${total} с`;
+    DOM.cartModal.classList.add('active');
 }
 
 function closeCartModal() {
-    document.getElementById('cartModal').classList.remove('active');
+    DOM.cartModal.classList.remove('active');
 }
 
 function submitOrder() {
@@ -478,9 +493,13 @@ function closeSuccessModal() {
     goHome();
 }
 
-// Search
+// Search — debounced to avoid re-rendering on every keystroke
+let _filterTimer = null;
 function filterCafes() {
-    const term = document.getElementById('cafeSearch').value.toLowerCase();
-    const filtered = state.cafes.filter(c => c.name.toLowerCase().includes(term));
-    renderCafes(filtered);
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(() => {
+        const term = document.getElementById('cafeSearch').value.toLowerCase();
+        const filtered = state.cafes.filter(c => c.name.toLowerCase().includes(term));
+        renderCafes(filtered);
+    }, 150);
 }
