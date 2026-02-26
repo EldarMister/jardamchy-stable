@@ -384,6 +384,62 @@ VOICE_ADDRESS_HINTS = (
     "улица", "көчө", "кочо", "базар", "жд", "микрорайон",
     "дом", "квартира", "кв", "үй",
 )
+KY_NUM_TOKEN_ALIASES = {
+    "уник": "он эки",
+    "оники": "он эки",
+    "онеки": "он эки",
+    "онэки": "он эки",
+    "онеке": "он эки",
+    "онбир": "он бир",
+    "онуч": "он үч",
+    "онторт": "он төрт",
+    "онбеш": "он беш",
+    "оналты": "он алты",
+    "онжети": "он жети",
+    "онсегиз": "он сегиз",
+    "онтогуз": "он тогуз",
+    "жерма": "жыйырма",
+    "жиырма": "жыйырма",
+    "жыйрма": "жыйырма",
+    "отус": "отуз",
+    "кырк": "кырк",
+    "елуу": "элүү",
+    "элу": "элүү",
+    "алтынмыш": "алтымыш",
+    "алтымш": "алтымыш",
+    "жетмиш": "жетимиш",
+    "сексин": "сексен",
+    "токсон": "токсон",
+    "мин": "миң",
+    "жуз": "жүз",
+}
+KY_NUM_UNITS = {
+    "нөл": 0, "ноль": 0, "0": 0,
+    "бир": 1, "1": 1,
+    "эки": 2, "2": 2,
+    "үч": 3, "уч": 3, "3": 3,
+    "төрт": 4, "торт": 4, "4": 4,
+    "беш": 5, "5": 5,
+    "алты": 6, "6": 6,
+    "жети": 7, "7": 7,
+    "сегиз": 8, "8": 8,
+    "тогуз": 9, "9": 9,
+}
+KY_NUM_TENS = {
+    "он": 10,
+    "жыйырма": 20,
+    "отуз": 30,
+    "кырк": 40,
+    "элүү": 50, "елуу": 50,
+    "алтымыш": 60,
+    "жетимиш": 70,
+    "сексен": 80,
+    "токсон": 90,
+}
+KY_NUM_SCALE = {
+    "жүз": 100, "жуз": 100,
+    "миң": 1000, "мин": 1000,
+}
 
 
 def _normalize_address_match_text(text: str) -> str:
@@ -420,6 +476,118 @@ ADDRESS_MAX_WORDS = max(
     (len(v.split()) for variants in ADDRESS_VARIANTS.values() for v in variants),
     default=1,
 )
+ADDRESS_HINT_KEYWORDS = frozenset(
+    list(VOICE_ADDRESS_HINTS)
+    + [
+        word
+        for variants in ADDRESS_VARIANTS.values()
+        for variant in variants
+        for word in variant.split()
+        if len(word) >= 3
+    ]
+)
+
+
+def _normalize_kyrgyz_number_aliases(text: str) -> str:
+    normalized = f" {text} "
+    for alias, replacement in KY_NUM_TOKEN_ALIASES.items():
+        normalized = re.sub(
+            rf"(?<!\w){re.escape(alias)}(?!\w)",
+            replacement,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _parse_kyrgyz_number_sequence(tokens: list[str], start: int) -> tuple[int | None, int]:
+    i = start
+    consumed = 0
+    total = 0
+
+    # Optional thousands part: "эки миң", "миң"
+    if i < len(tokens):
+        t = tokens[i]
+        t_base = _strip_address_case_suffix(t)
+        if i + 1 < len(tokens):
+            next_token = _strip_address_case_suffix(tokens[i + 1])
+            if t_base in KY_NUM_UNITS and next_token in ("миң", "мин"):
+                total += KY_NUM_UNITS[t_base] * 1000
+                i += 2
+                consumed += 2
+        if consumed == 0 and t_base in ("миң", "мин"):
+            total += 1000
+            i += 1
+            consumed += 1
+
+    # Optional hundreds part: "эки жүз", "жүз"
+    if i < len(tokens):
+        t = _strip_address_case_suffix(tokens[i])
+        if i + 1 < len(tokens):
+            next_token = _strip_address_case_suffix(tokens[i + 1])
+            if t in KY_NUM_UNITS and next_token in ("жүз", "жуз"):
+                total += KY_NUM_UNITS[t] * 100
+                i += 2
+                consumed += 2
+        if i < len(tokens):
+            t = _strip_address_case_suffix(tokens[i])
+            if t in ("жүз", "жуз"):
+                total += 100
+                i += 1
+                consumed += 1
+
+    # Tens + units: "он эки", "жыйырма үч", or standalone "эки"
+    if i < len(tokens):
+        t = _strip_address_case_suffix(tokens[i])
+        if t in KY_NUM_TENS:
+            total += KY_NUM_TENS[t]
+            i += 1
+            consumed += 1
+            if i < len(tokens):
+                unit_token = _strip_address_case_suffix(tokens[i])
+                if unit_token in KY_NUM_UNITS and KY_NUM_UNITS[unit_token] > 0:
+                    total += KY_NUM_UNITS[unit_token]
+                    i += 1
+                    consumed += 1
+        elif t in KY_NUM_UNITS:
+            total += KY_NUM_UNITS[t]
+            i += 1
+            consumed += 1
+
+    if consumed == 0:
+        return None, 0
+    return total, consumed
+
+
+def _convert_kyrgyz_numbers_to_digits(text: str) -> str:
+    if not text:
+        return text
+
+    prepared = _normalize_kyrgyz_number_aliases(text.lower())
+    tokens = [t for t in prepared.split() if t]
+    if not tokens:
+        return text
+
+    out_tokens = []
+    i = 0
+    while i < len(tokens):
+        value, consumed = _parse_kyrgyz_number_sequence(tokens, i)
+        if consumed > 0 and value is not None:
+            out_tokens.append(str(value))
+            i += consumed
+            continue
+        out_tokens.append(tokens[i])
+        i += 1
+
+    return " ".join(out_tokens).strip()
+
+
+def _looks_like_address_text(text: str) -> bool:
+    lowered = f" {(text or '').lower()} "
+    if any(h in lowered for h in VOICE_ADDRESS_HINTS):
+        return True
+    words = set(re.findall(r"[a-zа-яёүөңқһі0-9]+", lowered, flags=re.IGNORECASE))
+    return any(w in ADDRESS_HINT_KEYWORDS for w in words)
 
 
 def _address_match_threshold(word_count: int, char_count: int) -> float:
@@ -514,8 +682,10 @@ def _enhance_voice_transcript(text: str) -> str:
     if not normalized:
         return raw
 
+    normalized = _convert_kyrgyz_numbers_to_digits(normalized)
+
     should_canonicalize = (
-        any(hint in normalized for hint in VOICE_ADDRESS_HINTS)
+        _looks_like_address_text(normalized)
         or bool(re.search(r"\b\d{1,4}\b", normalized))
         or " - " in raw
         or " — " in raw
