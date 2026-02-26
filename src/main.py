@@ -119,7 +119,7 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
     config.STATE_PORTER_CARGO_TYPE: "ожидаю тип груза",
     config.STATE_PORTER_ROUTE: "ожидаю маршрут груза",
-    config.STATE_ANT_ROUTE: "ожидаю описание и маршрут",
+    config.STATE_ANT_ROUTE: "ожидаю маршрут",
     config.STATE_CONFIRM_ORDER: "ожидаю подтверждение заказа",
 }
 
