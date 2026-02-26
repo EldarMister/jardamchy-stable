@@ -12,7 +12,14 @@ from urllib.parse import urlencode
 import config
 
 WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
-WHATSAPP_CANCEL_BUTTON_TEXT = "вќЊ РћС‚РјРµРЅР°"
+WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
+NO_CANCEL_MESSAGE_PHRASES = (
+    "заказ отмен",
+    "заказ отменё",
+    "заказ жокко",
+    "доставка отмен",
+    "доставка жокко",
+)
 
 
 # =============================================================================
@@ -28,12 +35,23 @@ def _with_cancel_button(buttons: List[Dict]) -> List[Dict]:
         safe_buttons.append({"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT})
     return safe_buttons[:3]
 
+def _is_plain_whatsapp_message(message: str) -> bool:
+    """Messages that must be sent without the global cancel button."""
+    message_text = (message or "").strip()
+    if not message_text:
+        return True
+    if message_text == (config.WELCOME_MESSAGE or "").strip():
+        return True
+    if message_text == (config.ORDER_CANCELLED or "").strip():
+        return True
+    message_lower = message_text.lower()
+    return any(phrase in message_lower for phrase in NO_CANCEL_MESSAGE_PHRASES)
+
 def send_whatsapp(phone: str, message: str) -> bool:
     """Send message to WhatsApp"""
     if config.WHATSAPP_PROVIDER == "twilio":
         return _send_whatsapp_twilio(phone, message)
-    # First greeting should stay plain text without cancel button.
-    if (message or "").strip() == (config.WELCOME_MESSAGE or "").strip():
+    if _is_plain_whatsapp_message(message):
         if config.WHATSAPP_PROVIDER == "cloud":
             return _send_whatsapp_cloud(phone, message)
         return _send_whatsapp_green(phone, message)
