@@ -611,6 +611,21 @@
                             <button class="btn btn-sm" onclick="navigate('chats')" style="margin-right:8px;">← Назад</button>
                             <div class="table-title" id="chat-detail-title">💬 Чат</div>
                         </div>
+                        <div class="chat-block-panel" style="flex-shrink:0;">
+                            <span id="chat-block-status"></span>
+                            <div class="chat-block-actions">
+                                <select id="block-duration" class="input chat-block-select">
+                                    <option value="60">1 час</option>
+                                    <option value="360">6 часов</option>
+                                    <option value="1440">24 часа</option>
+                                    <option value="4320">3 дня</option>
+                                    <option value="10080">7 дней</option>
+                                    <option value="">Навсегда</option>
+                                </select>
+                                <button class="btn btn-sm btn-danger" onclick="blockUser()">🚫 Заблокировать</button>
+                                <button class="btn btn-sm btn-success" onclick="unblockUser()">✅ Разблокировать</button>
+                            </div>
+                        </div>
                         <div id="chat-messages-wrap" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:8px;">
                         </div>
                     </div>

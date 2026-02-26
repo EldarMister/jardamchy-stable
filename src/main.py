@@ -1187,6 +1187,14 @@ def handle_whatsapp():
             logger.error(f"Failed to get/create user: {sender_phone}")
             return jsonify({"status": "error"}), 500
 
+        # Проверка блокировки
+        block_status = db.get_block_status(sender_phone)
+        if block_status['is_blocked']:
+            send_whatsapp(sender_phone, config.BLOCKED_MESSAGE.format(
+                support_phone=config.SUPPORT_PHONE
+            ))
+            return jsonify({"status": "ok"}), 200
+
         is_voice_message = (
             type_message in ("audioMessage", "pttMessage", "audio", "voice")
             or (media_type and media_type.lower().startswith("audio/"))
@@ -1345,6 +1353,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "4": "taxi",
         "5": "porter",
         "6": "ant",
+        "7": "support",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -1526,6 +1535,17 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 
         return jsonify({"status": "ok"}), 200
     
+    # === ТЕХ ПОДДЕРЖКА ===
+    elif intent == "support":
+        send_whatsapp(user.phone, config.SUPPORT_TO_CLIENT.format(
+            support_phone=config.SUPPORT_PHONE
+        ))
+        if config.SUPPORT_TELEGRAM_ID:
+            send_telegram_private(config.SUPPORT_TELEGRAM_ID, config.SUPPORT_TO_OPERATOR.format(
+                client_phone=user.phone
+            ))
+        return jsonify({"status": "ok"}), 200
+
     # === ПРИВЕТСТВИЕ или НЕИЗВЕСТНОЕ ===
     elif intent == "greeting" or _looks_like_greeting(message):
         _reset_unknown_fallback(user)

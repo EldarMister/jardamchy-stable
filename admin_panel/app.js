@@ -1919,7 +1919,10 @@ async function loadChats() {
     }
 }
 
+let currentChatPhone = null;
+
 async function openChat(phone) {
+    currentChatPhone = phone;
     // Показываем секцию chat-detail
     currentSection = 'chat-detail';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -1927,6 +1930,7 @@ async function openChat(phone) {
     document.getElementById('sec-chat-detail').classList.add('active');
     document.getElementById('header-title').textContent = `💬 +${phone}`;
     document.getElementById('chat-detail-title').textContent = `+${phone}`;
+    loadBlockStatus(phone);
 
     const wrap = document.getElementById('chat-messages-wrap');
     wrap.innerHTML = '<div class="empty-state">Загрузка...</div>';
@@ -1962,4 +1966,44 @@ async function openChat(phone) {
 
 function escHtml(str) {
     return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function loadBlockStatus(phone) {
+    try {
+        const s = await api(`/chats/${phone}/block-status`);
+        const el = document.getElementById('chat-block-status');
+        if (s.is_blocked) {
+            const until = s.blocked_until ? ` до ${formatDate(s.blocked_until)}` : ' навсегда';
+            el.innerHTML = `<span class="block-badge block-badge-on">🚫 Заблокирован${until}</span>`;
+        } else {
+            el.innerHTML = `<span class="block-badge block-badge-off">✅ Не заблокирован</span>`;
+        }
+    } catch (_) {}
+}
+
+async function blockUser() {
+    if (!currentChatPhone) return;
+    const duration = document.getElementById('block-duration').value;
+    try {
+        await api(`/chats/${currentChatPhone}/block`, {
+            method: 'POST',
+            body: JSON.stringify({ duration: duration ? parseInt(duration) : null }),
+            headers: { 'Content-Type': 'application/json' },
+        });
+        toast('Пользователь заблокирован', 'success');
+        loadBlockStatus(currentChatPhone);
+    } catch (_) {
+        toast('Ошибка блокировки', 'error');
+    }
+}
+
+async function unblockUser() {
+    if (!currentChatPhone) return;
+    try {
+        await api(`/chats/${currentChatPhone}/unblock`, { method: 'POST' });
+        toast('Пользователь разблокирован', 'success');
+        loadBlockStatus(currentChatPhone);
+    } catch (_) {
+        toast('Ошибка разблокировки', 'error');
+    }
 }

@@ -456,6 +456,20 @@ class Database:
                     CREATE INDEX IF NOT EXISTS idx_messages_wa_from
                     ON messages(wa_from, created_at DESC)
                 """)
+
+                # Блокировка пользователей WhatsApp
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='users' AND column_name='is_blocked'
+                        ) THEN
+                            ALTER TABLE users ADD COLUMN is_blocked BOOLEAN DEFAULT FALSE;
+                            ALTER TABLE users ADD COLUMN blocked_until TIMESTAMP DEFAULT NULL;
+                        END IF;
+                    END $$;
+                """)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -992,6 +1006,44 @@ class Database:
                 LIMIT %s OFFSET %s
             """, (phone, limit, offset))
             return [dict(r) for r in cur.fetchall()]
+
+    # ==========================================================================
+    # USER BLOCKING
+    # ==========================================================================
+
+    def block_user(self, phone: str, until=None) -> bool:
+        """Заблокировать пользователя. until=None — навсегда."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE users SET is_blocked=TRUE, blocked_until=%s WHERE phone=%s",
+                (until, phone)
+            )
+        return True
+
+    def unblock_user(self, phone: str) -> bool:
+        """Разблокировать пользователя."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE users SET is_blocked=FALSE, blocked_until=NULL WHERE phone=%s",
+                (phone,)
+            )
+        return True
+
+    def get_block_status(self, phone: str) -> dict:
+        """Статус блокировки. Авто-разблокирует если срок истёк."""
+        from datetime import datetime as _dt
+        with self.get_cursor() as cur:
+            cur.execute(
+                "SELECT is_blocked, blocked_until FROM users WHERE phone=%s",
+                (phone,)
+            )
+            row = cur.fetchone()
+        if not row:
+            return {'is_blocked': False, 'blocked_until': None}
+        if row['is_blocked'] and row['blocked_until'] and row['blocked_until'] < _dt.utcnow():
+            self.unblock_user(phone)
+            return {'is_blocked': False, 'blocked_until': None}
+        return {'is_blocked': bool(row['is_blocked']), 'blocked_until': row['blocked_until']}
 
     # ==========================================================================
     # DRIVERS METHODS

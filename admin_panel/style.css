@@ -1527,3 +1527,49 @@ textarea:focus {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+
+/* ============================================
+   BLOCK PANEL
+   ============================================ */
+.chat-block-panel {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border-glass);
+    background: rgba(0,0,0,0.15);
+    flex-wrap: wrap;
+}
+.chat-block-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+.chat-block-select {
+    padding: 4px 8px !important;
+    font-size: 13px !important;
+    height: auto !important;
+    width: auto !important;
+}
+.block-badge {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+}
+.block-badge-on  { color: #e17055; background: rgba(225,112,85,0.12); }
+.block-badge-off { color: #00b894; background: rgba(0,184,148,0.12); }
+.btn-danger {
+    background: linear-gradient(135deg, #e17055 0%, #d63031 100%);
+    color: #fff;
+    border: none;
+}
+.btn-danger:hover { opacity: 0.88; }
+.btn-success {
+    background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+    color: #fff;
+    border: none;
+}
+.btn-success:hover { opacity: 0.88; }

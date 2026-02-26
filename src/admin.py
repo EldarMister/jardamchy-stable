@@ -1114,6 +1114,49 @@ def get_chat(phone):
         return jsonify({"error": str(e)}), 500
 
 
+@admin_bp.route('/chats/<phone>/block-status', methods=['GET'])
+def chat_block_status(phone):
+    """Статус блокировки пользователя."""
+    try:
+        db = get_db()
+        status = db.get_block_status(phone)
+        return jsonify(_clean_rows([status])[0]), 200
+    except Exception as e:
+        logger.exception("Error getting block status")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/chats/<phone>/block', methods=['POST'])
+def block_chat_user(phone):
+    """Заблокировать пользователя на указанное время (минуты) или навсегда."""
+    try:
+        from datetime import timedelta
+        data = request.get_json() or {}
+        duration = data.get('duration')  # минуты, None = навсегда
+        until = None
+        if duration:
+            from datetime import datetime as _dt, timezone as _tz
+            until = _dt.now(_tz.utc).replace(tzinfo=None) + timedelta(minutes=int(duration))
+        db = get_db()
+        db.block_user(phone, until)
+        return jsonify({"success": True, "blocked_until": until.isoformat() if until else None}), 200
+    except Exception as e:
+        logger.exception("Error blocking user")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/chats/<phone>/unblock', methods=['POST'])
+def unblock_chat_user(phone):
+    """Разблокировать пользователя."""
+    try:
+        db = get_db()
+        db.unblock_user(phone)
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.exception("Error unblocking user")
+        return jsonify({"error": str(e)}), 500
+
+
 @admin_bp.route('/settings/ramadan', methods=['POST'])
 def toggle_ramadan_mode():
     """Переключить режим Рамазан"""
