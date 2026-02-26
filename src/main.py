@@ -2331,8 +2331,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         user.set_temp_data('taxi_from', from_address)
         user.set_temp_data('taxi_to', to_address)
         user.set_temp_data('taxi_route', f"{from_address} — {to_address}")
-        user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
-        send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
+        user.set_state(config.STATE_CONFIRM_ORDER)
+        _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
             from_address=from_address, to_address=to_address,
         ))
         return jsonify({"status": "ok"}), 200
