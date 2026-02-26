@@ -73,17 +73,22 @@ def _is_plain_whatsapp_message(message: str) -> bool:
 
 def send_whatsapp(phone: str, message: str) -> bool:
     """Send message to WhatsApp"""
-    if config.WHATSAPP_PROVIDER == "twilio":
-        return _send_whatsapp_twilio(phone, message)
     if _is_plain_whatsapp_message(message):
-        if config.WHATSAPP_PROVIDER == "cloud":
-            return _send_whatsapp_cloud(phone, message)
-        return _send_whatsapp_green(phone, message)
+        return send_whatsapp_plain(phone, message)
     return send_whatsapp_buttons(
         phone,
         message,
         [{"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT}]
     )
+
+
+def send_whatsapp_plain(phone: str, message: str) -> bool:
+    """Send plain text WhatsApp message without interactive buttons."""
+    if config.WHATSAPP_PROVIDER == "cloud":
+        return _send_whatsapp_cloud(phone, message)
+    if config.WHATSAPP_PROVIDER == "twilio":
+        return _send_whatsapp_twilio(phone, message)
+    return _send_whatsapp_green(phone, message)
 
 
 

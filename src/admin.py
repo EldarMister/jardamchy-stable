@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import config
 from db import get_db, RUNTIME_SETTING_DEFAULTS
-from services import send_telegram_private, send_telegram_broadcast, send_telegram_group, edit_telegram_message, send_whatsapp
+from services import send_telegram_private, send_telegram_broadcast, send_telegram_group, edit_telegram_message, send_whatsapp_plain
 
 logger = logging.getLogger(__name__)
 
@@ -1168,7 +1168,7 @@ def send_chat_message(phone):
         if len(message) > 4000:
             return jsonify({"error": "Message is too long (max 4000 chars)"}), 400
 
-        ok = send_whatsapp(phone, message)
+        ok = send_whatsapp_plain(phone, message)
         if not ok:
             return jsonify({"error": "Failed to send WhatsApp message"}), 500
 
