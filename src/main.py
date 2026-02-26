@@ -31,15 +31,15 @@ UNKNOWN_FALLBACK_RESET_MINUTES = 15
 UNKNOWN_FALLBACK_COOLDOWN_MINUTES = 10
 
 UNKNOWN_FALLBACK_SERVICES_HINT = (
-    "такси / доставка еды / курьер / магазин / аптека / портер / муравей"
+    "такси / тамак / курьер / магазин / аптека / портер / желмаян"
 )
 UNKNOWN_FALLBACK_FINAL_MESSAGE = (
-    "Я бот Жардамчы GO. Чтобы оформить заказ, напишите: "
+    "Мен Жардамчы GO ботумун. Заказ берүү үчүн жазыңыз: "
     f"{UNKNOWN_FALLBACK_SERVICES_HINT}. "
-    "Иначе я не смогу помочь."
+    "Болбосо жардам бере албайм."
 )
 UNKNOWN_FALLBACK_COOLDOWN_MESSAGE = (
-    "Чтобы оформить заказ, напишите услугу: "
+    "Заказ берүү үчүн кызматты жазыңыз: "
     f"{UNKNOWN_FALLBACK_SERVICES_HINT}."
 )
 
@@ -104,8 +104,6 @@ FLOW_LABELS_LOWER = {
 }
 FLOW_BY_STATE = {
     config.STATE_TAXI_ROUTE: config.SERVICE_TAXI,
-    config.STATE_TAXI_PRICE_CHOICE: config.SERVICE_TAXI,
-    config.STATE_TAXI_CUSTOM_PRICE: config.SERVICE_TAXI,
     config.STATE_TAXI_REORDER_CHOICE: config.SERVICE_TAXI,
     config.STATE_CAFE_ORDER: config.SERVICE_CAFE,
     config.STATE_CAFE_ADDRESS: config.SERVICE_CAFE,
@@ -115,8 +113,6 @@ FLOW_BY_STATE = {
 }
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
-    config.STATE_TAXI_PRICE_CHOICE: "ожидаю выбор тарифа",
-    config.STATE_TAXI_CUSTOM_PRICE: "ожидаю цену",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
@@ -491,16 +487,16 @@ def _send_intent_conflict_prompt(user: User, pending: dict) -> None:
     from_lower = _resolve_flow_label_lower(from_flow)
 
     prompt = (
-        f"Похоже, вы хотите перейти к {to_label}, но у вас не завершен {from_label} "
+        f"{to_label} кызматына өткүңүз келет, бирок {from_label} аяктаган жок "
         f"({expected_step}).\n"
-        f"Отменить текущий и перейти к {to_label}?"
+        f"Учурдагыны жокко чыгарып, {to_label} кызматына өтөсүзбү?"
     )
     buttons = [
-        {"text": "✅ Перейти", "id": FLOW_SWITCH_BUTTON_YES},
-        {"text": f"❌ Продолжить {from_lower}", "id": FLOW_SWITCH_BUTTON_NO},
+        {"text": "✅ Өтүү", "id": FLOW_SWITCH_BUTTON_YES},
+        {"text": f"❌ {from_lower} улантуу", "id": FLOW_SWITCH_BUTTON_NO},
     ]
     if not send_whatsapp_buttons(user.phone, prompt, buttons):
-        send_whatsapp(user.phone, prompt + "\n1. Перейти\n2. Продолжить")
+        send_whatsapp(user.phone, prompt + "\n1. Өтүү\n2. Улантуу")
 
 
 def _send_stale_flow_prompt(user: User, pending: dict) -> None:
@@ -510,15 +506,15 @@ def _send_stale_flow_prompt(user: User, pending: dict) -> None:
     flow_label = _resolve_flow_label(from_flow)
     expected_step = _resolve_expected_step(current_state)
     prompt = (
-        f"Сценарий {flow_label} устарел ({expected_step}).\n"
-        "Продолжить прошлый заказ или начать новый?"
+        f"{flow_label} сценарийи эскирди ({expected_step}).\n"
+        "Мурунку заказды улантасызбы же жаңы баштайсызбы?"
     )
     buttons = [
-        {"text": "✅ Начать новый", "id": FLOW_STALE_BUTTON_NEW},
-        {"text": "↩️ Продолжить прошлый", "id": FLOW_STALE_BUTTON_CONTINUE},
+        {"text": "✅ Жаңы баштоо", "id": FLOW_STALE_BUTTON_NEW},
+        {"text": "↩️ Мурункуну улантуу", "id": FLOW_STALE_BUTTON_CONTINUE},
     ]
     if not send_whatsapp_buttons(user.phone, prompt, buttons):
-        send_whatsapp(user.phone, prompt + "\n1. Начать новый\n2. Продолжить прошлый")
+        send_whatsapp(user.phone, prompt + "\n1. Жаңы баштоо\n2. Мурункуну улантуу")
 
 
 def _resend_confirm_step(user: User) -> bool:
@@ -570,21 +566,12 @@ def _resend_current_step_prompt(user: User) -> None:
     if state == config.STATE_TAXI_ROUTE:
         send_whatsapp(user.phone, config.TAXI_PROMPT)
         return
-    if state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
-        # Устаревшие состояния — переводим сразу к подтверждению
-        from_addr = user.get_temp_data("taxi_from", "")
-        to_addr = user.get_temp_data("taxi_to", "")
-        user.set_state(config.STATE_CONFIRM_ORDER)
-        _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
-            from_address=from_addr, to_address=to_addr,
-        ))
-        return
     if state == config.STATE_TAXI_REORDER_CHOICE:
         send_whatsapp(
             user.phone,
-            "Продолжим прошлый заказ такси.\n"
-            "1. Повторить заказ\n"
-            "2. Новый маршрут",
+            "Мурунку такси заказыбызды улантабыз.\n"
+            "1. Заказды кайтала\n"
+            "2. Жаңы маршрут",
         )
         return
     if state == config.STATE_CAFE_ORDER:
@@ -778,9 +765,9 @@ def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tu
     reply = (ai_reply or "").strip()
     if not reply:
         reply = (
-            "Я бот Жардамчы GO. Помогаю с заказами: такси, доставка еды, магазин, аптека, портер и муравей.\n"
-            "Чтобы оформить заказ, напишите услугу и детали: что нужно, откуда забрать и куда доставить.\n"
-            "Пример: Такси, от Базара до Мкр 3."
+            "Мен Жардамчы GO ботумун. Такси, тамак, магазин, аптека, портер жана желмаян боюнча жардам берем.\n"
+            "Заказ берүү үчүн кызматты жана деталдарды жазыңыз: эмне керек, кайдан алуу жана кайда жеткирүү.\n"
+            "Мисал: Такси, Базардан Мкр 3 чейин."
         )
     send_whatsapp(user.phone, reply)
     return jsonify({"status": "ok"}), 200
@@ -1033,7 +1020,7 @@ def handle_client_cancel(user: User, db) -> bool:
             # Обновляем сообщение в группе (если уже было «ЗАКАЗ ЗАБРАН»)
             _cancel_order_in_group(order_id, 'taxi_accepted', db, cancel_text)
 
-        send_whatsapp(user.phone, "❌ Заказ отменён.")
+        send_whatsapp(user.phone, "❌ Заказ жокко чыгарылды.")
         db.log_transaction("CLIENT_CANCEL_TAXI", user.phone, order_id)
         return True
 
@@ -1202,14 +1189,9 @@ def handle_whatsapp():
         
         # === ROUTING ===
         
-        # Проверка на отмену (в любом состоянии),
-        # кроме шага выбора цены такси: "Жок/Нет" там означает стандартный тариф.
+        # Проверка на отмену (в любом состоянии)
         msg_lower = incoming_msg.lower().strip()
-        is_taxi_price_decline = (
-            user.current_state == config.STATE_TAXI_PRICE_CHOICE and
-            msg_lower in ('жок', 'нет', 'no', '2', 'btn_taxi_standard')
-        )
-        if _is_cancellation(incoming_msg) and not is_taxi_price_decline:
+        if _is_cancellation(incoming_msg):
             logger.info(f"User {sender_phone} cancelled order in state {user.current_state}")
             cancelled = handle_client_cancel(user, db)
             user.set_state(config.STATE_IDLE)
@@ -1259,8 +1241,6 @@ def handle_whatsapp():
         # Аптека
         elif user.current_state == config.STATE_PHARMACY_WAIT_RX:
             return handle_pharmacy_request(user, incoming_msg, media_url, db)
-        elif user.current_state == config.STATE_PHARMACY_WAIT_PRESCRIPTION:
-            return handle_pharmacy_prescription_rx(user, incoming_msg, media_url, db)
         elif user.current_state == config.STATE_PHARMACY_ADDRESS:
             return handle_pharmacy_delivery_address(user, incoming_msg, db)
         
@@ -1272,16 +1252,6 @@ def handle_whatsapp():
                 db,
                 is_voice_input=is_voice_message
             )
-        elif user.current_state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
-            # Цена больше не запрашивается — перенаправляем к подтверждению
-            from_addr = user.get_temp_data('taxi_from', '')
-            to_addr = user.get_temp_data('taxi_to', '')
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
-                from_address=from_addr, to_address=to_addr,
-            ))
-            return jsonify({"status": "ok"}), 200
-        
         # Веб-заказ меню
         elif user.current_state == config.STATE_WEB_ORDER_ADDRESS:
             return handle_web_order_address(user, incoming_msg, db)
@@ -1353,11 +1323,11 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         order = db.get_web_order(code)
         
         if not order:
-            send_whatsapp(user.phone, "❌ Заказ с таким кодом не найден. Проверьте код.")
+            send_whatsapp(user.phone, "❌ Мындай код менен заказ табылган жок. Кодду текшериңиз.")
             return jsonify({"status": "ok"}), 200
             
         if order['status'] in ['CONFIRMED', 'COMPLETED', 'CANCELLED']:
-             send_whatsapp(user.phone, f"⚠️ Этот заказ уже обработан (Статус: {order['status']}).")
+             send_whatsapp(user.phone, f"⚠️ Бул заказ буга чейин иштелип бүткөн (Статус: {order['status']}).")
              return jsonify({"status": "ok"}), 200
 
         # Сохраняем контекст заказа
@@ -1371,14 +1341,14 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         details_lines = [f"Кафе: {order['cafe_name']}"]
         for item in items:
             details_lines.append(f"- {item['name']} x{item['count']}")
-        details_lines.append(f"\nИтого: {int(order['total_price'])} сом")
+        details_lines.append(f"\nЖыйынтык: {int(order['total_price'])} сом")
         
         order_details = "\n".join(details_lines)
         user.set_temp_data('cafe_order_details', order_details)
         
         # Переходим к вводу адреса
         user.set_state(config.STATE_WEB_ORDER_ADDRESS)
-        send_whatsapp(user.phone, "📍 Введите адрес доставки (или отправьте геолокацию):")
+        send_whatsapp(user.phone, "📍 Жеткирүү дарегин жазыңыз (же геолокация жөнөтүңүз):")
         return jsonify({"status": "ok"}), 200
     
     # === ТАКСИ ===
@@ -1417,7 +1387,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             send_whatsapp(user.phone, config.CAFE_ADDRESS_PROMPT)
         else:
             # Предлагаем меню или ручной ввод
-            menu_msg = f"🍔 *Меню заказа / Тамак заказ кылуу*\n\nПерейдите по ссылке, чтобы выбрать блюда:\n{config.MENU_LINK}\n\nИли напишите список блюд вручную ниже.\nЖе тамактардын тизмесин төмөндө жазыңыз."
+            menu_msg = f"🍔 *Тамак заказ кылуу*\n\nМенюну тандоо үчүн шилтемеге өтүңүз:\n{config.MENU_LINK}\n\nЖе тамактардын тизмесин төмөндө жазыңыз."
             send_whatsapp(user.phone, menu_msg)
             user.set_state(config.STATE_CAFE_ORDER)
         
@@ -1448,10 +1418,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         user.set_temp_data('service_type', config.SERVICE_PHARMACY)
 
         if order_details:
-            # ИИ извлёк название лекарства — спросить про рецепт
+            # ИИ извлёк название лекарства — сразу к подтверждению
             user.set_temp_data('pharmacy_request', order_details)
-            user.set_state(config.STATE_PHARMACY_WAIT_RX)
-            send_whatsapp(user.phone, config.PHARMACY_ASK_RX.format(medication=order_details))
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            _send_confirm_with_buttons(user.phone, config.CONFIRM_PHARMACY.format(order_details=order_details))
         else:
             # Название неизвестно — попросить написать
             user.set_state(config.STATE_PHARMACY_WAIT_RX)
@@ -1666,23 +1636,18 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
 def _submit_taxi_order(user: User, db) -> tuple:
     """Отправка заказа такси"""
     route = user.get_temp_data('taxi_route', '')
-    custom_price = user.get_temp_data('taxi_custom_price', None)
-    
-    # Если клиент предложил свою цену, сохраняем её в price_total
-    price_value = float(custom_price) if custom_price else 0
-    
+
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_TAXI,
         details=route,
-        price=price_value
+        price=0
     )
-    
+
     # Комиссия всегда фиксированная
     commission_info = f"💰 Комиссия: {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом"
-    
-    # Цена в Telegram-сообщении
-    price_display = f"{int(float(custom_price))} сом (цена клиента)" if custom_price else "договорная"
+
+    price_display = "договорная"
     
     telegram_msg = config.TAXI_ORDER_TELEGRAM.format(
         route=route,
@@ -1993,7 +1958,7 @@ def handle_web_order_address(user: User, message: str, db) -> tuple:
     """Обработка адреса для веб-заказа"""
     # Validation if needed
     if len(message) < 3:
-         send_whatsapp(user.phone, "Пожалуйста, введите корректный адрес:")
+         send_whatsapp(user.phone, "Туура даректи жазыңыз:")
          return jsonify({"status": "ok"}), 200
          
     user.set_temp_data('cafe_address', message)
@@ -2036,67 +2001,20 @@ def handle_shop_list(user: User, message: str, db) -> tuple:
 # =============================================================================
 
 def handle_pharmacy_request(user: User, message: str, media_url: str, db) -> tuple:
-    """Обработка STATE_PHARMACY_WAIT_RX: либо ждём название лекарства, либо ответ да/нет на вопрос о рецепте"""
-    msg_lower = (message or "").lower().strip()
-    yes_words = {"да", "ооба", "yes", "ия", "oo"}
-    no_words  = {"нет", "жок", "no", "нет."}
-
-    existing_request = (user.get_temp_data('pharmacy_request', '') or '').strip()
-
-    if existing_request:
-        # Уже знаем лекарство — клиент отвечает да/нет на вопрос о рецепте
-        if msg_lower in yes_words:
-            user.set_state(config.STATE_PHARMACY_WAIT_PRESCRIPTION)
-            send_whatsapp(user.phone, config.PHARMACY_ASK_PRESCRIPTION_UPLOAD)
-        else:
-            # "нет" или любой другой ответ → без рецепта, к подтверждению
-            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            confirm_msg = config.CONFIRM_PHARMACY.format(order_details=existing_request)
-            _send_confirm_with_buttons(user.phone, confirm_msg)
-    else:
-        # Ещё не знаем лекарство — клиент пишет название или отправляет фото рецепта
-        if media_url:
-            # Прислали фото рецепта без названия
-            user.set_temp_data('pharmacy_media_url', media_url)
-            medication = message.strip() if message and message.strip() else "(фото рецепта)"
-            user.set_temp_data('pharmacy_request', medication)
-            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
-            _send_confirm_with_buttons(user.phone, confirm_msg)
-        elif message and message.strip():
-            # Написал название лекарства → теперь спросим про рецепт
-            medication = message.strip()
-            user.set_temp_data('pharmacy_request', medication)
-            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
-            send_whatsapp(user.phone, config.PHARMACY_ASK_RX.format(medication=medication))
-            # Остаёмся в STATE_PHARMACY_WAIT_RX — теперь отвечает да/нет
-        else:
-            send_whatsapp(user.phone, config.PHARMACY_PROMPT)
-
-    return jsonify({"status": "ok"}), 200
-
-
-def handle_pharmacy_prescription_rx(user: User, message: str, media_url: str, db) -> tuple:
-    """Получили фото или текст рецепта — добавляем к запросу и переходим к подтверждению"""
+    """Обработка STATE_PHARMACY_WAIT_RX: ждём название лекарства"""
     if media_url:
         user.set_temp_data('pharmacy_media_url', media_url)
+        medication = message.strip() if message and message.strip() else "(фото рецепта)"
+    elif message and message.strip():
+        medication = message.strip()
+    else:
+        send_whatsapp(user.phone, config.PHARMACY_PROMPT)
+        return jsonify({"status": "ok"}), 200
 
-    medication = (user.get_temp_data('pharmacy_request', '') or '').strip()
-    if message and message.strip() and not media_url:
-        # Текстовое описание рецепта
-        medication = f"{medication} (рецепт: {message.strip()})"
-        user.set_temp_data('pharmacy_request', medication)
-    elif media_url:
-        # Фото рецепта — дополним пометкой
-        medication = f"{medication} + фото рецепта"
-        user.set_temp_data('pharmacy_request', medication)
-
+    user.set_temp_data('pharmacy_request', medication)
     user.set_temp_data('service_type', config.SERVICE_PHARMACY)
     user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.CONFIRM_PHARMACY.format(order_details=medication)
-    _send_confirm_with_buttons(user.phone, confirm_msg)
+    _send_confirm_with_buttons(user.phone, config.CONFIRM_PHARMACY.format(order_details=medication))
     return jsonify({"status": "ok"}), 200
 
 
@@ -2104,7 +2022,7 @@ def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
     """Получили адрес клиента после цены аптеки: сразу оформляем доставку."""
     address = (message or "").strip()
     if not address:
-        send_whatsapp(user.phone, "📍 Введите адрес доставки.")
+        send_whatsapp(user.phone, "📍 Жеткирүү дарегин жазыңыз.")
         return jsonify({"status": "ok"}), 200
 
     if _is_vague_address(address):
@@ -2119,14 +2037,14 @@ def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
     if not order_id or not pharmacy_id or drug_price <= 0:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
-        send_whatsapp(user.phone, "❌ Ошибка данных заказа. Начните заново.")
+        send_whatsapp(user.phone, "❌ Заказ маалыматында ката. Кайра баштаңыз.")
         return jsonify({"status": "ok"}), 200
 
     order = db.get_order(order_id)
     if not order:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
-        send_whatsapp(user.phone, "❌ Заказ не найден. Начните заново.")
+        send_whatsapp(user.phone, "❌ Заказ табылган жок. Кайра баштаңыз.")
         return jsonify({"status": "ok"}), 200
 
     total_price = drug_price + _runtime_setting("pharmacy_delivery_fee", config.PHARMACY_DELIVERY_FEE) + _runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)
@@ -2194,15 +2112,8 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
             send_whatsapp(user.phone, config.TAXI_PROMPT)
             return jsonify({"status": "ok"}), 200
 
-        raw_price = user.get_temp_data('taxi_reorder_price', 0)
-        try:
-            price = float(raw_price or 0)
-        except (TypeError, ValueError):
-            price = 0
-
         user.set_temp_data('service_type', config.SERVICE_TAXI)
         user.set_temp_data('taxi_route', route)
-        user.set_temp_data('taxi_custom_price', price if price > 0 else None)
 
         # Для совместимости с остальным flow заполняем откуда/куда если маршрут разделён.
         parts = [p.strip() for p in re.split(r"\s*[—-]\s*", route, maxsplit=1) if p.strip()]
@@ -2225,21 +2136,6 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
     user.clear_temp_data()
     user.set_state(config.STATE_INITIAL)
     return jsonify({"status": "ok"}), 200
-
-
-def _send_taxi_price_choice(phone: str, from_address: str, to_address: str) -> bool:
-    """Отправить выбор цены для такси с кнопками и fallback на текст."""
-    price_choice_msg = config.TAXI_PRICE_CHOICE_PROMPT.format(
-        from_address=from_address,
-        to_address=to_address
-    )
-    buttons = [
-        {"text": "✅ Да / Ооба", "id": "btn_taxi_custom"},
-        {"text": "❌ Нет / Жок", "id": "btn_taxi_standard"},
-    ]
-    if send_whatsapp_buttons(phone, price_choice_msg, buttons):
-        return True
-    return send_whatsapp(phone, price_choice_msg)
 
 
 def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False) -> tuple:
@@ -2266,17 +2162,13 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
     def _ask_for_to():
         send_whatsapp(
             user.phone,
-            "📍 *Куда ехать? / Кайда барабыз?*\n\n"
-            "Напишите конечный адрес (куда поедем).\n"
-            "Акыркы даректи жазыңыз (кайда барабыз)."
+            "📍 *Кайда барабыз?*\n\nАкыркы даректи жазыңыз."
         )
 
     def _ask_for_from():
         send_whatsapp(
             user.phone,
-            "📍 *Откуда ехать? / Кайдан барабыз?*\n\n"
-            "Напишите адрес подачи (где вас забрать).\n"
-            "Баштапкы даректи жазыңыз (кайдан алабыз)."
+            "📍 *Кайдан барабыз?*\n\nБаштапкы даректи жазыңыз."
         )
 
     def _go_to_price_choice(from_address: str, to_address: str):
@@ -2298,8 +2190,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         if _addresses_equal(parsed_from, parsed_to):
             send_whatsapp(
                 user.phone,
-                "⚠️ Адрес *откуда* и *куда* получился одинаковым.\n"
-                "Напишите маршрут точнее: *Откуда* и *Куда* отдельно."
+                "⚠️ *Кайдан* жана *кайда* дареги бирдей болуп калды.\n"
+                "Маршрутту так жазыңыз: *Кайдан* жана *Кайда* өзүнчө."
             )
             return jsonify({"status": "ok"}), 200
         return _go_to_price_choice(parsed_from, parsed_to)
@@ -2353,8 +2245,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         if _addresses_equal(current_from, to_addr):
             send_whatsapp(
                 user.phone,
-                "⚠️ Адрес назначения совпадает с адресом подачи.\n"
-                "Напишите другой адрес *КУДА*."
+                "⚠️ Барчу дарек чыгуу дарегине дал келет.\n"
+                "Башка *КАЙДА* дарегин жазыңыз."
             )
             return jsonify({"status": "ok"}), 200
         return _go_to_price_choice(current_from, to_addr)
@@ -2367,8 +2259,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         if _addresses_equal(from_addr, current_to):
             send_whatsapp(
                 user.phone,
-                "⚠️ Адрес подачи совпадает с адресом назначения.\n"
-                "Напишите другой адрес *ОТКУДА*."
+                "⚠️ Чыгуу дареги барчу дарегине дал келет.\n"
+                "Башка *КАЙДАН* дарегин жазыңыз."
             )
             return jsonify({"status": "ok"}), 200
         return _go_to_price_choice(from_addr, current_to)
@@ -2376,7 +2268,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
     if _addresses_equal(current_from, current_to):
         send_whatsapp(
             user.phone,
-            "⚠️ Адреса сейчас одинаковые. Напишите маршрут заново: *Откуда* и *Куда*."
+            "⚠️ Даректер азыр бирдей. Маршрутту кайра жазыңыз: *Кайдан* жана *Кайда*."
         )
         return jsonify({"status": "ok"}), 200
 
@@ -2423,61 +2315,6 @@ def _extract_price(text: str) -> int | None:
     return total if found and total > 0 else None
 
 
-def handle_taxi_price_choice(user: User, message: str, db) -> tuple:
-    """Обработка выбора: предложить свою цену или нет"""
-    msg_lower = message.lower().strip()
-    
-    from_addr = user.get_temp_data('taxi_from', '')
-    to_addr = user.get_temp_data('taxi_to', '')
-    
-    # Если клиент сразу прислал число или назвал цену голосом
-    price = _extract_price(message) if msg_lower not in ('1', '2') else None
-    if price is not None:
-        if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
-            send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW.format(
-                min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
-            ))
-            return jsonify({"status": "ok"}), 200
-
-        user.set_temp_data('taxi_custom_price', price)
-        # Сразу создаем заказ без лишнего шага подтверждения
-        return _submit_taxi_order(user, db)
-
-    # Клиент хочет предложить свою цену (кнопкой/словом)
-    if msg_lower in ('btn_taxi_custom', 'да', 'yes', 'ооба', 'ообо', '1'):
-        user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
-        return jsonify({"status": "ok"}), 200
-
-    # Клиент отказался — сразу стандартный тариф
-    if msg_lower in ('btn_taxi_standard', 'нет', 'no', 'жок', '2'):
-        user.set_temp_data('taxi_custom_price', None)
-        return _submit_taxi_order(user, db)
-    
-    # Непонятный ответ — переспрашиваем
-    _send_taxi_price_choice(user.phone, from_addr, to_addr)
-    return jsonify({"status": "ok"}), 200
-
-
-def handle_taxi_custom_price(user: User, message: str, db) -> tuple:
-    """Обработка ввода своей цены клиентом"""
-    price = _extract_price(message)
-
-    if price is None:
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
-        return jsonify({"status": "ok"}), 200
-    
-    if price < _runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN):
-        send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_TOO_LOW.format(
-            min_price=int(_runtime_setting("taxi_custom_price_min", config.TAXI_CUSTOM_PRICE_MIN))
-        ))
-        return jsonify({"status": "ok"}), 200
-
-    # Сохраняем цену и сразу отправляем заказ в поиск водителя
-    user.set_temp_data('taxi_custom_price', price)
-    return _submit_taxi_order(user, db)
-
-
 # =============================================================================
 # PORTER FLOW
 # =============================================================================
@@ -2509,7 +2346,7 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
         if not to_addr:
             # to не найден — сохраняем from и спрашиваем куда
             user.set_temp_data('porter_from_partial', from_addr)
-            send_whatsapp(user.phone, "📍 Куда везем? / Кайда ташыйбыз?")
+            send_whatsapp(user.phone, "📍 Кайда ташыйбыз?")
             return jsonify({"status": "ok"}), 200
     
     # Проверка на слишком общий адрес
@@ -2554,7 +2391,7 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
 
         if not to_addr:
             user.set_temp_data('ant_from_partial', from_addr)
-            send_whatsapp(user.phone, "📍 Куда везем? / Кайда ташыйбыз?")
+            send_whatsapp(user.phone, "📍 Кайда ташыйбыз?")
             return jsonify({"status": "ok"}), 200
 
     # Проверка на слишком общий адрес
@@ -2587,6 +2424,13 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
 
     try:
         _reset_unknown_fallback(user)
+        if button_response in {WHATSAPP_CANCEL_BUTTON_ID, "btn_cancel", "cancel"}:
+            handle_client_cancel(user, db)
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            _reset_unknown_fallback(user)
+            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+            return jsonify({"status": "ok"}), 200
 
         if button_response in {WHATSAPP_CANCEL_BUTTON_ID, "btn_cancel", "cancel"}:
             handle_client_cancel(user, db)
@@ -2617,16 +2461,6 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
                 user.clear_temp_data()
                 send_whatsapp(user.phone, config.ORDER_CANCELLED)
                 return jsonify({"status": "ok"}), 200
-
-        # Такси: устаревшее состояние выбора цены — перенаправляем к подтверждению
-        if user.current_state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
-            from_addr = user.get_temp_data('taxi_from', '')
-            to_addr = user.get_temp_data('taxi_to', '')
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
-                from_address=from_addr, to_address=to_addr,
-            ))
-            return jsonify({"status": "ok"}), 200
 
         # Аптека: подтверждение
         if user.current_state == config.STATE_PHARMACY_CONFIRM:

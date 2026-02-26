@@ -1,7 +1,7 @@
 """
-Вспомогательные сервисы
+Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ СЃРµСЂРІРёСЃС‹
 Services Module for Business Assistant GO
-Обновленная версия согласно ТЗ v2.0
+РћР±РЅРѕРІР»РµРЅРЅР°СЏ РІРµСЂСЃРёСЏ СЃРѕРіР»Р°СЃРЅРѕ РўР— v2.0
 """
 
 import json
@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import config
 
 WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
-WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
+WHATSAPP_CANCEL_BUTTON_TEXT = "вќЊ РћС‚РјРµРЅР°"
 
 
 # =============================================================================
@@ -20,7 +20,7 @@ WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
 # =============================================================================
 
 def _with_cancel_button(buttons: List[Dict]) -> List[Dict]:
-    """Append a global cancel button when button slots are available."""
+    """Add global cancel button if there is free slot (max 3 buttons)."""
     safe_buttons = list(buttons or [])
     if any((btn or {}).get("id") == WHATSAPP_CANCEL_BUTTON_ID for btn in safe_buttons):
         return safe_buttons[:3]
@@ -29,18 +29,24 @@ def _with_cancel_button(buttons: List[Dict]) -> List[Dict]:
     return safe_buttons[:3]
 
 def send_whatsapp(phone: str, message: str) -> bool:
-    """Отправить сообщение в WhatsApp"""
+    """Send message to WhatsApp"""
     if config.WHATSAPP_PROVIDER == "twilio":
         return _send_whatsapp_twilio(phone, message)
+    # First greeting should stay plain text without cancel button.
+    if (message or "").strip() == (config.WELCOME_MESSAGE or "").strip():
+        if config.WHATSAPP_PROVIDER == "cloud":
+            return _send_whatsapp_cloud(phone, message)
+        return _send_whatsapp_green(phone, message)
     return send_whatsapp_buttons(
         phone,
         message,
-        [{"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT}],
+        [{"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT}]
     )
 
 
+
 def _send_whatsapp_green(phone: str, message: str) -> bool:
-    """Отправить сообщение через GREEN API"""
+    """РћС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ С‡РµСЂРµР· GREEN API"""
     try:
         url = f"{config.GREEN_API_URL}/sendMessage/{config.GREEN_API_TOKEN}"
         
@@ -68,7 +74,7 @@ def _send_whatsapp_green(phone: str, message: str) -> bool:
 
 
 def _send_whatsapp_twilio(phone: str, message: str) -> bool:
-    """Отправить сообщение через Twilio"""
+    """РћС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ С‡РµСЂРµР· Twilio"""
     try:
         from twilio.rest import Client
         
@@ -93,7 +99,7 @@ def _send_whatsapp_twilio(phone: str, message: str) -> bool:
 
 
 def _send_whatsapp_cloud(phone: str, message: str) -> bool:
-    """Отправить текстовое сообщение через WhatsApp Cloud API (Meta Graph API)"""
+    """РћС‚РїСЂР°РІРёС‚СЊ С‚РµРєСЃС‚РѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ С‡РµСЂРµР· WhatsApp Cloud API (Meta Graph API)"""
     try:
         url = (
             f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
@@ -130,7 +136,7 @@ def _send_whatsapp_cloud(phone: str, message: str) -> bool:
 
 
 def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) -> bool:
-    """Отправить интерактивное сообщение с кнопками через Cloud API (макс 3, заголовок макс 20 симв)"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёРЅС‚РµСЂР°РєС‚РёРІРЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ СЃ РєРЅРѕРїРєР°РјРё С‡РµСЂРµР· Cloud API (РјР°РєСЃ 3, Р·Р°РіРѕР»РѕРІРѕРє РјР°РєСЃ 20 СЃРёРјРІ)"""
     try:
         url = (
             f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
@@ -165,7 +171,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
                 from db import get_db as _get_db
                 btn_titles = ' / '.join(b['reply']['title'] for b in cloud_buttons)
                 _get_db().save_message(phone=phone, direction='out',
-                                       body=f"{message}\n[Кнопки: {btn_titles}]",
+                                       body=f"{message}\n[РљРЅРѕРїРєРё: {btn_titles}]",
                                        msg_type='interactive', wa_message_id=sent_id)
             except Exception:
                 pass
@@ -179,7 +185,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
 
 
 def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") -> bool:
-    """Отправить изображение через Cloud API по публичному URL"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ С‡РµСЂРµР· Cloud API РїРѕ РїСѓР±Р»РёС‡РЅРѕРјСѓ URL"""
     try:
         url = (
             f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
@@ -204,9 +210,9 @@ def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") ->
 
 
 def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
-    """Скачать медиа из Cloud API по media_id (требует Bearer токен)"""
+    """РЎРєР°С‡Р°С‚СЊ РјРµРґРёР° РёР· Cloud API РїРѕ media_id (С‚СЂРµР±СѓРµС‚ Bearer С‚РѕРєРµРЅ)"""
     try:
-        # Шаг 1: получаем download URL из media_id
+        # РЁР°Рі 1: РїРѕР»СѓС‡Р°РµРј download URL РёР· media_id
         meta_url = f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}/{media_id}"
         headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}"}
         meta_resp = requests.get(meta_url, headers=headers, timeout=30)
@@ -218,7 +224,7 @@ def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
             print(f"[Cloud API Media] No URL in response for {media_id}")
             return None
 
-        # Шаг 2: скачиваем байты с авторизацией
+        # РЁР°Рі 2: СЃРєР°С‡РёРІР°РµРј Р±Р°Р№С‚С‹ СЃ Р°РІС‚РѕСЂРёР·Р°С†РёРµР№
         dl_resp = requests.get(download_url, headers=headers, timeout=60)
         if dl_resp.status_code != 200:
             print(f"[Cloud API Media] Download failed {dl_resp.status_code}")
@@ -230,18 +236,18 @@ def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
 
 
 def send_confirmation_buttons(phone: str) -> bool:
-    """Отправить кнопки 'Да / Нет' для подтверждения заказа (Cloud API)"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РєРЅРѕРїРєРё 'Р”Р° / РќРµС‚' РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ Р·Р°РєР°Р·Р° (Cloud API)"""
     if config.WHATSAPP_PROVIDER != "cloud":
         return False
     buttons = [
-        {"id": "confirm_yes", "text": "✅ Да"},
-        {"id": "confirm_no", "text": "❌ Нет"},
+        {"id": "confirm_yes", "text": "вњ… Р”Р°"},
+        {"id": "confirm_no", "text": "вќЊ РќРµС‚"},
     ]
-    return _send_whatsapp_buttons_cloud(phone, "Подтверждаете заказ?", _with_cancel_button(buttons))
+    return _send_whatsapp_buttons_cloud(phone, "РџРѕРґС‚РІРµСЂР¶РґР°РµС‚Рµ Р·Р°РєР°Р·?", _with_cancel_button(buttons))
 
 
 def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool:
-    """Отправить интерактивное сообщение с кнопками в WhatsApp"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёРЅС‚РµСЂР°РєС‚РёРІРЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ СЃ РєРЅРѕРїРєР°РјРё РІ WhatsApp"""
     try:
         buttons = _with_cancel_button(buttons)
         if config.WHATSAPP_PROVIDER == "cloud":
@@ -256,7 +262,7 @@ def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool
 
 
 def _send_whatsapp_buttons_green(phone: str, message: str, buttons: List[Dict]) -> bool:
-    """Отправить кнопки через GREEN API"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РєРЅРѕРїРєРё С‡РµСЂРµР· GREEN API"""
     try:
         url = f"{config.GREEN_API_URL}/sendTemplateButtons/{config.GREEN_API_TOKEN}"
         
@@ -291,14 +297,14 @@ def _send_whatsapp_buttons_green(phone: str, message: str, buttons: List[Dict]) 
 
 
 def _send_whatsapp_buttons_twilio(phone: str, message: str, buttons: List[Dict]) -> bool:
-    """Отправить кнопки через Twilio (используем список с номерами)"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РєРЅРѕРїРєРё С‡РµСЂРµР· Twilio (РёСЃРїРѕР»СЊР·СѓРµРј СЃРїРёСЃРѕРє СЃ РЅРѕРјРµСЂР°РјРё)"""
     try:
-        # Twilio не поддерживает нативные кнопки, отправляем как текст с нумерацией
+        # Twilio РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РЅР°С‚РёРІРЅС‹Рµ РєРЅРѕРїРєРё, РѕС‚РїСЂР°РІР»СЏРµРј РєР°Рє С‚РµРєСЃС‚ СЃ РЅСѓРјРµСЂР°С†РёРµР№
         button_text = "\n\n"
         for idx, btn in enumerate(buttons, 1):
             button_text += f"{idx}. {btn['text']}\n"
         
-        full_message = message + button_text + "\nОтветьте номером варианта."
+        full_message = message + button_text + "\nРћС‚РІРµС‚СЊС‚Рµ РЅРѕРјРµСЂРѕРј РІР°СЂРёР°РЅС‚Р°."
         
         return _send_whatsapp_twilio(phone, full_message)
         
@@ -308,7 +314,7 @@ def _send_whatsapp_buttons_twilio(phone: str, message: str, buttons: List[Dict])
 
 
 def send_whatsapp_image(phone: str, image_url: str, caption: str = "") -> bool:
-    """Отправить изображение в WhatsApp"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РІ WhatsApp"""
     try:
         if config.WHATSAPP_PROVIDER == "cloud":
             return _send_whatsapp_image_cloud(phone, image_url, caption)
@@ -322,7 +328,7 @@ def send_whatsapp_image(phone: str, image_url: str, caption: str = "") -> bool:
 
 
 def _send_whatsapp_image_green(phone: str, image_url: str, caption: str = "") -> bool:
-    """Отправить изображение через GREEN API"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ С‡РµСЂРµР· GREEN API"""
     try:
         url = f"{config.GREEN_API_URL}/sendFileByUrl/{config.GREEN_API_TOKEN}"
         
@@ -346,7 +352,7 @@ def _send_whatsapp_image_green(phone: str, image_url: str, caption: str = "") ->
 
 
 def _send_whatsapp_image_twilio(phone: str, image_url: str, caption: str = "") -> bool:
-    """Отправить изображение через Twilio"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ С‡РµСЂРµР· Twilio"""
     try:
         from twilio.rest import Client
         
@@ -372,7 +378,7 @@ def _send_whatsapp_image_twilio(phone: str, image_url: str, caption: str = "") -
 
 def send_whatsapp_location(phone: str, latitude: float, longitude: float, 
                            name: str = "", address: str = "") -> bool:
-    """Отправить геолокацию в WhatsApp"""
+    """РћС‚РїСЂР°РІРёС‚СЊ РіРµРѕР»РѕРєР°С†РёСЋ РІ WhatsApp"""
     try:
         if config.WHATSAPP_PROVIDER == "green":
             url = f"{config.GREEN_API_URL}/sendLocation/{config.GREEN_API_TOKEN}"
@@ -392,9 +398,9 @@ def send_whatsapp_location(phone: str, latitude: float, longitude: float,
             response = requests.post(url, json=payload, headers=headers, timeout=30)
             return response.status_code == 200
         else:
-            # Twilio не поддерживает отправку локации напрямую
+            # Twilio РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РѕС‚РїСЂР°РІРєСѓ Р»РѕРєР°С†РёРё РЅР°РїСЂСЏРјСѓСЋ
             location_url = f"https://maps.google.com/?q={latitude},{longitude}"
-            return send_whatsapp(phone, f"📍 Локация: {location_url}")
+            return send_whatsapp(phone, f"рџ“Ќ Р›РѕРєР°С†РёСЏ: {location_url}")
             
     except Exception as e:
         print(f"Error sending location: {e}")
@@ -408,7 +414,7 @@ def send_whatsapp_location(phone: str, latitude: float, longitude: float,
 def send_telegram_message(chat_id: str, message: str, 
                           buttons: Optional[List[Dict]] = None,
                           parse_mode: str = "Markdown") -> Optional[Dict]:
-    """Отправить сообщение в Telegram"""
+    """РћС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ Telegram"""
     try:
         url = f"{config.TELEGRAM_API_URL}/sendMessage"
         
@@ -443,19 +449,19 @@ def send_telegram_message(chat_id: str, message: str,
 
 def send_telegram_group(chat_id: str, message: str, 
                         buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
-    """Отправить сообщение в Telegram группу"""
+    """РћС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ Telegram РіСЂСѓРїРїСѓ"""
     return send_telegram_message(chat_id, message, buttons)
 
 
 def send_telegram_private(telegram_id: str, message: str, 
                           buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
-    """Отправить личное сообщение в Telegram"""
+    """РћС‚РїСЂР°РІРёС‚СЊ Р»РёС‡РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РІ Telegram"""
     return send_telegram_message(telegram_id, message, buttons)
 
 
 def answer_telegram_callback(callback_query_id: str, text: str = "",
                              show_alert: bool = False) -> bool:
-    """Быстро подтвердить нажатие inline-кнопки в Telegram."""
+    """Р‘С‹СЃС‚СЂРѕ РїРѕРґС‚РІРµСЂРґРёС‚СЊ РЅР°Р¶Р°С‚РёРµ inline-РєРЅРѕРїРєРё РІ Telegram."""
     try:
         if not callback_query_id:
             return False
@@ -478,9 +484,9 @@ def answer_telegram_callback(callback_query_id: str, text: str = "",
 
 def send_telegram_photo(chat_id: str, photo_url: str, caption: str = "",
                         buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
-    """Отправить фото в Telegram. Поддерживает cloud_media: URL (Cloud API)."""
+    """РћС‚РїСЂР°РІРёС‚СЊ С„РѕС‚Рѕ РІ Telegram. РџРѕРґРґРµСЂР¶РёРІР°РµС‚ cloud_media: URL (Cloud API)."""
     try:
-        # Cloud API фото — скачиваем байты и загружаем как файл
+        # Cloud API С„РѕС‚Рѕ вЂ” СЃРєР°С‡РёРІР°РµРј Р±Р°Р№С‚С‹ Рё Р·Р°РіСЂСѓР¶Р°РµРј РєР°Рє С„Р°Р№Р»
         if photo_url.startswith("cloud_media:"):
             media_id = photo_url.split(":", 1)[1]
             photo_bytes = _download_cloud_media_bytes(media_id)
@@ -521,7 +527,7 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str = "",
 
 def _send_telegram_photo_bytes(chat_id: str, photo_bytes: bytes, caption: str = "",
                                 buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
-    """Загрузить фото в Telegram как multipart/form-data (для Cloud API медиа)"""
+    """Р—Р°РіСЂСѓР·РёС‚СЊ С„РѕС‚Рѕ РІ Telegram РєР°Рє multipart/form-data (РґР»СЏ Cloud API РјРµРґРёР°)"""
     try:
         url = f"{config.TELEGRAM_API_URL}/sendPhoto"
 
@@ -557,7 +563,7 @@ def _send_telegram_photo_bytes(chat_id: str, photo_bytes: bytes, caption: str = 
 
 def edit_telegram_message(chat_id: str, message_id: int, 
                           new_text: str, buttons: Optional[List[Dict]] = None) -> bool:
-    """Редактировать сообщение в Telegram"""
+    """Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ Telegram"""
     try:
         url = f"{config.TELEGRAM_API_URL}/editMessageText"
         
@@ -587,7 +593,7 @@ def edit_telegram_message(chat_id: str, message_id: int,
 
 
 def delete_telegram_message(chat_id: str, message_id: int) -> bool:
-    """Удалить сообщение в Telegram"""
+    """РЈРґР°Р»РёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ Telegram"""
     try:
         url = f"{config.TELEGRAM_API_URL}/deleteMessage"
         
@@ -605,7 +611,7 @@ def delete_telegram_message(chat_id: str, message_id: int) -> bool:
 
 
 def send_telegram_broadcast(user_ids: List[str], message: str) -> Dict[str, bool]:
-    """Рассылка сообщения нескольким пользователям"""
+    """Р Р°СЃСЃС‹Р»РєР° СЃРѕРѕР±С‰РµРЅРёСЏ РЅРµСЃРєРѕР»СЊРєРёРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРј"""
     results = {}
     for user_id in user_ids:
         result = send_telegram_private(user_id, message)
@@ -618,32 +624,32 @@ def send_telegram_broadcast(user_ids: List[str], message: str) -> Dict[str, bool
 # =============================================================================
 
 def speech_to_text(audio_url: str) -> str:
-    """Преобразовать голосовое сообщение в текст"""
+    """РџСЂРµРѕР±СЂР°Р·РѕРІР°С‚СЊ РіРѕР»РѕСЃРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РІ С‚РµРєСЃС‚"""
     try:
         if not config.OPENAI_API_KEY:
-            return "[Распознавание голоса недоступно - нет API ключа]"
+            return "[Р Р°СЃРїРѕР·РЅР°РІР°РЅРёРµ РіРѕР»РѕСЃР° РЅРµРґРѕСЃС‚СѓРїРЅРѕ - РЅРµС‚ API РєР»СЋС‡Р°]"
 
-        # Cloud API media — скачиваем через Bearer токен
+        # Cloud API media вЂ” СЃРєР°С‡РёРІР°РµРј С‡РµСЂРµР· Bearer С‚РѕРєРµРЅ
         if audio_url.startswith("cloud_media:"):
             media_id = audio_url.split(":", 1)[1]
             audio_bytes = _download_cloud_media_bytes(media_id)
             if not audio_bytes:
-                return "[Ошибка загрузки аудио]"
+                return "[РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р°СѓРґРёРѕ]"
             return _transcribe_with_whisper(audio_bytes)
 
-        # Обычный URL (Green API / Twilio) — прямая загрузка
+        # РћР±С‹С‡РЅС‹Р№ URL (Green API / Twilio) вЂ” РїСЂСЏРјР°СЏ Р·Р°РіСЂСѓР·РєР°
         audio_response = requests.get(audio_url, timeout=30)
         if audio_response.status_code != 200:
-            return "[Ошибка загрузки аудио]"
+            return "[РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р°СѓРґРёРѕ]"
         return _transcribe_with_whisper(audio_response.content)
 
     except Exception as e:
         print(f"Exception in speech_to_text: {e}")
-        return "[Ошибка распознавания голоса]"
+        return "[РћС€РёР±РєР° СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ РіРѕР»РѕСЃР°]"
 
 
 def _transcribe_with_whisper(audio_content: bytes) -> str:
-    """Транскрибировать аудио с помощью OpenAI Whisper"""
+    """РўСЂР°РЅСЃРєСЂРёР±РёСЂРѕРІР°С‚СЊ Р°СѓРґРёРѕ СЃ РїРѕРјРѕС‰СЊСЋ OpenAI Whisper"""
     try:
         url = "https://api.openai.com/v1/audio/transcriptions"
         
@@ -665,11 +671,11 @@ def _transcribe_with_whisper(audio_content: bytes) -> str:
             return result.get("text", "")
         else:
             print(f"Whisper API error: {response.text}")
-            return "[Ошибка распознавания]"
+            return "[РћС€РёР±РєР° СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ]"
             
     except Exception as e:
         print(f"Exception in Whisper transcription: {e}")
-        return "[Ошибка распознавания]"
+        return "[РћС€РёР±РєР° СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ]"
 
 
 # =============================================================================
@@ -677,10 +683,10 @@ def _transcribe_with_whisper(audio_content: bytes) -> str:
 # =============================================================================
 
 def _clean_phone(phone: str) -> str:
-    """Очистить номер телефона"""
+    """РћС‡РёСЃС‚РёС‚СЊ РЅРѕРјРµСЂ С‚РµР»РµС„РѕРЅР°"""
     phone = phone.replace("+", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     
-    # Если номер начинается с whatsapp:, убираем
+    # Р•СЃР»Рё РЅРѕРјРµСЂ РЅР°С‡РёРЅР°РµС‚СЃСЏ СЃ whatsapp:, СѓР±РёСЂР°РµРј
     if "whatsapp:" in phone:
         phone = phone.replace("whatsapp:", "")
     
@@ -688,14 +694,14 @@ def _clean_phone(phone: str) -> str:
 
 
 def format_phone(phone: str) -> str:
-    """Форматировать номер телефона для отображения (формат: 0220 203 021)"""
+    """Р¤РѕСЂРјР°С‚РёСЂРѕРІР°С‚СЊ РЅРѕРјРµСЂ С‚РµР»РµС„РѕРЅР° РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ (С„РѕСЂРјР°С‚: 0220 203 021)"""
     phone = _clean_phone(phone)
 
-    # Если начинается с 996 → заменить на 0
+    # Р•СЃР»Рё РЅР°С‡РёРЅР°РµС‚СЃСЏ СЃ 996 в†’ Р·Р°РјРµРЅРёС‚СЊ РЅР° 0
     if phone.startswith("996"):
         phone = "0" + phone[3:]
 
-    # Форматировать как XXXX XXX XXX (4 цифры, пробел, 3 цифры, пробел, 3 цифры)
+    # Р¤РѕСЂРјР°С‚РёСЂРѕРІР°С‚СЊ РєР°Рє XXXX XXX XXX (4 С†РёС„СЂС‹, РїСЂРѕР±РµР», 3 С†РёС„СЂС‹, РїСЂРѕР±РµР», 3 С†РёС„СЂС‹)
     if len(phone) == 10:
         return f"{phone[:4]} {phone[4:7]} {phone[7:]}"
 
@@ -703,23 +709,23 @@ def format_phone(phone: str) -> str:
 
 
 def calculate_taxi_price(route: str) -> str:
-    """Рассчитать примерную цену такси"""
+    """Р Р°СЃСЃС‡РёС‚Р°С‚СЊ РїСЂРёРјРµСЂРЅСѓСЋ С†РµРЅСѓ С‚Р°РєСЃРё"""
     route_lower = route.lower()
     
     base_price = 100
     
-    if any(word in route_lower for word in ["центр", "рынок", "базар", "center", "bazaar"]):
+    if any(word in route_lower for word in ["С†РµРЅС‚СЂ", "СЂС‹РЅРѕРє", "Р±Р°Р·Р°СЂ", "center", "bazaar"]):
         return f"{base_price}-{base_price + 20}"
-    elif any(word in route_lower for word in ["микрорайон", "мкр", "жилмассив", "microdistrict"]):
+    elif any(word in route_lower for word in ["РјРёРєСЂРѕСЂР°Р№РѕРЅ", "РјРєСЂ", "Р¶РёР»РјР°СЃСЃРёРІ", "microdistrict"]):
         return f"{base_price + 30}-{base_price + 50}"
-    elif any(word in route_lower for word in ["за город", "село", "деревня", "village", "outskirts"]):
+    elif any(word in route_lower for word in ["Р·Р° РіРѕСЂРѕРґ", "СЃРµР»Рѕ", "РґРµСЂРµРІРЅСЏ", "village", "outskirts"]):
         return f"{base_price + 100}-{base_price + 200}"
     
     return f"{base_price}-{base_price + 50}"
 
 
 def escape_markdown(text: str) -> str:
-    """Экранировать специальные символы Markdown"""
+    """Р­РєСЂР°РЅРёСЂРѕРІР°С‚СЊ СЃРїРµС†РёР°Р»СЊРЅС‹Рµ СЃРёРјРІРѕР»С‹ Markdown"""
     if not text:
         return ""
     
@@ -732,21 +738,21 @@ def escape_markdown(text: str) -> str:
 
 
 def format_currency(amount: float) -> str:
-    """Форматировать сумму валюты"""
+    """Р¤РѕСЂРјР°С‚РёСЂРѕРІР°С‚СЊ СЃСѓРјРјСѓ РІР°Р»СЋС‚С‹"""
     return f"{amount:,.0f}".replace(",", " ")
 
 
 def truncate_text(text: str, max_length: int = 200) -> str:
-    """Обрезать текст до указанной длины"""
+    """РћР±СЂРµР·Р°С‚СЊ С‚РµРєСЃС‚ РґРѕ СѓРєР°Р·Р°РЅРЅРѕР№ РґР»РёРЅС‹"""
     if len(text) <= max_length:
         return text
     return text[:max_length - 3] + "..."
 
 
 def detect_language(text: str) -> str:
-    """Определить язык текста (ru/kg)"""
-    # Простая эвристика - проверяем на кыргызские символы
-    kyrgyz_chars = set('ңөү')
+    """РћРїСЂРµРґРµР»РёС‚СЊ СЏР·С‹Рє С‚РµРєСЃС‚Р° (ru/kg)"""
+    # РџСЂРѕСЃС‚Р°СЏ СЌРІСЂРёСЃС‚РёРєР° - РїСЂРѕРІРµСЂСЏРµРј РЅР° РєС‹СЂРіС‹Р·СЃРєРёРµ СЃРёРјРІРѕР»С‹
+    kyrgyz_chars = set('ТЈУ©ТЇ')
     
     for char in text.lower():
         if char in kyrgyz_chars:
