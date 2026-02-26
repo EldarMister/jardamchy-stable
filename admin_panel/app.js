@@ -91,6 +91,8 @@ const sectionTitles = {
     shoppers: '🛒 Закупщики',
     stats: '📈 Статистика',
     transactions: '💰 Транзакции',
+    chats: '💬 Чаты',
+    'chat-detail': '💬 Чат',
     users: '👥 Пользователи',
     broadcast: '📢 Рассылка',
     settings: '⚙️ Настройки',
@@ -139,6 +141,8 @@ function loadSectionData(section) {
         case 'settings': loadSettings(); break;
         case 'menu': loadMenuSection(); break;
         case 'order-mgmt': loadOrderMgmt(); break;
+        case 'chats': loadChats(); break;
+        case 'chat-detail': break; // загружается через openChat()
     }
 }
 
@@ -1880,4 +1884,82 @@ async function applyOrderStatus(orderId) {
     } catch (err) {
         toast('Ошибка смены статуса', 'error');
     }
+}
+
+// ============================================================================
+// CHATS (WhatsApp Inbox)
+// ============================================================================
+
+async function loadChats() {
+    const container = document.getElementById('chats-list-body');
+    container.innerHTML = '<div class="empty-state">Загрузка...</div>';
+    try {
+        const chats = await api('/chats');
+        if (!chats.length) {
+            container.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+            return;
+        }
+        container.innerHTML = chats.map(c => {
+            const dir = c.last_direction === 'out' ? '🤖 ' : '👤 ';
+            const body = (c.last_body || '').substring(0, 60) + (c.last_body && c.last_body.length > 60 ? '…' : '');
+            const time = formatDate(c.last_at);
+            return `
+            <div class="chat-list-item" onclick="openChat('${c.wa_from}')">
+                <div class="chat-list-avatar">${c.wa_from.slice(-4)}</div>
+                <div class="chat-list-info">
+                    <div class="chat-list-phone">+${c.wa_from}</div>
+                    <div class="chat-list-preview">${dir}${escHtml(body)}</div>
+                </div>
+                <div class="chat-list-time">${time}</div>
+            </div>`;
+        }).join('');
+    } catch (err) {
+        container.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+        toast('Ошибка загрузки чатов', 'error');
+    }
+}
+
+async function openChat(phone) {
+    // Показываем секцию chat-detail
+    currentSection = 'chat-detail';
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+    document.getElementById('sec-chat-detail').classList.add('active');
+    document.getElementById('header-title').textContent = `💬 +${phone}`;
+    document.getElementById('chat-detail-title').textContent = `+${phone}`;
+
+    const wrap = document.getElementById('chat-messages-wrap');
+    wrap.innerHTML = '<div class="empty-state">Загрузка...</div>';
+
+    try {
+        const messages = await api(`/chats/${phone}`);
+        if (!messages.length) {
+            wrap.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+            return;
+        }
+        wrap.innerHTML = messages.map(m => {
+            const isOut = m.direction === 'out';
+            const time = formatDate(m.created_at);
+            const typeTag = m.msg_type && m.msg_type !== 'text'
+                ? `<span class="chat-msg-type">${m.msg_type}</span>` : '';
+            const body = escHtml(m.body || '—').replace(/\n/g, '<br>');
+            return `
+            <div class="chat-msg ${isOut ? 'chat-msg-out' : 'chat-msg-in'}">
+                <div class="chat-bubble">
+                    ${typeTag}
+                    <div class="chat-msg-body">${body}</div>
+                    <div class="chat-msg-time">${time}</div>
+                </div>
+            </div>`;
+        }).join('');
+        // Скролл вниз
+        wrap.scrollTop = wrap.scrollHeight;
+    } catch (err) {
+        wrap.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+        toast('Ошибка загрузки чата', 'error');
+    }
+}
+
+function escHtml(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }

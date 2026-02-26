@@ -1094,6 +1094,7 @@ def handle_whatsapp():
         media_type = ''
         button_response = ''
         type_message = ''
+        wa_message_id = ''
         
         # 1. Попытка парсинга как JSON (Cloud API или Green API)
         if request.is_json:
@@ -1114,6 +1115,7 @@ def handle_whatsapp():
 
                 sender_phone, sender_kind, raw_sender = _extract_cloud_sender(value)
                 incoming_msg, media_url, media_type, button_response, type_message = _extract_cloud_message_payload(value)
+                wa_message_id = (value.get("messages") or [{}])[0].get("id") or ""
 
                 logger.info(f"Cloud webhook type={type_message} sender={sender_phone}")
 
@@ -1166,9 +1168,26 @@ def handle_whatsapp():
             return jsonify({"status": "ignored"}), 200
 
         logger.info(f"Received from {sender_phone}: {incoming_msg[:50]}...")
-        
+
         db = get_db()
-        
+
+        # Логируем входящее сообщение в БД (для админки чатов)
+        if sender_phone and (incoming_msg or button_response or media_url):
+            try:
+                log_body = incoming_msg or (
+                    f"Нажал кнопку: {button_response}" if button_response else f"[медиа: {media_type or 'файл'}]"
+                )
+                db.save_message(
+                    phone=sender_phone,
+                    direction='in',
+                    body=log_body,
+                    msg_type=type_message or 'text',
+                    wa_message_id=wa_message_id or None,
+                    button_id=button_response or None,
+                )
+            except Exception as _log_err:
+                logger.warning(f"Failed to log incoming message: {_log_err}")
+
         # Получаем или создаем пользователя
         user = db.get_user(sender_phone)
         

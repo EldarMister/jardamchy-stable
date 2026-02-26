@@ -433,6 +433,29 @@ class Database:
                     )
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_telegram_sessions ON telegram_sessions(telegram_id)")
+
+                # Таблица сообщений WhatsApp (inbox/outbox для админки)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS messages (
+                        id SERIAL PRIMARY KEY,
+                        wa_from VARCHAR(20) NOT NULL,
+                        direction VARCHAR(3) NOT NULL,
+                        msg_type VARCHAR(20) DEFAULT 'text',
+                        body TEXT,
+                        button_id VARCHAR(256),
+                        wa_message_id VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_wa_msg_id
+                    ON messages(wa_message_id)
+                    WHERE wa_message_id IS NOT NULL
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_messages_wa_from
+                    ON messages(wa_from, created_at DESC)
+                """)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -914,6 +937,62 @@ class Database:
             )
             return cur.rowcount > 0
     
+    # ==========================================================================
+    # MESSAGES (WhatsApp Inbox/Outbox)
+    # ==========================================================================
+
+    def save_message(self, phone: str, direction: str, body: str,
+                     msg_type: str = 'text', wa_message_id: str = None,
+                     button_id: str = None) -> bool:
+        """Сохранить входящее/исходящее WA-сообщение. Дубликаты по wa_message_id игнорируются."""
+        try:
+            with self.get_cursor(commit=True) as cur:
+                if wa_message_id:
+                    cur.execute("""
+                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id, wa_message_id)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
+                    """, (phone, direction, msg_type, body, button_id, wa_message_id))
+                else:
+                    cur.execute("""
+                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (phone, direction, msg_type, body, button_id))
+            return True
+        except Exception as e:
+            print(f"[DB] save_message error: {e}")
+            return False
+
+    def get_chat_list(self) -> List[Dict]:
+        """Список чатов: уникальные номера, последнее сообщение, время."""
+        with self.get_cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (wa_from)
+                    wa_from,
+                    direction AS last_direction,
+                    body      AS last_body,
+                    created_at AS last_at
+                FROM messages
+                ORDER BY wa_from, created_at DESC
+            """)
+            rows = cur.fetchall()
+            # Сортируем по времени последнего сообщения
+            result = [dict(r) for r in rows]
+            result.sort(key=lambda x: x['last_at'] or '', reverse=True)
+            return result
+
+    def get_chat_messages(self, phone: str, limit: int = 150, offset: int = 0) -> List[Dict]:
+        """История чата с пользователем, сортировка по времени ASC."""
+        with self.get_cursor() as cur:
+            cur.execute("""
+                SELECT id, wa_from, direction, msg_type, body, button_id, created_at
+                FROM messages
+                WHERE wa_from = %s
+                ORDER BY created_at ASC
+                LIMIT %s OFFSET %s
+            """, (phone, limit, offset))
+            return [dict(r) for r in cur.fetchall()]
+
     # ==========================================================================
     # DRIVERS METHODS
     # ==========================================================================

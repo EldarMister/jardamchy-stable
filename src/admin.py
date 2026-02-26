@@ -1084,6 +1084,36 @@ def update_settings():
         return jsonify({"error": str(e)}), 500
 
 
+# =============================================================================
+# CHATS (WhatsApp Inbox)
+# =============================================================================
+
+@admin_bp.route('/chats', methods=['GET'])
+def list_chats():
+    """Список чатов: по одному номеру, последнее сообщение и время."""
+    try:
+        db = get_db()
+        chats = db.get_chat_list()
+        return jsonify(_clean_rows(chats)), 200
+    except Exception as e:
+        logger.exception("Error listing chats")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/chats/<phone>', methods=['GET'])
+def get_chat(phone):
+    """История переписки с конкретным номером."""
+    try:
+        limit = min(int(request.args.get('limit', 150)), 500)
+        offset = int(request.args.get('offset', 0))
+        db = get_db()
+        messages = db.get_chat_messages(phone, limit=limit, offset=offset)
+        return jsonify(_clean_rows(messages)), 200
+    except Exception as e:
+        logger.exception("Error getting chat")
+        return jsonify({"error": str(e)}), 500
+
+
 @admin_bp.route('/settings/ramadan', methods=['POST'])
 def toggle_ramadan_mode():
     """Переключить режим Рамазан"""

@@ -99,6 +99,13 @@ def _send_whatsapp_cloud(phone: str, message: str) -> bool:
         }
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
+            sent_id = (response.json().get('messages') or [{}])[0].get('id') or None
+            try:
+                from db import get_db as _get_db
+                _get_db().save_message(phone=phone, direction='out', body=message,
+                                       msg_type='text', wa_message_id=sent_id)
+            except Exception:
+                pass
             print(f"[Cloud API] Message sent to {phone}")
             return True
         else:
@@ -140,6 +147,15 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
         }
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
+            sent_id = (response.json().get('messages') or [{}])[0].get('id') or None
+            try:
+                from db import get_db as _get_db
+                btn_titles = ' / '.join(b['reply']['title'] for b in cloud_buttons)
+                _get_db().save_message(phone=phone, direction='out',
+                                       body=f"{message}\n[Кнопки: {btn_titles}]",
+                                       msg_type='interactive', wa_message_id=sent_id)
+            except Exception:
+                pass
             return True
         else:
             print(f"[Cloud API Buttons] Error: {response.text}, fallback to plain text")
