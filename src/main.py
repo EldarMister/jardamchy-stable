@@ -877,6 +877,21 @@ def _is_vague_address(address: str) -> bool:
         return True
     return False
 
+_SUPPORT_KEYWORDS = {
+    "жардам", "жардам бер", "помощь", "помоги", "помогите",
+    "поддержка", "техподдержка", "тех поддержка", "тех.поддержка",
+    "help", "support", "колдоо", "кömek", "комек",
+}
+
+def _is_support_request(msg_lower: str) -> bool:
+    """Проверяет, просит ли пользователь тех поддержку"""
+    s = msg_lower.strip()
+    if s in _SUPPORT_KEYWORDS:
+        return True
+    first = s.split()[0] if s else ""
+    return first in _SUPPORT_KEYWORDS
+
+
 def _is_cancellation(message: str) -> bool:
     """Проверяет, хочет ли пользователь отменить заказ"""
     msg_lower = message.lower().strip()
@@ -1247,6 +1262,16 @@ def handle_whatsapp():
             _reset_unknown_fallback(user)
             if not cancelled:
                 send_whatsapp(user.phone, config.ORDER_CANCELLED)
+            return jsonify({"status": "ok"}), 200
+
+        # Запрос тех поддержки (в любом состоянии)
+        if _is_support_request(msg_lower):
+            send_whatsapp(user.phone, config.SUPPORT_TO_CLIENT.format(
+                support_phone=config.SUPPORT_PHONE
+            ))
+            send_whatsapp(config.SUPPORT_PHONE, config.SUPPORT_TO_OPERATOR.format(
+                client_phone=user.phone
+            ))
             return jsonify({"status": "ok"}), 200
 
         if user.current_state != config.STATE_IDLE:
