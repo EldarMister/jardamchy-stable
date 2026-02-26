@@ -152,9 +152,13 @@ def _utc_now() -> datetime:
 
 
 def _send_confirm_with_buttons(phone: str, msg: str) -> None:
-    """Отправить сообщение подтверждения + кнопки Да/Нет (только Cloud API)."""
-    send_whatsapp(phone, msg)
-    send_confirmation_buttons(phone)
+    """Отправить подтверждение + кнопки Да/Нет в одном сообщении."""
+    buttons = [{"id": "confirm_yes", "text": "✅ Да"}, {"id": "confirm_no", "text": "❌ Нет"}]
+    if config.WHATSAPP_PROVIDER == "cloud":
+        send_whatsapp_buttons(phone, msg, buttons)
+    else:
+        send_whatsapp(phone, msg)
+        send_confirmation_buttons(phone)
 
 
 def _extract_green_sender(sender_data: dict) -> tuple:
