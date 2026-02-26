@@ -772,37 +772,8 @@ def _maybe_prompt_flow_switch(user: User, message: str) -> tuple | None:
 
 
 def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tuple:
-    now = _utc_now()
-    count_raw = user.get_temp_data("fallback_unknown_count", 0)
-    count = int(count_raw) if isinstance(count_raw, int) else 0
-    last_at = _parse_iso_utc(user.get_temp_data("fallback_unknown_last_at"))
-    cooldown_until = _parse_iso_utc(user.get_temp_data("fallback_unknown_cooldown_until"))
-
-    if not last_at or (now - last_at) >= timedelta(minutes=UNKNOWN_FALLBACK_RESET_MINUTES):
-        count = 0
-        cooldown_until = None
-
-    count += 1
-    user.set_temp_data("fallback_unknown_count", count)
-    user.set_temp_data("fallback_unknown_last_at", now.isoformat())
-
-    if count == UNKNOWN_FALLBACK_MAX_ATTEMPTS:
-        cooldown_until = now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
-        user.set_temp_data("fallback_unknown_cooldown_until", cooldown_until.isoformat())
-        send_whatsapp(user.phone, UNKNOWN_FALLBACK_FINAL_MESSAGE)
-        return jsonify({"status": "ok"}), 200
-
-    if count > UNKNOWN_FALLBACK_MAX_ATTEMPTS:
-        # После лимита отвечаем коротко на каждое сообщение, без повторного AI.
-        next_cooldown = (
-            cooldown_until
-            if (cooldown_until and now < cooldown_until)
-            else now + timedelta(minutes=UNKNOWN_FALLBACK_COOLDOWN_MINUTES)
-        )
-        user.set_temp_data("fallback_unknown_cooldown_until", next_cooldown.isoformat())
-        send_whatsapp(user.phone, UNKNOWN_FALLBACK_COOLDOWN_MESSAGE)
-        return jsonify({"status": "ok"}), 200
-
+    # Always answer unknown messages using AI fallback text when available.
+    _reset_unknown_fallback(user)
     reply = (ai_reply or "").strip()
     if not reply:
         reply = (
@@ -1549,11 +1520,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === ПРИВЕТСТВИЕ или НЕИЗВЕСТНОЕ ===
     elif intent == "greeting" or _looks_like_greeting(message):
         _reset_unknown_fallback(user)
-        if db.can_send_welcome(user.phone, cooldown_seconds=600):
-            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
-            db.update_last_welcome(user.phone)
-        else:
-            logger.info(f"Welcome suppressed for {user.phone} (anti-flood)")
+        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        db.update_last_welcome(user.phone)
         return jsonify({"status": "ok"}), 200
 
     else:
