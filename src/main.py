@@ -1244,9 +1244,10 @@ def handle_whatsapp():
             send_whatsapp(user.phone, config.SUPPORT_TO_CLIENT.format(
                 support_phone=config.SUPPORT_PHONE
             ))
-            send_whatsapp(config.SUPPORT_PHONE, config.SUPPORT_TO_OPERATOR.format(
-                client_phone=user.phone
-            ))
+            if config.SUPPORT_TELEGRAM_ID:
+                send_telegram_private(config.SUPPORT_TELEGRAM_ID, config.SUPPORT_TO_OPERATOR.format(
+                    client_phone=user.phone
+                ))
             return jsonify({"status": "ok"}), 200
 
         if user.current_state != config.STATE_IDLE:

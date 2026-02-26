@@ -77,6 +77,7 @@ SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
 
 # Тех поддержка
 SUPPORT_PHONE = os.getenv("SUPPORT_PHONE", "+996226410410")
+SUPPORT_TELEGRAM_ID = os.getenv("SUPPORT_TELEGRAM_ID", "")
 
 # =============================================================================
 # API КЛЮЧИ
