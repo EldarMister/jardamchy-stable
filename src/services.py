@@ -11,19 +11,32 @@ from urllib.parse import urlencode
 
 import config
 
+WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
+WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
+
 
 # =============================================================================
 # WHATSAPP SERVICES (GREEN API + Twilio)
 # =============================================================================
 
+def _with_cancel_button(buttons: List[Dict]) -> List[Dict]:
+    """Append a global cancel button when button slots are available."""
+    safe_buttons = list(buttons or [])
+    if any((btn or {}).get("id") == WHATSAPP_CANCEL_BUTTON_ID for btn in safe_buttons):
+        return safe_buttons[:3]
+    if len(safe_buttons) < 3:
+        safe_buttons.append({"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT})
+    return safe_buttons[:3]
+
 def send_whatsapp(phone: str, message: str) -> bool:
     """Отправить сообщение в WhatsApp"""
-    if config.WHATSAPP_PROVIDER == "cloud":
-        return _send_whatsapp_cloud(phone, message)
-    elif config.WHATSAPP_PROVIDER == "twilio":
+    if config.WHATSAPP_PROVIDER == "twilio":
         return _send_whatsapp_twilio(phone, message)
-    else:
-        return _send_whatsapp_green(phone, message)
+    return send_whatsapp_buttons(
+        phone,
+        message,
+        [{"id": WHATSAPP_CANCEL_BUTTON_ID, "text": WHATSAPP_CANCEL_BUTTON_TEXT}],
+    )
 
 
 def _send_whatsapp_green(phone: str, message: str) -> bool:
@@ -224,12 +237,13 @@ def send_confirmation_buttons(phone: str) -> bool:
         {"id": "confirm_yes", "text": "✅ Да"},
         {"id": "confirm_no", "text": "❌ Нет"},
     ]
-    return _send_whatsapp_buttons_cloud(phone, "Подтверждаете заказ?", buttons)
+    return _send_whatsapp_buttons_cloud(phone, "Подтверждаете заказ?", _with_cancel_button(buttons))
 
 
 def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict]) -> bool:
     """Отправить интерактивное сообщение с кнопками в WhatsApp"""
     try:
+        buttons = _with_cancel_button(buttons)
         if config.WHATSAPP_PROVIDER == "cloud":
             return _send_whatsapp_buttons_cloud(phone, message, buttons)
         elif config.WHATSAPP_PROVIDER == "twilio":

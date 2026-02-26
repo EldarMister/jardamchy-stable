@@ -15,7 +15,8 @@ from db import get_db, User, get_runtime_setting
 from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
     send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
-    speech_to_text, format_phone, format_currency, send_confirmation_buttons
+    speech_to_text, format_phone, format_currency, send_confirmation_buttons,
+    WHATSAPP_CANCEL_BUTTON_ID
 )
 from nlu import parse_user_message, parse_confirmation
 
@@ -2586,6 +2587,14 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
 
     try:
         _reset_unknown_fallback(user)
+
+        if button_response in {WHATSAPP_CANCEL_BUTTON_ID, "btn_cancel", "cancel"}:
+            handle_client_cancel(user, db)
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            _reset_unknown_fallback(user)
+            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+            return jsonify({"status": "ok"}), 200
 
         # Универсальное подтверждение заказа (Cloud API кнопки Да/Нет)
         if user.current_state == config.STATE_CONFIRM_ORDER:
