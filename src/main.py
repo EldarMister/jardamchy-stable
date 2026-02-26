@@ -525,23 +525,10 @@ def _resend_confirm_step(user: User) -> bool:
     if service_type == config.SERVICE_TAXI:
         from_addr = user.get_temp_data("taxi_from", "")
         to_addr = user.get_temp_data("taxi_to", "")
-        custom_price = user.get_temp_data("taxi_custom_price")
-        if custom_price:
-            try:
-                price = int(float(custom_price))
-            except (TypeError, ValueError):
-                price = custom_price
-            msg = config.CONFIRM_TAXI_CUSTOM_PRICE.format(
-                from_address=from_addr,
-                to_address=to_addr,
-                price=price,
-            )
-        else:
-            msg = config.CONFIRM_TAXI.format(
-                from_address=from_addr,
-                to_address=to_addr,
-            )
-        _send_confirm_with_buttons(user.phone, msg)
+        _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
+            from_address=from_addr,
+            to_address=to_addr,
+        ))
         return True
 
     if service_type == config.SERVICE_CAFE:
@@ -582,26 +569,14 @@ def _resend_current_step_prompt(user: User) -> None:
     if state == config.STATE_TAXI_ROUTE:
         send_whatsapp(user.phone, config.TAXI_PROMPT)
         return
-    if state == config.STATE_TAXI_PRICE_CHOICE:
-        _send_taxi_price_choice(
-            user.phone,
-            user.get_temp_data("taxi_from", ""),
-            user.get_temp_data("taxi_to", ""),
-        )
-        return
-    if state == config.STATE_TAXI_CUSTOM_PRICE:
+    if state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
+        # Устаревшие состояния — переводим сразу к подтверждению
         from_addr = user.get_temp_data("taxi_from", "")
         to_addr = user.get_temp_data("taxi_to", "")
-        if from_addr and to_addr:
-            send_whatsapp(
-                user.phone,
-                config.TAXI_ASK_PRICE_PROMPT.format(
-                    from_address=from_addr,
-                    to_address=to_addr,
-                ),
-            )
-        else:
-            send_whatsapp(user.phone, config.TAXI_CUSTOM_PRICE_PROMPT)
+        user.set_state(config.STATE_CONFIRM_ORDER)
+        _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
+            from_address=from_addr, to_address=to_addr,
+        ))
         return
     if state == config.STATE_TAXI_REORDER_CHOICE:
         send_whatsapp(
@@ -1316,10 +1291,15 @@ def handle_whatsapp():
                 db,
                 is_voice_input=is_voice_message
             )
-        elif user.current_state == config.STATE_TAXI_PRICE_CHOICE:
-            return handle_taxi_price_choice(user, incoming_msg, db)
-        elif user.current_state == config.STATE_TAXI_CUSTOM_PRICE:
-            return handle_taxi_custom_price(user, incoming_msg, db)
+        elif user.current_state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
+            # Цена больше не запрашивается — перенаправляем к подтверждению
+            from_addr = user.get_temp_data('taxi_from', '')
+            to_addr = user.get_temp_data('taxi_to', '')
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
+                from_address=from_addr, to_address=to_addr,
+            ))
+            return jsonify({"status": "ok"}), 200
         
         # Веб-заказ меню
         elif user.current_state == config.STATE_WEB_ORDER_ADDRESS:
@@ -1423,24 +1403,24 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     if intent == "taxi":
         from_addr = nlu_result.get("from_address")
         to_addr = nlu_result.get("to_address")
-        
+
         if from_addr and to_addr:
-            # ИИ извлёк оба адреса — спрашиваем цену
+            # ИИ извлёк оба адреса — сразу к подтверждению
             user.set_temp_data('service_type', config.SERVICE_TAXI)
             user.set_temp_data('taxi_from', from_addr)
             user.set_temp_data('taxi_to', to_addr)
             user.set_temp_data('taxi_route', f"{from_addr} — {to_addr}")
-            user.set_state(config.STATE_TAXI_CUSTOM_PRICE)
-            send_whatsapp(user.phone, config.TAXI_ASK_PRICE_PROMPT.format(
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
                 from_address=from_addr, to_address=to_addr,
             ))
         else:
-            # Адреса не указаны — спрашиваем
+            # Адреса не указаны — спрашиваем маршрут
             user.set_temp_data('taxi_from', '')
             user.set_temp_data('taxi_to', '')
             user.set_state(config.STATE_TAXI_ROUTE)
             send_whatsapp(user.phone, config.TAXI_PROMPT)
-        
+
         return jsonify({"status": "ok"}), 200
     
     # === КАФЕ ===
@@ -2640,9 +2620,15 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
                 send_whatsapp(user.phone, config.ORDER_CANCELLED)
                 return jsonify({"status": "ok"}), 200
 
-        # Такси: выбор цены
-        if user.current_state == config.STATE_TAXI_PRICE_CHOICE:
-            return handle_taxi_price_choice(user, button_response, db)
+        # Такси: устаревшее состояние выбора цены — перенаправляем к подтверждению
+        if user.current_state in (config.STATE_TAXI_PRICE_CHOICE, config.STATE_TAXI_CUSTOM_PRICE):
+            from_addr = user.get_temp_data('taxi_from', '')
+            to_addr = user.get_temp_data('taxi_to', '')
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            _send_confirm_with_buttons(user.phone, config.CONFIRM_TAXI.format(
+                from_address=from_addr, to_address=to_addr,
+            ))
+            return jsonify({"status": "ok"}), 200
 
         # Аптека: подтверждение
         if user.current_state == config.STATE_PHARMACY_CONFIRM:
