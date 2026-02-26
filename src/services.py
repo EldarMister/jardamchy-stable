@@ -45,7 +45,12 @@ def _is_plain_whatsapp_message(message: str) -> bool:
     if message_text == (config.ORDER_CANCELLED or "").strip():
         return True
     message_lower = message_text.lower()
-    return any(phrase in message_lower for phrase in NO_CANCEL_MESSAGE_PHRASES)
+    if any(phrase in message_lower for phrase in NO_CANCEL_MESSAGE_PHRASES):
+        return True
+    # Auto-cancel and similar cancellation notifications for orders/deliveries.
+    if "отмен" in message_lower and ("заказ" in message_lower or "доставка" in message_lower):
+        return True
+    return False
 
 def send_whatsapp(phone: str, message: str) -> bool:
     """Send message to WhatsApp"""
