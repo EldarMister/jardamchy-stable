@@ -371,6 +371,19 @@ ADDRESS_CASE_SUFFIXES = (
     "га", "ге", "ка", "ке", "го", "гө", "ко", "кө",
     "до", "дө", "то", "тө", "жа", "же", "нө",
 )
+VOICE_FIX_REPLACEMENTS = (
+    (" та кси ", " такси "),
+    (" муровей ", " муравей "),
+    (" жел маян ", " желмаян "),
+    (" дары кана ", " дарыкана "),
+    (" аптек ", " аптека "),
+    (" пор тир ", " портер "),
+)
+VOICE_ADDRESS_HINTS = (
+    "кайдан", "кайда", "откуда", "куда", "от", "до",
+    "улица", "көчө", "кочо", "базар", "жд", "микрорайон",
+    "дом", "квартира", "кв", "үй",
+)
 
 
 def _normalize_address_match_text(text: str) -> str:
@@ -487,6 +500,29 @@ def _canonicalize_address_value(address: str) -> str:
 def _canonicalize_optional_address(address: str | None) -> str | None:
     corrected = _canonicalize_address_value((address or "").strip())
     return corrected or None
+
+
+def _enhance_voice_transcript(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+
+    normalized = f" {_normalize_loose_text(raw)} "
+    for old, new in VOICE_FIX_REPLACEMENTS:
+        normalized = normalized.replace(old, new)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return raw
+
+    should_canonicalize = (
+        any(hint in normalized for hint in VOICE_ADDRESS_HINTS)
+        or bool(re.search(r"\b\d{1,4}\b", normalized))
+        or " - " in raw
+        or " — " in raw
+    )
+    if should_canonicalize:
+        normalized = _canonicalize_address_value(normalized)
+    return normalized
 
 
 def _is_bad_voice_transcription(text: str) -> bool:
@@ -1341,6 +1377,7 @@ def handle_whatsapp():
         if is_voice_message and media_url:
             logger.info(f"Processing voice from {sender_phone}")
             incoming_msg = speech_to_text(media_url)
+            incoming_msg = _enhance_voice_transcript(incoming_msg)
             if _is_bad_voice_transcription(incoming_msg):
                 send_whatsapp(
                     sender_phone,

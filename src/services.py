@@ -5,6 +5,7 @@ Services Module for Business Assistant GO
 """
 
 import json
+import re
 import requests
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlencode
@@ -19,6 +20,24 @@ NO_CANCEL_MESSAGE_PHRASES = (
     "заказ жокко",
     "доставка отмен",
     "доставка жокко",
+)
+
+STT_SERVICE_KEYWORDS = (
+    "такси", "taxi", "унаа", "машина", "кайдан", "кайда",
+    "кафе", "тамак", "оокат", "меню", "жейм",
+    "магазин", "дүкөн", "продукт", "товар",
+    "аптека", "дарыкана", "дары", "лекарство",
+    "портер", "жүк", "жук", "груз",
+    "муравей", "желмаян",
+)
+STT_ADDRESS_KEYWORDS = (
+    "базар", "жд", "микрорайон", "адыр", "ынтымак",
+    "северная", "южная", "пушкина", "ленина", "аксы",
+    "орозбекова", "набережная", "достук",
+    "айтматов", "раззаков", "панфилова", "фрунзе",
+)
+STT_NOISE_MARKERS = (
+    "[ошибка", "[распозна", "[error", "[recognition"
 )
 
 
@@ -659,20 +678,85 @@ def speech_to_text(audio_url: str) -> str:
             audio_bytes = _download_cloud_media_bytes(media_id)
             if not audio_bytes:
                 return "[РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р°СѓРґРёРѕ]"
-            return _transcribe_with_whisper(audio_bytes)
+            return _transcribe_with_whisper_best(audio_bytes)
 
         # РћР±С‹С‡РЅС‹Р№ URL (Green API / Twilio) вЂ” РїСЂСЏРјР°СЏ Р·Р°РіСЂСѓР·РєР°
         audio_response = requests.get(audio_url, timeout=30)
         if audio_response.status_code != 200:
             return "[РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р°СѓРґРёРѕ]"
-        return _transcribe_with_whisper(audio_response.content)
+        return _transcribe_with_whisper_best(audio_response.content)
 
     except Exception as e:
         print(f"Exception in speech_to_text: {e}")
         return "[РћС€РёР±РєР° СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ РіРѕР»РѕСЃР°]"
 
 
-def _transcribe_with_whisper(audio_content: bytes) -> str:
+def _transcribe_with_whisper_best(audio_content: bytes) -> str:
+    """Transcribe with fixed ky+ru passes and choose the best domain-matching text."""
+    preferred_lang = (config.WHISPER_LANGUAGE or "ru").strip().lower()
+    lang_sequence = []
+    for lang in (preferred_lang, "ky", "ru"):
+        if lang and lang not in lang_sequence:
+            lang_sequence.append(lang)
+
+    candidates: List[Tuple[int, str, str]] = []
+    for lang in lang_sequence:
+        text = _transcribe_with_whisper(audio_content, language=lang)
+        if not text:
+            continue
+        cleaned = text.strip()
+        if not cleaned:
+            continue
+        score = _score_transcription(cleaned)
+        candidates.append((score, lang, cleaned))
+
+    if not candidates:
+        return "[РћС€РёР±РєР° СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ]"
+
+    # Sort by domain score, then by text length.
+    candidates.sort(key=lambda item: (item[0], len(item[2])), reverse=True)
+    best = candidates[0]
+    print(f"[STT] Best transcript language={best[1]} score={best[0]}")
+    return best[2]
+
+
+def _score_transcription(text: str) -> int:
+    normalized = re.sub(r"\s+", " ", (text or "").lower()).strip()
+    if not normalized:
+        return -100
+    if any(marker in normalized for marker in STT_NOISE_MARKERS):
+        return -80
+
+    score = 0
+    token_count = len(re.findall(r"[a-zа-яёүөңқһі0-9]+", normalized, flags=re.IGNORECASE))
+    if token_count >= 3:
+        score += 10
+    if token_count >= 6:
+        score += 8
+
+    for kw in STT_SERVICE_KEYWORDS:
+        if kw in normalized:
+            score += 7
+    for kw in STT_ADDRESS_KEYWORDS:
+        if kw in normalized:
+            score += 8
+
+    # Route patterns (addresses + direction markers) are highly valuable.
+    if re.search(r"\b(кайдан|кайда|откуда|куда|от|до)\b", normalized):
+        score += 15
+    if re.search(r"\b(дан|ден|тан|тен|нан|нен|дон|дөн|га|ге|ка|ке|го|гө|ко|кө)\b", normalized):
+        score += 10
+
+    # House numbers / route separators usually indicate useful address content.
+    if re.search(r"\b\d{1,4}\b", normalized):
+        score += 12
+    if " - " in normalized or " — " in normalized:
+        score += 10
+
+    return score
+
+
+def _transcribe_with_whisper(audio_content: bytes, language: str | None = None) -> str:
     """РўСЂР°РЅСЃРєСЂРёР±РёСЂРѕРІР°С‚СЊ Р°СѓРґРёРѕ СЃ РїРѕРјРѕС‰СЊСЋ OpenAI Whisper"""
     try:
         url = "https://api.openai.com/v1/audio/transcriptions"
@@ -684,7 +768,7 @@ def _transcribe_with_whisper(audio_content: bytes) -> str:
         files = {
             'file': ('audio.ogg', audio_content, 'audio/ogg'),
             'model': (None, 'gpt-4o-mini-transcribe'),
-            'language': (None, config.WHISPER_LANGUAGE),
+            'language': (None, (language or config.WHISPER_LANGUAGE or "ru")),
             'prompt': (None, config.WHISPER_PROMPT),
         }
 
