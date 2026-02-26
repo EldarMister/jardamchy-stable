@@ -8,6 +8,7 @@ from flask import request, jsonify
 import json
 import re
 import logging
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -309,6 +310,169 @@ def _normalize_loose_text(text: str) -> str:
     lowered = (text or "").lower().strip()
     cleaned = re.sub(r"[^\w\s]+", " ", lowered, flags=re.UNICODE)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+ADDRESS_CANONICAL_NAMES = (
+    "Северная",
+    "Южная",
+    "Пушкина",
+    "Ленина",
+    "Спортивная",
+    "Атакулов",
+    "Аксы",
+    "Адыр",
+    "Пионерская",
+    "Токтосуна-Абайдуллаева",
+    "Фрунзе",
+    "Панфилова",
+    "Исанова",
+    "Кураева",
+    "Сергеева",
+    "Чынгыза Айтматова",
+    "Ыскака Раззакова",
+    "Тыныбекова",
+    "Орозбекова",
+    "Зулпукарова",
+    "Тарыкчиева",
+    "Солнечная",
+    "Нагорная",
+    "Горная",
+    "Лермонтова",
+    "Достук",
+    "Сыдыкова",
+    "Набережная",
+    "Дружба",
+    "Ынтымак",
+)
+
+ADDRESS_MANUAL_ALIASES = {
+    "Токтосуна-Абайдуллаева": ("токтосуна абайдуллаева", "токтосуна абайдулаева"),
+    "Чынгыза Айтматова": ("чынгыза айтматова", "чингиза айтматова", "айтматова"),
+    "Ыскака Раззакова": ("ыскака раззакова", "ысака раззакова", "раззакова"),
+    "Ынтымак": ("интымак",),
+}
+
+ADDRESS_CASE_SUFFIXES = (
+    "дан", "ден", "тан", "тен", "нан", "нен", "дон", "дөн",
+    "га", "ге", "ка", "ке", "го", "гө", "ко", "кө",
+    "до", "дө", "то", "тө", "жа", "же", "нө",
+)
+
+
+def _normalize_address_match_text(text: str) -> str:
+    normalized = (text or "").lower().strip().replace("ё", "е")
+    normalized = normalized.replace("-", " ")
+    normalized = re.sub(r"[^\w\s/]+", " ", normalized, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _strip_address_case_suffix(token: str) -> str:
+    for suffix in ADDRESS_CASE_SUFFIXES:
+        if len(token) > len(suffix) + 2 and token.endswith(suffix):
+            return token[:-len(suffix)]
+    return token
+
+
+def _build_address_variants() -> dict[str, tuple[str, ...]]:
+    variants: dict[str, tuple[str, ...]] = {}
+    for canonical in ADDRESS_CANONICAL_NAMES:
+        local_variants = {_normalize_address_match_text(canonical)}
+        for alias in ADDRESS_MANUAL_ALIASES.get(canonical, ()):
+            normalized_alias = _normalize_address_match_text(alias)
+            if normalized_alias:
+                local_variants.add(normalized_alias)
+        variants[canonical] = tuple(sorted(
+            local_variants,
+            key=lambda item: (-len(item.split()), -len(item)),
+        ))
+    return variants
+
+
+ADDRESS_VARIANTS = _build_address_variants()
+ADDRESS_MAX_WORDS = max(
+    (len(v.split()) for variants in ADDRESS_VARIANTS.values() for v in variants),
+    default=1,
+)
+
+
+def _address_match_threshold(word_count: int, char_count: int) -> float:
+    if word_count >= 2:
+        return 0.78
+    if char_count <= 4:
+        return 0.93
+    return 0.85
+
+
+def _pick_canonical_address_name(segment: str) -> str | None:
+    normalized = _normalize_address_match_text(segment)
+    if not normalized:
+        return None
+
+    stripped_words = [_strip_address_case_suffix(w) for w in normalized.split()]
+    normalized = " ".join(w for w in stripped_words if w)
+    if not normalized:
+        return None
+
+    segment_word_count = len(normalized.split())
+    best_name = None
+    best_score = 0.0
+
+    for canonical, variants in ADDRESS_VARIANTS.items():
+        for variant in variants:
+            if len(variant.split()) != segment_word_count:
+                continue
+            score = SequenceMatcher(None, normalized, variant).ratio()
+            if score > best_score:
+                best_name = canonical
+                best_score = score
+
+    if not best_name:
+        return None
+
+    threshold = _address_match_threshold(segment_word_count, len(normalized))
+    if best_score < threshold:
+        return None
+    return best_name
+
+
+def _canonicalize_address_value(address: str) -> str:
+    raw = (address or "").strip()
+    if not raw:
+        return raw
+
+    tokens = re.split(r"\s+", raw)
+    out_tokens = []
+    i = 0
+
+    while i < len(tokens):
+        best_name = None
+        best_span = 0
+        max_span = min(ADDRESS_MAX_WORDS, len(tokens) - i)
+
+        for span in range(max_span, 0, -1):
+            segment = " ".join(tokens[i:i + span])
+            if not re.search(r"[A-Za-zА-Яа-яЁёҮүӨөҢңҚқҺһІі]", segment):
+                continue
+            candidate = _pick_canonical_address_name(segment)
+            if candidate:
+                best_name = candidate
+                best_span = span
+                break
+
+        if best_name:
+            out_tokens.append(best_name)
+            i += best_span
+            continue
+
+        out_tokens.append(tokens[i])
+        i += 1
+
+    return re.sub(r"\s+", " ", " ".join(out_tokens)).strip()
+
+
+def _canonicalize_optional_address(address: str | None) -> str | None:
+    corrected = _canonicalize_address_value((address or "").strip())
+    return corrected or None
 
 
 def _is_bad_voice_transcription(text: str) -> bool:
@@ -1353,8 +1517,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     
     # === ТАКСИ ===
     if intent == "taxi":
-        from_addr = nlu_result.get("from_address")
-        to_addr = nlu_result.get("to_address")
+        from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
+        to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
         if from_addr and to_addr:
             # ИИ извлёк оба адреса — сразу к подтверждению
@@ -1431,8 +1595,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     
     # === ПОРТЕР ===
     elif intent == "porter":
-        from_addr = nlu_result.get("from_address")
-        to_addr = nlu_result.get("to_address")
+        from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
+        to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
         if from_addr and to_addr:
             # Оба адреса есть — к подтверждению
@@ -1455,8 +1619,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     
     # === МУРАВЕЙ ===
     elif intent == "ant":
-        from_addr = nlu_result.get("from_address")
-        to_addr = nlu_result.get("to_address")
+        from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
+        to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
         if from_addr and to_addr:
             # Оба адреса есть — к подтверждению
@@ -1549,9 +1713,9 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
     
     if service_type == config.SERVICE_TAXI:
         if confirmation.get("corrected_from"):
-            user.set_temp_data('taxi_from', confirmation["corrected_from"])
+            user.set_temp_data('taxi_from', _canonicalize_address_value(confirmation["corrected_from"]))
         if confirmation.get("corrected_to"):
-            user.set_temp_data('taxi_to', confirmation["corrected_to"])
+            user.set_temp_data('taxi_to', _canonicalize_address_value(confirmation["corrected_to"]))
         
         from_addr = user.get_temp_data('taxi_from', '')
         to_addr = user.get_temp_data('taxi_to', '')
@@ -1567,7 +1731,7 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         if confirmation.get("corrected_details"):
             user.set_temp_data('cafe_order_details', confirmation["corrected_details"])
         if confirmation.get("corrected_to"):
-            user.set_temp_data('cafe_address', confirmation["corrected_to"])
+            user.set_temp_data('cafe_address', _canonicalize_address_value(confirmation["corrected_to"]))
         
         order_details = user.get_temp_data('cafe_order_details', '')
         address = user.get_temp_data('cafe_address', '')
@@ -1596,9 +1760,9 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
     
     elif service_type == config.SERVICE_PORTER:
         if confirmation.get("corrected_from"):
-            user.set_temp_data('porter_from', confirmation["corrected_from"])
+            user.set_temp_data('porter_from', _canonicalize_address_value(confirmation["corrected_from"]))
         if confirmation.get("corrected_to"):
-            user.set_temp_data('porter_to', confirmation["corrected_to"])
+            user.set_temp_data('porter_to', _canonicalize_address_value(confirmation["corrected_to"]))
 
         from_addr = user.get_temp_data('porter_from', '')
         to_addr = user.get_temp_data('porter_to', '')
@@ -1612,9 +1776,9 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
 
     elif service_type == config.SERVICE_ANT:
         if confirmation.get("corrected_from"):
-            user.set_temp_data('ant_from', confirmation["corrected_from"])
+            user.set_temp_data('ant_from', _canonicalize_address_value(confirmation["corrected_from"]))
         if confirmation.get("corrected_to"):
-            user.set_temp_data('ant_to', confirmation["corrected_to"])
+            user.set_temp_data('ant_to', _canonicalize_address_value(confirmation["corrected_to"]))
 
         from_addr = user.get_temp_data('ant_from', '')
         to_addr = user.get_temp_data('ant_to', '')
@@ -1933,12 +2097,14 @@ def handle_cafe_order_details(user: User, message: str, db) -> tuple:
 
 def handle_cafe_address(user: User, message: str, db) -> tuple:
     """Обработка адреса доставки — переход к подтверждению"""
+    address = _canonicalize_address_value(message)
+
     # Проверка на слишком общий адрес
-    if _is_vague_address(message):
+    if _is_vague_address(address):
         send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
         return jsonify({"status": "ok"}), 200
     
-    user.set_temp_data('cafe_address', message)
+    user.set_temp_data('cafe_address', address)
     user.set_temp_data('service_type', config.SERVICE_CAFE)
     
     order_details = user.get_temp_data('cafe_order_details', '')
@@ -1947,7 +2113,7 @@ def handle_cafe_address(user: User, message: str, db) -> tuple:
     user.set_state(config.STATE_CONFIRM_ORDER)
     confirm_msg = config.CONFIRM_CAFE.format(
         order_details=order_details,
-        address=message
+        address=address
     )
     _send_confirm_with_buttons(user.phone, confirm_msg)
     
@@ -1956,17 +2122,19 @@ def handle_cafe_address(user: User, message: str, db) -> tuple:
 
 def handle_web_order_address(user: User, message: str, db) -> tuple:
     """Обработка адреса для веб-заказа"""
+    address = _canonicalize_address_value(message)
+
     # Validation if needed
-    if len(message) < 3:
+    if len(address) < 3:
          send_whatsapp(user.phone, "Туура даректи жазыңыз:")
          return jsonify({"status": "ok"}), 200
          
-    user.set_temp_data('cafe_address', message)
+    user.set_temp_data('cafe_address', address)
     
     # Update web order status/info
     code = user.get_temp_data('web_order_code')
     if code:
-        db.update_web_order_status(code, 'ADDRESS_SET', client_phone=user.phone, address=message)
+        db.update_web_order_status(code, 'ADDRESS_SET', client_phone=user.phone, address=address)
     
     # Proceed to confirmation
     details = user.get_temp_data('cafe_order_details', '')
@@ -1974,7 +2142,7 @@ def handle_web_order_address(user: User, message: str, db) -> tuple:
     user.set_state(config.STATE_CONFIRM_ORDER)
     confirm_msg = config.CONFIRM_CAFE.format(
         order_details=details,
-        address=message
+        address=address
     )
     _send_confirm_with_buttons(user.phone, confirm_msg)
     return jsonify({"status": "ok"}), 200
@@ -2020,7 +2188,7 @@ def handle_pharmacy_request(user: User, message: str, media_url: str, db) -> tup
 
 def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
     """Получили адрес клиента после цены аптеки: сразу оформляем доставку."""
-    address = (message or "").strip()
+    address = _canonicalize_address_value((message or "").strip())
     if not address:
         send_whatsapp(user.phone, "📍 Жеткирүү дарегин жазыңыз.")
         return jsonify({"status": "ok"}), 200
@@ -2146,18 +2314,18 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         return jsonify({"status": "ok"}), 200
 
     nlu_result = parse_user_message(msg)
-    parsed_from = (nlu_result.get("from_address") or "").strip()
-    parsed_to = (nlu_result.get("to_address") or "").strip()
+    parsed_from = (_canonicalize_optional_address(nlu_result.get("from_address")) or "").strip()
+    parsed_to = (_canonicalize_optional_address(nlu_result.get("to_address")) or "").strip()
 
     # Fallback: если пользователь написал маршрут через дефис
     if not parsed_from and not parsed_to:
         dash_split = re.split(r"\s*[—-]\s*", msg, maxsplit=1)
         if len(dash_split) == 2 and dash_split[0].strip() and dash_split[1].strip():
-            parsed_from = dash_split[0].strip()
-            parsed_to = dash_split[1].strip()
+            parsed_from = _canonicalize_address_value(dash_split[0].strip())
+            parsed_to = _canonicalize_address_value(dash_split[1].strip())
 
-    current_from = (user.get_temp_data('taxi_from', '') or "").strip()
-    current_to = (user.get_temp_data('taxi_to', '') or "").strip()
+    current_from = _canonicalize_address_value((user.get_temp_data('taxi_from', '') or "").strip())
+    current_to = _canonicalize_address_value((user.get_temp_data('taxi_to', '') or "").strip())
 
     def _ask_for_to():
         send_whatsapp(
@@ -2172,6 +2340,8 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         )
 
     def _go_to_price_choice(from_address: str, to_address: str):
+        from_address = _canonicalize_address_value(from_address)
+        to_address = _canonicalize_address_value(to_address)
         user.set_temp_data('service_type', config.SERVICE_TAXI)
         user.set_temp_data('taxi_from', from_address)
         user.set_temp_data('taxi_to', to_address)
@@ -2209,7 +2379,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
             _ask_for_from()
             return jsonify({"status": "ok"}), 200
         # ИИ ничего не распознал — считаем весь текст как адрес отправления
-        single = msg
+        single = _canonicalize_address_value(msg)
         if _is_vague_address(single):
             send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
             return jsonify({"status": "ok"}), 200
@@ -2220,7 +2390,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
 
     # Для голосового ввода — пошаговый сбор недостающего адреса
     if not current_from and not current_to:
-        single_addr = parsed_from or parsed_to or msg
+        single_addr = _canonicalize_address_value(parsed_from or parsed_to or msg)
         if _is_vague_address(single_addr):
             send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
             return jsonify({"status": "ok"}), 200
@@ -2238,7 +2408,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         return jsonify({"status": "ok"}), 200
 
     if current_from and not current_to:
-        to_addr = parsed_to or parsed_from or msg
+        to_addr = _canonicalize_address_value(parsed_to or parsed_from or msg)
         if _is_vague_address(to_addr):
             send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
             return jsonify({"status": "ok"}), 200
@@ -2252,7 +2422,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
         return _go_to_price_choice(current_from, to_addr)
 
     if current_to and not current_from:
-        from_addr = parsed_from or parsed_to or msg
+        from_addr = _canonicalize_address_value(parsed_from or parsed_to or msg)
         if _is_vague_address(from_addr):
             send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
             return jsonify({"status": "ok"}), 200
@@ -2327,21 +2497,21 @@ def handle_porter_cargo_type(user: User, message: str, db) -> tuple:
 
 def handle_porter_route(user: User, message: str, db) -> tuple:
     """Обработка маршрута портер — переход к подтверждению"""
-    saved_from = user.get_temp_data('porter_from_partial')
+    saved_from = _canonicalize_address_value(user.get_temp_data('porter_from_partial'))
 
     if saved_from:
         # Уже ждём куда — берём сообщение как to_addr напрямую, без NLU
         from_addr = saved_from
-        to_addr = message.strip()
+        to_addr = _canonicalize_address_value(message.strip())
         user.set_temp_data('porter_from_partial', None)
     else:
         # Первый ввод — парсим NLU
         nlu_result = parse_user_message(message)
-        from_addr = nlu_result.get("from_address")
-        to_addr = nlu_result.get("to_address")
+        from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
+        to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
         if not from_addr:
-            from_addr = message
+            from_addr = _canonicalize_address_value(message)
 
         if not to_addr:
             # to не найден — сохраняем from и спрашиваем куда
@@ -2377,17 +2547,17 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
     """Обработка маршрута муравей — переход к подтверждению"""
     nlu_result = parse_user_message(message)
 
-    saved_from = user.get_temp_data('ant_from_partial')
+    saved_from = _canonicalize_address_value(user.get_temp_data('ant_from_partial'))
     if saved_from:
         from_addr = saved_from
-        to_addr = message.strip()
+        to_addr = _canonicalize_address_value(message.strip())
         user.set_temp_data('ant_from_partial', None)
     else:
-        from_addr = nlu_result.get("from_address")
-        to_addr = nlu_result.get("to_address")
+        from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
+        to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
         if not from_addr:
-            from_addr = message.strip()
+            from_addr = _canonicalize_address_value(message.strip())
 
         if not to_addr:
             user.set_temp_data('ant_from_partial', from_addr)
