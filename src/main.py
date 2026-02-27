@@ -1519,6 +1519,7 @@ def handle_whatsapp():
                     msg_type=type_message or 'text',
                     wa_message_id=wa_message_id or None,
                     button_id=button_response or None,
+                    media_url=media_url or None,
                 )
             except Exception as _log_err:
                 logger.warning(f"Failed to log incoming message: {_log_err}")
@@ -2487,8 +2488,8 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
     """Обработка ответа клиента после отмены водителем: повторить заказ или начать новый."""
     msg_lower = (message or "").lower().strip()
 
-    yes_words = {"да", "оа", "ооба", "yes", "1", "btn_taxi_reorder_yes"}
-    no_words = {"нет", "жок", "no", "2", "btn_taxi_reorder_no"}
+    yes_words = {"да", "оа", "ооба", "yes", "1", "btn_taxi_reorder_yes", "reorder_yes"}
+    no_words = {"нет", "жок", "no", "2", "btn_taxi_reorder_no", "reorder_no"}
 
     if msg_lower in yes_words:
         route = (user.get_temp_data('taxi_reorder_route', '') or '').strip()
@@ -2514,16 +2515,14 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
 
     if msg_lower in no_words:
         user.clear_temp_data()
-        user.set_temp_data('service_type', config.SERVICE_TAXI)
-        user.set_temp_data('taxi_from', '')
-        user.set_temp_data('taxi_to', '')
-        user.set_state(config.STATE_TAXI_ROUTE)
-        send_whatsapp(user.phone, config.TAXI_PROMPT)
+        user.set_state(config.STATE_IDLE)
+        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
         return jsonify({"status": "ok"}), 200
 
-    # Нераспознанный ответ — не повторяем вопрос (только 1 раз), сбрасываем состояние
+    # Нераспознанный ответ — сбрасываем состояние и показываем главное меню
     user.clear_temp_data()
-    user.set_state(config.STATE_INITIAL)
+    user.set_state(config.STATE_IDLE)
+    send_whatsapp(user.phone, config.WELCOME_MESSAGE)
     return jsonify({"status": "ok"}), 200
 
 

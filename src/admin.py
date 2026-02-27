@@ -3,9 +3,10 @@
 Admin Module — расширенная версия с визуальной админкой
 """
 
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, Response
 import logging
 import os
+import requests as req_lib
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -1172,10 +1173,9 @@ def send_chat_message(phone):
         if not ok:
             return jsonify({"error": "Failed to send WhatsApp message"}), 500
 
-        # Cloud provider already logs outgoing messages with wa_message_id.
-        if config.WHATSAPP_PROVIDER != "cloud":
-            db = get_db()
-            db.save_message(phone=phone, direction='out', body=message, msg_type='text')
+        # Всегда логируем исходящее сообщение — вебхук обрабатывает только входящие.
+        db = get_db()
+        db.save_message(phone=phone, direction='out', body=message, msg_type='text')
 
         return jsonify({"success": True}), 200
     except Exception as e:
@@ -1207,3 +1207,45 @@ def toggle_ramadan_mode():
     except Exception as e:
         logger.exception("Error toggling ramadan mode")
         return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/media/proxy')
+def proxy_media():
+    """Прокси для медиафайлов WhatsApp.
+    Cloud API требует Bearer-токен, поэтому браузер не может запросить напрямую.
+    Для Green API — прокси на прямой URL (также полезно для CORS).
+    ?url=<media_url>
+    """
+    media_url = request.args.get('url', '').strip()
+    if not media_url:
+        return '', 404
+
+    try:
+        if media_url.startswith('cloud_media:'):
+            # Cloud API: получаем download URL по media_id с авторизацией
+            media_id = media_url.split(':', 1)[1]
+            headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}"}
+            meta_resp = req_lib.get(
+                f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}/{media_id}",
+                headers=headers, timeout=20
+            )
+            if meta_resp.status_code != 200:
+                return '', 502
+            download_url = meta_resp.json().get("url")
+            if not download_url:
+                return '', 502
+            dl_resp = req_lib.get(download_url, headers=headers, timeout=60)
+            if dl_resp.status_code != 200:
+                return '', 502
+            content_type = dl_resp.headers.get('Content-Type', 'audio/ogg; codecs=opus')
+            return Response(dl_resp.content, content_type=content_type)
+        else:
+            # Green API или прямой URL
+            dl_resp = req_lib.get(media_url, timeout=60)
+            if dl_resp.status_code != 200:
+                return '', 502
+            content_type = dl_resp.headers.get('Content-Type', 'audio/ogg')
+            return Response(dl_resp.content, content_type=content_type)
+    except Exception as e:
+        logger.warning(f"Media proxy error: {e}")
+        return '', 502

@@ -1952,14 +1952,23 @@ async function loadChatMessages(phone) {
         wrap.innerHTML = messages.map(m => {
             const isOut = m.direction === 'out';
             const time = formatDate(m.created_at);
-            const typeTag = m.msg_type && m.msg_type !== 'text'
-                ? `<span class="chat-msg-type">${m.msg_type}</span>` : '';
-            const body = escHtml(m.body || '—').replace(/\n/g, '<br>');
+            const isAudio = ['audioMessage', 'pttMessage', 'audio', 'voice', 'ptt'].includes(m.msg_type);
+            let contentHtml;
+            if (isAudio && m.media_url) {
+                const proxySrc = `/admin/api/media/proxy?url=${encodeURIComponent(m.media_url)}`;
+                contentHtml = `<audio controls preload="none" style="max-width:220px;width:100%;margin:4px 0;">
+                    <source src="${proxySrc}">
+                </audio>`;
+            } else {
+                const typeTag = m.msg_type && m.msg_type !== 'text'
+                    ? `<span class="chat-msg-type">${m.msg_type}</span>` : '';
+                const body = escHtml(m.body || '—').replace(/\n/g, '<br>');
+                contentHtml = `${typeTag}<div class="chat-msg-body">${body}</div>`;
+            }
             return `
             <div class="chat-msg ${isOut ? 'chat-msg-out' : 'chat-msg-in'}">
                 <div class="chat-bubble">
-                    ${typeTag}
-                    <div class="chat-msg-body">${body}</div>
+                    ${contentHtml}
                     <div class="chat-msg-time">${time}</div>
                 </div>
             </div>`;

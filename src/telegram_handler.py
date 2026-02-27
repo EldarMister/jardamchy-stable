@@ -13,7 +13,7 @@ from datetime import datetime
 import config
 from db import get_db, get_runtime_setting
 from services import (
-    send_whatsapp, send_telegram_private, send_telegram_group,
+    send_whatsapp, send_whatsapp_buttons, send_telegram_private, send_telegram_group,
     edit_telegram_message, delete_telegram_message, format_phone,
     answer_telegram_callback
 )
@@ -941,13 +941,17 @@ def handle_taxi_cancel(data: str, user_id: str, user_name: str,
         _close_taxi_driver_message(chat_id, message_id, driver_msg)
 
         # КРИТИЧНО: Сначала отправляем WhatsApp клиенту, ПОТОМ работаем с состоянием
-        client_msg = ("❌ Ваш заказ отменён.\n"
-                      "Хотите вызвать такси на тот же адрес и цену или отказаться?\n"
-                      "Ответьте в чат: Да / Нет.")
+        client_msg = ("❌ Сиздин заказыңыз жокко чыгарылды.\n"
+                      "Ошол эле дарекке жана баага такси чакыргыңыз келеби?")
         client_phone = order.get('client_phone', '')
+        reorder_buttons = [
+            {"id": "reorder_yes", "text": "✅ Ооба"},
+            {"id": "reorder_no", "text": "❌ Жок"},
+        ]
 
         # Отправляем WhatsApp ДО любых операций с БД (чтобы гарантировать отправку)
-        send_whatsapp(client_phone, client_msg)
+        if not send_whatsapp_buttons(client_phone, client_msg, reorder_buttons, include_cancel=False):
+            send_whatsapp(client_phone, client_msg)
 
         # Теперь безопасно работаем с состоянием клиента
         if client_phone:

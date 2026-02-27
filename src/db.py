@@ -470,6 +470,19 @@ class Database:
                         END IF;
                     END $$;
                 """)
+
+                # media_url для голосовых/медиа-сообщений
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='messages' AND column_name='media_url'
+                        ) THEN
+                            ALTER TABLE messages ADD COLUMN media_url TEXT DEFAULT NULL;
+                        END IF;
+                    END $$;
+                """)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -957,21 +970,21 @@ class Database:
 
     def save_message(self, phone: str, direction: str, body: str,
                      msg_type: str = 'text', wa_message_id: str = None,
-                     button_id: str = None) -> bool:
+                     button_id: str = None, media_url: str = None) -> bool:
         """Сохранить входящее/исходящее WA-сообщение. Дубликаты по wa_message_id игнорируются."""
         try:
             with self.get_cursor(commit=True) as cur:
                 if wa_message_id:
                     cur.execute("""
-                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id, wa_message_id)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id, wa_message_id, media_url)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
-                    """, (phone, direction, msg_type, body, button_id, wa_message_id))
+                    """, (phone, direction, msg_type, body, button_id, wa_message_id, media_url))
                 else:
                     cur.execute("""
-                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (phone, direction, msg_type, body, button_id))
+                        INSERT INTO messages (wa_from, direction, msg_type, body, button_id, media_url)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (phone, direction, msg_type, body, button_id, media_url))
             return True
         except Exception as e:
             print(f"[DB] save_message error: {e}")
@@ -999,7 +1012,7 @@ class Database:
         """История чата с пользователем, сортировка по времени ASC."""
         with self.get_cursor() as cur:
             cur.execute("""
-                SELECT id, wa_from, direction, msg_type, body, button_id, created_at
+                SELECT id, wa_from, direction, msg_type, body, button_id, media_url, created_at
                 FROM messages
                 WHERE wa_from = %s
                 ORDER BY created_at ASC
