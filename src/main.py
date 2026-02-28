@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import config
 from db import get_db, User, get_runtime_setting
 from services import (
-    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image, send_whatsapp_url_button,
+    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
     send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
     WHATSAPP_CANCEL_BUTTON_ID, WHATSAPP_MAIN_MENU_BUTTON_ID, send_order_cancelled_with_main_menu
@@ -1777,8 +1777,16 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             send_whatsapp(user.phone, config.CAFE_ADDRESS_PROMPT)
         else:
             # Предлагаем меню или ручной ввод
-            menu_msg = f"🍔 *Тамак заказ кылуу*\n\nМенюну тандоо үчүн шилтемеге өтүңүз:\n{config.MENU_LINK}\n\nЖе тамактардын тизмесин төмөндө жазыңыз."
-            send_whatsapp_url_button(user.phone, menu_msg, "🍔 Менюну ачуу", config.MENU_LINK)
+            menu_msg = (
+                f"🍔 *Тамак заказ кылуу*\n\n"
+                f"📲 Менюну ачуу:\n{config.MENU_LINK}\n\n"
+                f"Же тамактарды жазыңыз."
+            )
+            send_whatsapp_buttons(
+                user.phone, menu_msg,
+                [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"}],
+                include_cancel=False
+            )
             user.set_state(config.STATE_CAFE_ORDER)
         
         return jsonify({"status": "ok"}), 200
