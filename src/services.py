@@ -8,6 +8,8 @@ import json
 import re
 import requests
 from typing import List, Dict, Optional, Tuple
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from urllib.parse import urlencode
 
 import config
@@ -54,6 +56,72 @@ STT_ADDRESS_KEYWORDS = (
 STT_NOISE_MARKERS = (
     "[ошибка", "[распозна", "[error", "[recognition"
 )
+
+
+def _build_http_session() -> requests.Session:
+    """Shared HTTP session to reuse TCP connections and reduce latency."""
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=0.15,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    adapter = HTTPAdapter(pool_connections=24, pool_maxsize=48, max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_HTTP_SESSION = _build_http_session()
+
+
+def _http_get(url: str, **kwargs):
+    return _HTTP_SESSION.get(url, **kwargs)
+
+
+def _http_post(url: str, **kwargs):
+    return _HTTP_SESSION.post(url, **kwargs)
+
+
+def _build_whatsapp_http_session() -> requests.Session:
+    """
+    Dedicated WhatsApp session with larger pool and safe retry policy.
+    Retries only on connect-level failures to reduce duplicate message risk.
+    """
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        connect=2,
+        read=0,
+        status=0,
+        other=0,
+        backoff_factor=0.2,
+        allowed_methods=frozenset({"GET", "POST"}),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(
+        pool_connections=64,
+        pool_maxsize=128,
+        max_retries=retries,
+        pool_block=False,
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_WHATSAPP_HTTP_SESSION = _build_whatsapp_http_session()
+
+
+def _wa_get(url: str, **kwargs):
+    return _WHATSAPP_HTTP_SESSION.get(url, **kwargs)
+
+
+def _wa_post(url: str, **kwargs):
+    return _WHATSAPP_HTTP_SESSION.post(url, **kwargs)
 
 
 # =============================================================================
@@ -129,7 +197,7 @@ def _send_whatsapp_green(phone: str, message: str) -> bool:
         
         headers = {'Content-Type': 'application/json'}
         
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         
         if response.status_code == 200:
             print(f"[GREEN API] Message sent to {phone}")
@@ -186,7 +254,7 @@ def _send_whatsapp_cloud(phone: str, message: str) -> bool:
             "type": "text",
             "text": {"body": message, "preview_url": False},
         }
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             sent_id = (response.json().get('messages') or [{}])[0].get('id') or None
             try:
@@ -234,7 +302,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
                 "action": {"buttons": cloud_buttons},
             },
         }
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             sent_id = (response.json().get('messages') or [{}])[0].get('id') or None
             try:
@@ -272,7 +340,7 @@ def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") ->
             "type": "image",
             "image": {"link": image_url, "caption": caption},
         }
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         return response.status_code == 200
     except Exception as e:
         print(f"[Cloud API Image] Exception: {e}")
@@ -285,7 +353,7 @@ def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
         # РЁР°Рі 1: РїРѕР»СѓС‡Р°РµРј download URL РёР· media_id
         meta_url = f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}/{media_id}"
         headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}"}
-        meta_resp = requests.get(meta_url, headers=headers, timeout=30)
+        meta_resp = _wa_get(meta_url, headers=headers, timeout=30)
         if meta_resp.status_code != 200:
             print(f"[Cloud API Media] Error getting URL for {media_id}: {meta_resp.text}")
             return None
@@ -295,7 +363,7 @@ def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
             return None
 
         # РЁР°Рі 2: СЃРєР°С‡РёРІР°РµРј Р±Р°Р№С‚С‹ СЃ Р°РІС‚РѕСЂРёР·Р°С†РёРµР№
-        dl_resp = requests.get(download_url, headers=headers, timeout=60)
+        dl_resp = _wa_get(download_url, headers=headers, timeout=60)
         if dl_resp.status_code != 200:
             print(f"[Cloud API Media] Download failed {dl_resp.status_code}")
             return None
@@ -358,7 +426,7 @@ def _send_whatsapp_cta_url_cloud(phone: str, message: str, btn_text: str, url: s
                 },
             },
         }
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(api_url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             try:
                 from db import get_db as _get_db
@@ -395,7 +463,7 @@ def _send_whatsapp_url_button_green(phone: str, message: str, btn_text: str, url
                 }
             ],
         }
-        response = requests.post(api_url, json=payload, timeout=30)
+        response = _wa_post(api_url, json=payload, timeout=30)
         return response.status_code == 200
     except Exception as e:
         print(f"[Green URL Button] Exception: {e}")
@@ -445,7 +513,7 @@ def _send_whatsapp_buttons_green(phone: str, message: str, buttons: List[Dict]) 
         
         headers = {'Content-Type': 'application/json'}
         
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         return response.status_code == 200
         
     except Exception as e:
@@ -500,7 +568,7 @@ def _send_whatsapp_image_green(phone: str, image_url: str, caption: str = "") ->
         
         headers = {'Content-Type': 'application/json'}
         
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
         return response.status_code == 200
         
     except Exception as e:
@@ -552,7 +620,7 @@ def send_whatsapp_location(phone: str, latitude: float, longitude: float,
             
             headers = {'Content-Type': 'application/json'}
             
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = _wa_post(url, json=payload, headers=headers, timeout=30)
             return response.status_code == 200
         else:
             # Twilio РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РѕС‚РїСЂР°РІРєСѓ Р»РѕРєР°С†РёРё РЅР°РїСЂСЏРјСѓСЋ
@@ -591,7 +659,7 @@ def send_telegram_message(chat_id: str, message: str,
             
             payload["reply_markup"] = {"inline_keyboard": inline_keyboard}
         
-        response = requests.post(url, json=payload, timeout=30)
+        response = _http_post(url, json=payload, timeout=30)
         
         if response.status_code == 200:
             return response.json().get("result")
@@ -632,7 +700,7 @@ def answer_telegram_callback(callback_query_id: str, text: str = "",
         if show_alert:
             payload["show_alert"] = True
 
-        response = requests.post(url, json=payload, timeout=10)
+        response = _http_post(url, json=payload, timeout=10)
         return response.status_code == 200
     except Exception as e:
         print(f"Exception answering Telegram callback: {e}")
@@ -669,7 +737,7 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str = "",
                 }])
             payload["reply_markup"] = {"inline_keyboard": inline_keyboard}
 
-        response = requests.post(url, json=payload, timeout=30)
+        response = _http_post(url, json=payload, timeout=30)
 
         if response.status_code == 200:
             return response.json().get("result")
@@ -705,7 +773,7 @@ def _send_telegram_photo_bytes(chat_id: str, photo_bytes: bytes, caption: str = 
 
         files = {"photo": ("photo.jpg", photo_bytes, "image/jpeg")}
 
-        response = requests.post(url, data=data, files=files, timeout=30)
+        response = _http_post(url, data=data, files=files, timeout=30)
 
         if response.status_code == 200:
             return response.json().get("result")
@@ -741,7 +809,7 @@ def edit_telegram_message(chat_id: str, message_id: int,
             
             payload["reply_markup"] = {"inline_keyboard": inline_keyboard}
         
-        response = requests.post(url, json=payload, timeout=30)
+        response = _http_post(url, json=payload, timeout=30)
         return response.status_code == 200
         
     except Exception as e:
@@ -759,7 +827,7 @@ def delete_telegram_message(chat_id: str, message_id: int) -> bool:
             "message_id": message_id
         }
         
-        response = requests.post(url, json=payload, timeout=30)
+        response = _http_post(url, json=payload, timeout=30)
         return response.status_code == 200
         
     except Exception as e:
@@ -795,7 +863,7 @@ def speech_to_text(audio_url: str) -> str:
             return _transcribe_with_whisper_best(audio_bytes)
 
         # РћР±С‹С‡РЅС‹Р№ URL (Green API / Twilio) вЂ” РїСЂСЏРјР°СЏ Р·Р°РіСЂСѓР·РєР°
-        audio_response = requests.get(audio_url, timeout=30)
+        audio_response = _http_get(audio_url, timeout=30)
         if audio_response.status_code != 200:
             return "[РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р°СѓРґРёРѕ]"
         return _transcribe_with_whisper_best(audio_response.content)
@@ -886,7 +954,7 @@ def _transcribe_with_whisper(audio_content: bytes, language: str | None = None) 
             'prompt': (None, config.WHISPER_PROMPT),
         }
 
-        response = requests.post(url, headers=headers, files=files, timeout=60)
+        response = _http_post(url, headers=headers, files=files, timeout=60)
         
         if response.status_code == 200:
             result = response.json()
@@ -981,3 +1049,4 @@ def detect_language(text: str) -> str:
             return 'kg'
     
     return 'ru'
+

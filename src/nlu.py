@@ -7,11 +7,32 @@ import json
 import logging
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 import config
 
 logger = logging.getLogger(__name__)
 MAX_FALLBACK_REPLY_CHARS = 2000
+
+
+def _build_http_session() -> requests.Session:
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=0.15,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    adapter = HTTPAdapter(pool_connections=12, pool_maxsize=24, max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_HTTP_SESSION = _build_http_session()
 
 # Системный промпт для распознавания намерений
 INTENT_SYSTEM_PROMPT = """Ты — NLU-модуль бота "Жардамчы ГО" в г. Шамалды-Сай, Кыргызстан.
@@ -202,7 +223,7 @@ def _call_gpt(system_prompt: str, user_message: str, max_tokens: int = 600) -> d
             "max_tokens": max_tokens
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=25)
+        response = _HTTP_SESSION.post(url, headers=headers, json=payload, timeout=25)
 
         if response.status_code == 200:
             result = response.json()
@@ -427,3 +448,4 @@ def _fallback_confirmation(message: str) -> dict:
         "corrected_to": None,
         "corrected_details": None
     }
+
