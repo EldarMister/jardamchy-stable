@@ -8,7 +8,7 @@ from datetime import datetime
 
 import config
 from db import get_db, get_runtime_setting
-from services import edit_telegram_message, send_telegram_group, delete_telegram_message, send_whatsapp
+from services import edit_telegram_message, send_telegram_group, delete_telegram_message, send_whatsapp, send_whatsapp_buttons
 
 logger = logging.getLogger(__name__)
 
@@ -159,53 +159,72 @@ def check_accepted_order_timeouts():
 # =============================================================================
 
 def check_pharmacy_timeouts():
-    """Проверка таймаутов аптек (3 минуты)"""
+    """Автоотмена заказов аптеки (5 минут) — никто не ответил"""
     try:
         db = get_db()
-        
+
         expired_auctions = db.get_expired_auctions()
-        
+
         for auction in expired_auctions:
             if auction['service_type'] != config.SERVICE_PHARMACY:
                 continue
-            
+
             order_id = auction['order_id']
-            
+            message_id = auction.get('telegram_message_id')
+            chat_id = auction.get('chat_id') or config.GROUP_PHARMACY_ID
+
             order = db.get_order(order_id)
             if not order or order['status'] != config.ORDER_STATUS_PENDING:
                 db.mark_auction_processed(auction['id'])
                 continue
-            
-            # Отправляем напоминание
-            reminder_msg = f"""💊 *ЗАКАЗ #{order_id} - НАПОМИНАНИЕ*
 
-⏱ Прошло больше 3 минут!
-Клиент всё ещё ждет предложения.
+            # Отменяем заказ в БД
+            db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
 
-📞 *Клиент:* {order.get('client_phone', '')}
-📋 *Запрос:* {order.get('details', '')[:100]}
+            # Обновляем сообщение в Telegram группе
+            if message_id:
+                try:
+                    edit_telegram_message(
+                        chat_id, int(message_id),
+                        config.PHARMACY_NO_RESPONSE_TELEGRAM,
+                        buttons=[]
+                    )
+                except Exception:
+                    pass
 
-💊 *КТО ПРЕДЛОЖИТ ЦЕНУ?*"""
-            
-            buttons = [{
-                "text": "💊 Указать цену",
-                "callback": f"pharm_bid_{order_id}"
-            }]
-            
-            send_telegram_group(config.GROUP_PHARMACY_ID, reminder_msg, buttons)
-            
+            # Уведомляем клиента с кнопками Ооба/Жок
+            client_phone = order.get('client_phone')
+            if client_phone:
+                reorder_buttons = [
+                    {"id": "pharm_reorder_yes", "text": "✅ Ооба"},
+                    {"id": "pharm_reorder_no", "text": "❌ Жок"},
+                ]
+                if not send_whatsapp_buttons(
+                    client_phone,
+                    config.PHARMACY_NO_RESPONSE_CLIENT,
+                    reorder_buttons,
+                    include_cancel=False
+                ):
+                    send_whatsapp(client_phone, config.PHARMACY_NO_RESPONSE_CLIENT)
+
+                # Сохраняем запрос и ставим состояние для повтора
+                client_user = db.get_user(client_phone)
+                if client_user:
+                    client_user.set_temp_data('pharmacy_reorder_request', order.get('details', ''))
+                    client_user.set_state(config.STATE_PHARMACY_REORDER_CHOICE)
+
             db.mark_auction_processed(auction['id'])
-            
+
             db.log_transaction(
-                "PHARMACY_TIMEOUT_REMINDER",
+                "PHARMACY_TIMEOUT_CANCELLED",
                 order_id=order_id,
-                details="Pharmacy timeout reminder sent"
+                details="Pharmacy order auto-cancelled after 5 min — no response"
             )
-            
-            logger.info(f"Pharmacy timeout reminder for order {order_id}")
-        
+
+            logger.info(f"Pharmacy order {order_id} auto-cancelled — no response in 5 min")
+
         return True
-        
+
     except Exception as e:
         logger.exception("Error checking pharmacy timeouts")
         return False

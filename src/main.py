@@ -1607,7 +1607,10 @@ def handle_whatsapp():
 
         if user.current_state == config.STATE_TAXI_REORDER_CHOICE:
             return handle_taxi_reorder_choice(user, incoming_msg, db)
-        
+
+        if user.current_state == config.STATE_PHARMACY_REORDER_CHOICE:
+            return handle_pharmacy_reorder_choice(user, incoming_msg, db)
+
         if user.current_state == config.STATE_IDLE:
             return handle_idle_state(user, incoming_msg, db)
         
@@ -1820,6 +1823,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     elif intent == "porter":
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
         to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
+        cargo = (nlu_result.get("cargo_type") or "").strip()
 
         if from_addr and to_addr:
             # Оба адреса есть — к подтверждению
@@ -1827,23 +1831,28 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('porter_from', from_addr)
             user.set_temp_data('porter_to', to_addr)
             user.set_temp_data('porter_route', f"{from_addr} — {to_addr}")
+            user.set_temp_data('porter_cargo', cargo)
             user.set_state(config.STATE_CONFIRM_ORDER)
 
+            cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
             confirm_msg = config.CONFIRM_PORTER.format(
                 from_address=from_addr,
-                to_address=to_addr
+                to_address=to_addr,
+                cargo_line=cargo_line,
             )
             _send_confirm_with_buttons(user.phone, confirm_msg)
         else:
+            user.set_temp_data('porter_cargo', cargo)
             user.set_state(config.STATE_PORTER_ROUTE)
             send_whatsapp(user.phone, config.PORTER_ROUTE_PROMPT)
 
         return jsonify({"status": "ok"}), 200
-    
+
     # === МУРАВЕЙ ===
     elif intent == "ant":
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
         to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
+        cargo = (nlu_result.get("cargo_type") or "").strip()
 
         if from_addr and to_addr:
             # Оба адреса есть — к подтверждению
@@ -1851,14 +1860,18 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('ant_from', from_addr)
             user.set_temp_data('ant_to', to_addr)
             user.set_temp_data('ant_route', f"{from_addr} — {to_addr}")
+            user.set_temp_data('ant_cargo', cargo)
             user.set_state(config.STATE_CONFIRM_ORDER)
 
+            cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
             confirm_msg = config.CONFIRM_ANT.format(
                 from_address=from_addr,
-                to_address=to_addr
+                to_address=to_addr,
+                cargo_line=cargo_line,
             )
             _send_confirm_with_buttons(user.phone, confirm_msg)
         else:
+            user.set_temp_data('ant_cargo', cargo)
             user.set_state(config.STATE_ANT_ROUTE)
             send_whatsapp(user.phone, config.ANT_PROMPT)
 
@@ -2230,15 +2243,20 @@ def _submit_pharmacy_order(user: User, db) -> tuple:
 def _submit_porter_order(user: User, db) -> tuple:
     """Отправка заказа портера"""
     route = user.get_temp_data('porter_route', '')
+    cargo = (user.get_temp_data('porter_cargo') or "").strip()
+
+    details = f"{route} | Жүк: {cargo}" if cargo else route
 
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_PORTER,
-        details=route,
+        details=details,
     )
 
+    cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
     telegram_msg = config.PORTER_ORDER_TELEGRAM.format(
         route=route,
+        cargo_line=cargo_line,
     )
     
     buttons = [{
@@ -2269,15 +2287,20 @@ def _submit_porter_order(user: User, db) -> tuple:
 def _submit_ant_order(user: User, db) -> tuple:
     """Отправка заказа муравья"""
     route = user.get_temp_data('ant_route', '')
+    cargo = (user.get_temp_data('ant_cargo') or "").strip()
+
+    details = f"{route} | Жүк: {cargo}" if cargo else route
 
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_ANT,
-        details=route
+        details=details
     )
 
+    cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
     telegram_msg = config.ANT_ORDER_TELEGRAM.format(
         route=route,
+        cargo_line=cargo_line,
         phone=user.phone
     )
     
@@ -2484,6 +2507,39 @@ def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
 # =============================================================================
 # TAXI FLOW
 # =============================================================================
+
+def handle_pharmacy_reorder_choice(user: User, message: str, db) -> tuple:
+    """Обработка ответа клиента после автоотмены аптеки: повторить заказ или нет."""
+    msg_lower = (message or "").lower().strip()
+
+    yes_words = {"да", "оа", "ооба", "yes", "1", "pharm_reorder_yes"}
+    no_words = {"нет", "жок", "no", "2", "pharm_reorder_no"}
+
+    if msg_lower in yes_words:
+        request = (user.get_temp_data('pharmacy_reorder_request') or '').strip()
+        user.clear_temp_data()
+        if request:
+            user.set_temp_data('service_type', config.SERVICE_PHARMACY)
+            user.set_temp_data('pharmacy_request', request)
+            user.set_state(config.STATE_CONFIRM_ORDER)
+            _send_confirm_with_buttons(user.phone, config.CONFIRM_PHARMACY.format(order_details=request))
+        else:
+            user.set_state(config.STATE_PHARMACY_WAIT_RX)
+            send_whatsapp(user.phone, config.PHARMACY_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if msg_lower in no_words:
+        user.clear_temp_data()
+        user.set_state(config.STATE_IDLE)
+        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        return jsonify({"status": "ok"}), 200
+
+    # Нераспознанный ответ — сбрасываем, показываем главное меню
+    user.clear_temp_data()
+    user.set_state(config.STATE_IDLE)
+    send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+    return jsonify({"status": "ok"}), 200
+
 
 def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
     """Обработка ответа клиента после отмены водителем: повторить заказ или начать новый."""
@@ -2740,6 +2796,11 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
         to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
 
+        # Обновляем cargo если извлечён и ещё не сохранён
+        nlu_cargo = (nlu_result.get("cargo_type") or "").strip()
+        if nlu_cargo and not user.get_temp_data('porter_cargo'):
+            user.set_temp_data('porter_cargo', nlu_cargo)
+
         if not from_addr:
             from_addr = _canonicalize_address_value(message)
 
@@ -2748,21 +2809,24 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
             user.set_temp_data('porter_from_partial', from_addr)
             send_whatsapp(user.phone, "📍 Кайда ташыйбыз?")
             return jsonify({"status": "ok"}), 200
-    
+
     # Проверка на слишком общий адрес
     if _is_vague_address(from_addr) or _is_vague_address(to_addr):
         send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
         return jsonify({"status": "ok"}), 200
-    
+
     user.set_temp_data('service_type', config.SERVICE_PORTER)
     user.set_temp_data('porter_from', from_addr)
     user.set_temp_data('porter_to', to_addr)
     user.set_temp_data('porter_route', f"{from_addr} — {to_addr}")
     user.set_state(config.STATE_CONFIRM_ORDER)
-    
+
+    cargo = (user.get_temp_data('porter_cargo') or "").strip()
+    cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
     confirm_msg = config.CONFIRM_PORTER.format(
         from_address=from_addr,
-        to_address=to_addr
+        to_address=to_addr,
+        cargo_line=cargo_line,
     )
     _send_confirm_with_buttons(user.phone, confirm_msg)
 
@@ -2775,16 +2839,20 @@ def handle_porter_route(user: User, message: str, db) -> tuple:
 
 def handle_ant_route(user: User, message: str, db) -> tuple:
     """Обработка маршрута муравей — переход к подтверждению"""
-    nlu_result = parse_user_message(message)
-
     saved_from = _canonicalize_address_value(user.get_temp_data('ant_from_partial'))
     if saved_from:
         from_addr = saved_from
         to_addr = _canonicalize_address_value(message.strip())
         user.set_temp_data('ant_from_partial', None)
     else:
+        nlu_result = parse_user_message(message)
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
         to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
+
+        # Обновляем cargo если извлечён и ещё не сохранён
+        nlu_cargo = (nlu_result.get("cargo_type") or "").strip()
+        if nlu_cargo and not user.get_temp_data('ant_cargo'):
+            user.set_temp_data('ant_cargo', nlu_cargo)
 
         if not from_addr:
             from_addr = _canonicalize_address_value(message.strip())
@@ -2805,9 +2873,12 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
     user.set_temp_data('ant_route', f"{from_addr} — {to_addr}")
     user.set_state(config.STATE_CONFIRM_ORDER)
 
+    cargo = (user.get_temp_data('ant_cargo') or "").strip()
+    cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
     confirm_msg = config.CONFIRM_ANT.format(
         from_address=from_addr,
-        to_address=to_addr
+        to_address=to_addr,
+        cargo_line=cargo_line,
     )
     _send_confirm_with_buttons(user.phone, confirm_msg)
 

@@ -55,7 +55,7 @@ ANT_COMMISSION = 10  # Комиссия с муравья 10 сом
 # =============================================================================
 
 CAFE_AUCTION_TIMEOUT = 120  # 2 минуты на аукцион кафе
-PHARMACY_RESPONSE_TIMEOUT = 180  # 3 минуты на ответ аптеки
+PHARMACY_RESPONSE_TIMEOUT = 300  # 5 минут на ответ аптеки
 TAXI_RESPONSE_TIMEOUT = 300  # 5 минут на ответ таксиста
 TAXI_ACCEPTED_TIMEOUT = 1800  # 30 минут — удалить сообщение забранного заказа
 PENDING_ORDER_AUTO_CANCEL_TIMEOUT = 1200  # 20 минут — автоотмена если никто не забрал
@@ -167,6 +167,7 @@ STATE_PHARMACY_WAIT_RX = "PHARMACY_WAIT_RX"             # Ждём назван�
 STATE_PHARMACY_WAIT_PRICE = "PHARMACY_WAIT_PRICE"
 STATE_PHARMACY_CONFIRM = "PHARMACY_CONFIRM"
 STATE_PHARMACY_ADDRESS = "PHARMACY_ADDRESS"
+STATE_PHARMACY_REORDER_CHOICE = "PHARMACY_REORDER_CHOICE"  # Повторить заказ: Ооба/Жок
 
 # Такси
 STATE_TAXI_ROUTE = "TAXI_ROUTE"
@@ -345,7 +346,18 @@ PHARMACY_SEARCHING = """💊 *Дары издеп жатабыз...*
 
 Суроо дарыканаларга жөнөтүлдү.
 
-⏱ Баа сунуштарын күтөбүз (3 мүнөт)..."""
+⏱ Баа сунуштарын күтөбүз (5 мүнөт)..."""
+
+PHARMACY_NO_RESPONSE_CLIENT = """😔 *Кечиресиз, жооп жок*
+
+5 мүнөт ичинде эч бир дарыкана жооп берген жок.
+Заказыңыз жокко чыгарылды.
+
+🔄 Заказды кайра жөнөтүүнү каалайсызбы?"""
+
+PHARMACY_NO_RESPONSE_TELEGRAM = """❌ *ЗАКАЗ ЖОККО ЧЫГАРЫЛДЫ*
+
+Эч ким 5 мүнөт ичинде жооп берген жок."""
 
 # Такси
 TAXI_PROMPT = """🚖 *Такси*
@@ -396,13 +408,13 @@ CONFIRM_PHARMACY = """💊 *Дарыкана*
 
 CONFIRM_PORTER = """🚛 *Жүк ташуу*
 
-🛣 *Маршрут:* {from_address} — {to_address}
+🛣 *Маршрут:* {from_address} — {to_address}{cargo_line}
 
 ✅ Баары туурабы? Тастыктайсызбы?"""
 
 CONFIRM_ANT = """🐜 *Желмаян*
 
-🛣 *Маршрут:* {from_address} — {to_address}
+🛣 *Маршрут:* {from_address} — {to_address}{cargo_line}
 
 ✅ Баары туурабы? Тастыктайсызбы?"""
 
@@ -521,7 +533,7 @@ PHARMACY_ORDER_TELEGRAM = """💊 *ИЩУТ ЛЕКАРСТВО / ДАРЫ ИЗД
 # Портер
 PORTER_ORDER_TELEGRAM = """🚛 *НОВЫЙ ГРУЗ / ЖАҢЫ ЖҮК*
 
-🛣 *Маршрут:* {route}
+🛣 *Маршрут:* {route}{cargo_line}
 
 💵 *Цена / Баа:* Договорная / Сүйлөшүүлүү
 
@@ -530,7 +542,7 @@ PORTER_ORDER_TELEGRAM = """🚛 *НОВЫЙ ГРУЗ / ЖАҢЫ ЖҮК*
 # Муравей
 ANT_ORDER_TELEGRAM = """🐜 *МУРАВЕЙ / ЖЕЛМАЯН*
 
-🛣 *Маршрут:* {route}
+🛣 *Маршрут:* {route}{cargo_line}
 
 💵 *Цена / Баа:* Договорная / Сүйлөшүүлүү
 📞 *Клиент / Кардар:* {phone}
