@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import config
 from db import get_db, User, get_runtime_setting
 from services import (
-    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
+    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image, send_whatsapp_url_button,
     send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
     WHATSAPP_CANCEL_BUTTON_ID
@@ -105,7 +105,8 @@ FLOW_LABELS_LOWER = {
 }
 FLOW_BY_STATE = {
     config.STATE_TAXI_ROUTE: config.SERVICE_TAXI,
-    config.STATE_TAXI_REORDER_CHOICE: config.SERVICE_TAXI,
+    # STATE_TAXI_REORDER_CHOICE намеренно исключён: это лёгкий yes/no вопрос,
+    # stale/conflict механизм не нужен — новый запрос такси должен проходить напрямую.
     config.STATE_CAFE_ORDER: config.SERVICE_CAFE,
     config.STATE_CAFE_ADDRESS: config.SERVICE_CAFE,
     config.STATE_PORTER_CARGO_TYPE: config.SERVICE_PORTER,
@@ -1774,7 +1775,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         else:
             # Предлагаем меню или ручной ввод
             menu_msg = f"🍔 *Тамак заказ кылуу*\n\nМенюну тандоо үчүн шилтемеге өтүңүз:\n{config.MENU_LINK}\n\nЖе тамактардын тизмесин төмөндө жазыңыз."
-            send_whatsapp(user.phone, menu_msg)
+            send_whatsapp_url_button(user.phone, menu_msg, "🍔 Менюну ачуу", config.MENU_LINK)
             user.set_state(config.STATE_CAFE_ORDER)
         
         return jsonify({"status": "ok"}), 200
@@ -2517,6 +2518,15 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
         user.clear_temp_data()
         user.set_state(config.STATE_IDLE)
         send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        return jsonify({"status": "ok"}), 200
+
+    # Пользователь явно запросил новое такси (например, "мага такси керек") —
+    # сбрасываем reorder-состояние и сразу запускаем новый флоу.
+    if _extract_flow_keyword_intent(message) == config.SERVICE_TAXI:
+        user.clear_temp_data()
+        user.set_temp_data('service_type', config.SERVICE_TAXI)
+        user.set_state(config.STATE_TAXI_ROUTE)
+        send_whatsapp(user.phone, config.TAXI_PROMPT)
         return jsonify({"status": "ok"}), 200
 
     # Нераспознанный ответ — сбрасываем состояние и показываем главное меню

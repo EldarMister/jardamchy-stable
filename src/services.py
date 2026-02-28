@@ -293,6 +293,92 @@ def send_confirmation_buttons(phone: str) -> bool:
     return _send_whatsapp_buttons_cloud(phone, "Тастыктайсызбы?", buttons)
 
 
+def send_whatsapp_url_button(phone: str, message: str, btn_text: str, url: str) -> bool:
+    """Отправить сообщение с кнопкой-ссылкой в WhatsApp.
+    Cloud API: тип cta_url (одна URL-кнопка).
+    Green API: templateButtons с urlButton.
+    Fallback: plain text с URL.
+    """
+    if config.WHATSAPP_PROVIDER == "cloud":
+        return _send_whatsapp_cta_url_cloud(phone, message, btn_text, url)
+    if config.WHATSAPP_PROVIDER == "green":
+        return _send_whatsapp_url_button_green(phone, message, btn_text, url)
+    # twilio / fallback
+    return send_whatsapp_plain(phone, f"{message}\n{url}")
+
+
+def _send_whatsapp_cta_url_cloud(phone: str, message: str, btn_text: str, url: str) -> bool:
+    """Cloud API: интерактивное сообщение типа cta_url (одна кнопка-ссылка)."""
+    try:
+        api_url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "interactive",
+            "interactive": {
+                "type": "cta_url",
+                "body": {"text": message},
+                "action": {
+                    "name": "cta_url",
+                    "parameters": {
+                        "display_text": btn_text[:20],
+                        "url": url,
+                    },
+                },
+            },
+        }
+        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            try:
+                from db import get_db as _get_db
+                sent_id = (response.json().get("messages") or [{}])[0].get("id") or None
+                _get_db().save_message(
+                    phone=phone, direction="out",
+                    body=f"{message}\n[Кнопка: {btn_text} → {url}]",
+                    msg_type="interactive", wa_message_id=sent_id,
+                )
+            except Exception:
+                pass
+            return True
+        print(f"[Cloud CTA URL] Error {response.status_code}: {response.text}")
+        return send_whatsapp_plain(phone, f"{message}\n{url}")
+    except Exception as e:
+        print(f"[Cloud CTA URL] Exception: {e}")
+        return send_whatsapp_plain(phone, f"{message}\n{url}")
+
+
+def _send_whatsapp_url_button_green(phone: str, message: str, btn_text: str, url: str) -> bool:
+    """Green API: templateButtons с urlButton."""
+    try:
+        api_url = f"{config.GREEN_API_URL}/sendTemplateButtons/{config.GREEN_API_TOKEN}"
+        phone_clean = _clean_phone(phone)
+        payload = {
+            "chatId": f"{phone_clean}@c.us",
+            "message": message,
+            "templateButtons": [
+                {
+                    "index": 1,
+                    "urlButton": {"displayText": btn_text, "url": url},
+                    "callButton": None,
+                    "quickReplyButton": None,
+                }
+            ],
+        }
+        response = requests.post(api_url, json=payload, timeout=30)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[Green URL Button] Exception: {e}")
+        return send_whatsapp_plain(phone, f"{message}\n{url}")
+
+
 def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict], include_cancel: bool = True) -> bool:
     """РћС‚РїСЂР°РІРёС‚СЊ РёРЅС‚РµСЂР°РєС‚РёРІРЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ СЃ РєРЅРѕРїРєР°РјРё РІ WhatsApp"""
     try:
