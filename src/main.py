@@ -116,6 +116,7 @@ FLOW_BY_STATE = {
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
+    config.STATE_PHARMACY_REORDER_CHOICE: "ожидаю ответ по повтору заказа аптеки",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
     config.STATE_PORTER_CARGO_TYPE: "ожидаю тип груза",

@@ -28,6 +28,10 @@ def check_cafe_timeouts():
         for auction in expired_auctions:
             if auction['service_type'] != config.SERVICE_CAFE:
                 continue
+
+            # Claim timer atomically to avoid duplicate processing in parallel cron runs.
+            if not db.mark_auction_processed(auction['id']):
+                continue
             
             order_id = auction['order_id']
             message_id = int(auction['telegram_message_id'])
@@ -36,11 +40,15 @@ def check_cafe_timeouts():
             # Получаем заказ
             order = db.get_order(order_id)
             if not order or order['status'] != config.ORDER_STATUS_PENDING:
-                db.mark_auction_processed(auction['id'])
                 continue
             
-            # Помечаем заказ как срочный
-            db.set_order_urgent(order_id)
+            # Atomically switch to URGENT to avoid double handling.
+            if not db.set_order_urgent_if_status(
+                order_id,
+                [config.ORDER_STATUS_PENDING, config.ORDER_STATUS_AUCTION],
+            ):
+                logger.info(f"Cafe order {order_id} already handled by another worker")
+                continue
             
             # Обновляем сообщение в группе
             updated_msg = config.CAFE_ORDER_URGENT.format(
@@ -57,9 +65,6 @@ def check_cafe_timeouts():
             ]
             
             edit_telegram_message(chat_id, message_id, updated_msg, buttons)
-            
-            # Помечаем аукцион как обработанный
-            db.mark_auction_processed(auction['id'])
             
             db.log_transaction(
                 "CAFE_AUCTION_TIMEOUT",
@@ -244,17 +249,16 @@ def check_pending_order_timeouts():
         for order in stale_orders:
             order_id = order['order_id']
 
-            # Перепроверяем статус (защита от гонки)
-            current = db.get_order(order_id)
-            if not current or current['status'] not in (
-                config.ORDER_STATUS_PENDING,
-                config.ORDER_STATUS_AUCTION,
-                config.ORDER_STATUS_URGENT,
+            # Atomic cancel: if another worker already changed status, skip.
+            if not db.cancel_order_if_status(
+                order_id,
+                [
+                    config.ORDER_STATUS_PENDING,
+                    config.ORDER_STATUS_AUCTION,
+                    config.ORDER_STATUS_URGENT,
+                ],
             ):
                 continue
-
-            # Отменяем заказ
-            db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
 
             # Удаляем сообщение из Telegram-группы если есть
             msg_id = order.get('telegram_message_id')

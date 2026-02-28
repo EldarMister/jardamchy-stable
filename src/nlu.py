@@ -275,6 +275,10 @@ def parse_user_message(message: str) -> dict:
     result = _call_gpt(INTENT_SYSTEM_PROMPT, message)
 
     if not result:
+        logger.error(
+            "NLU fallback activated in parse_user_message: GPT returned empty/invalid response. message=%r",
+            (message or "")[:200]
+        )
         # Фолбэк на простое определение по ключевым словам
         fallback = _fallback_intent(message)
         if fallback.get("intent") == "unknown":
@@ -323,6 +327,10 @@ def parse_confirmation(message: str) -> dict:
     result = _call_gpt(CONFIRM_SYSTEM_PROMPT, message)
 
     if not result:
+        logger.error(
+            "NLU fallback activated in parse_confirmation: GPT returned empty/invalid response. message=%r",
+            (message or "")[:200]
+        )
         # Фолбэк
         return _fallback_confirmation(message)
 

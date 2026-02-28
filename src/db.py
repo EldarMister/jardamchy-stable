@@ -948,6 +948,48 @@ class Database:
                 (config.ORDER_STATUS_URGENT, order_id)
             )
             return cur.rowcount > 0
+
+    def set_order_urgent_if_status(self, order_id: str, allowed_statuses: List[str]) -> bool:
+        """Atomically mark order as urgent only if current status is in allowed list."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE orders
+                   SET is_urgent = TRUE, status = %s, updated_at = CURRENT_TIMESTAMP
+                   WHERE order_id = %s
+                     AND status = ANY(%s)
+                   RETURNING order_id""",
+                (config.ORDER_STATUS_URGENT, order_id, allowed_statuses)
+            )
+            row = cur.fetchone()
+            if row:
+                self.log_transaction(
+                    action=f"ORDER_{config.ORDER_STATUS_URGENT}",
+                    order_id=order_id,
+                    details="Status atomically changed to URGENT after timeout"
+                )
+                return True
+            return False
+
+    def cancel_order_if_status(self, order_id: str, allowed_statuses: List[str]) -> bool:
+        """Atomically cancel order only if current status is in allowed list."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE orders
+                   SET status = %s, updated_at = CURRENT_TIMESTAMP
+                   WHERE order_id = %s
+                     AND status = ANY(%s)
+                   RETURNING order_id""",
+                (config.ORDER_STATUS_CANCELLED, order_id, allowed_statuses)
+            )
+            row = cur.fetchone()
+            if row:
+                self.log_transaction(
+                    action=f"ORDER_{config.ORDER_STATUS_CANCELLED}",
+                    order_id=order_id,
+                    details="Status atomically changed to CANCELLED"
+                )
+                return True
+            return False
     
     def is_order_taken(self, order_id: str) -> bool:
         """Проверить, занят ли заказ"""
@@ -1519,7 +1561,7 @@ class Database:
         """Пометить аукцион как обработанный"""
         with self.get_cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE auction_timers SET is_processed = TRUE WHERE id = %s",
+                "UPDATE auction_timers SET is_processed = TRUE WHERE id = %s AND is_processed = FALSE",
                 (timer_id,)
             )
             return cur.rowcount > 0
