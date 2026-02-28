@@ -1480,6 +1480,14 @@ def handle_whatsapp():
                     logger.info(
                         f"Green webhook type={type_message} sender_kind={sender_kind} sender={raw_sender}"
                     )
+                    wa_message_id = (
+                        data.get("idMessage")
+                        or message_data.get("idMessage")
+                        or (message_data.get("messageData") or {}).get("idMessage")
+                        or (message_data.get("textMessageData") or {}).get("idMessage")
+                        or ""
+                    )
+                    wa_message_id = str(wa_message_id).strip() if wa_message_id else ""
 
                     if not sender_phone:
                         logger.warning(f"Green webhook skipped: empty sender ({raw_sender})")
@@ -1499,6 +1507,7 @@ def handle_whatsapp():
             media_url = request.values.get('MediaUrl0', '')
             media_type = request.values.get('MediaContentType0', '')
             button_response = request.values.get('ButtonResponse', '')
+            wa_message_id = request.values.get('MessageSid', '').strip()
 
         if not sender_phone:
             return jsonify({"status": "ignored"}), 200
@@ -1513,7 +1522,7 @@ def handle_whatsapp():
                 log_body = incoming_msg or (
                     f"Нажал кнопку: {button_response}" if button_response else f"[медиа: {media_type or 'файл'}]"
                 )
-                db.save_message(
+                saved_incoming = db.save_message(
                     phone=sender_phone,
                     direction='in',
                     body=log_body,
@@ -1522,6 +1531,14 @@ def handle_whatsapp():
                     button_id=button_response or None,
                     media_url=media_url or None,
                 )
+                # Идемпотентность: если это дубль того же сообщения (same phone + wa_message_id),
+                # прекращаем обработку до создания заказа.
+                if wa_message_id and saved_incoming is False:
+                    logger.info(
+                        "Duplicate incoming message ignored phone=%s wa_message_id=%s",
+                        sender_phone, wa_message_id
+                    )
+                    return jsonify({"status": "duplicate_ignored"}), 200
             except Exception as _log_err:
                 logger.warning(f"Failed to log incoming message: {_log_err}")
 

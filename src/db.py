@@ -447,9 +447,14 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                # Идемпотентность входящих/исходящих сообщений:
+                # уникальность по (номер + message_id)
                 cur.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_wa_msg_id
-                    ON messages(wa_message_id)
+                    DROP INDEX IF EXISTS idx_messages_wa_msg_id
+                """)
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_wa_from_msg_id
+                    ON messages(wa_from, wa_message_id)
                     WHERE wa_message_id IS NOT NULL
                 """)
                 cur.execute("""
@@ -970,25 +975,30 @@ class Database:
 
     def save_message(self, phone: str, direction: str, body: str,
                      msg_type: str = 'text', wa_message_id: str = None,
-                     button_id: str = None, media_url: str = None) -> bool:
-        """Сохранить входящее/исходящее WA-сообщение. Дубликаты по wa_message_id игнорируются."""
+                     button_id: str = None, media_url: str = None):
+        """Сохранить WA-сообщение.
+        Returns:
+            True  -> запись вставлена
+            False -> дубликат по (wa_from, wa_message_id), запись не вставлена
+            None  -> ошибка БД
+        """
         try:
             with self.get_cursor(commit=True) as cur:
                 if wa_message_id:
                     cur.execute("""
                         INSERT INTO messages (wa_from, direction, msg_type, body, button_id, wa_message_id, media_url)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
+                        ON CONFLICT DO NOTHING
                     """, (phone, direction, msg_type, body, button_id, wa_message_id, media_url))
                 else:
                     cur.execute("""
                         INSERT INTO messages (wa_from, direction, msg_type, body, button_id, media_url)
                         VALUES (%s, %s, %s, %s, %s, %s)
                     """, (phone, direction, msg_type, body, button_id, media_url))
-            return True
+            return cur.rowcount > 0
         except Exception as e:
             print(f"[DB] save_message error: {e}")
-            return False
+            return None
 
     def get_chat_list(self) -> List[Dict]:
         """Список чатов: уникальные номера, последнее сообщение, время."""
