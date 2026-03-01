@@ -109,6 +109,8 @@ FLOW_BY_STATE = {
     # stale/conflict механизм не нужен — новый запрос такси должен проходить напрямую.
     config.STATE_CAFE_ORDER: config.SERVICE_CAFE,
     config.STATE_CAFE_ADDRESS: config.SERVICE_CAFE,
+    config.STATE_SHOP_LIST: config.SERVICE_SHOP,
+    config.STATE_SHOP_ADDRESS: config.SERVICE_SHOP,
     config.STATE_PORTER_CARGO_TYPE: config.SERVICE_PORTER,
     config.STATE_PORTER_ROUTE: config.SERVICE_PORTER,
     config.STATE_ANT_ROUTE: config.SERVICE_ANT,
@@ -119,6 +121,8 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_PHARMACY_REORDER_CHOICE: "ожидаю ответ по повтору заказа аптеки",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
+    config.STATE_SHOP_LIST: "ожидаю список покупок",
+    config.STATE_SHOP_ADDRESS: "ожидаю адрес доставки",
     config.STATE_PORTER_CARGO_TYPE: "ожидаю тип груза",
     config.STATE_PORTER_ROUTE: "ожидаю маршрут груза",
     config.STATE_ANT_ROUTE: "ожидаю маршрут",
@@ -1645,6 +1649,8 @@ def handle_whatsapp():
         # Магазин
         elif user.current_state == config.STATE_SHOP_LIST:
             return handle_shop_list(user, incoming_msg, db)
+        elif user.current_state == config.STATE_SHOP_ADDRESS:
+            return handle_shop_address(user, incoming_msg, db)
         
         # Аптека
         elif user.current_state == config.STATE_PHARMACY_WAIT_RX:
@@ -1815,13 +1821,11 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         order_details = order_details_raw if _is_concrete_order_details(order_details_raw, config.SERVICE_SHOP) else None
         
         if order_details:
-            # ИИ извлёк список — к подтверждению
+            # ИИ извлёк список — спрашиваем адрес доставки
             user.set_temp_data('service_type', config.SERVICE_SHOP)
             user.set_temp_data('shop_list', order_details)
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            
-            confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
-            _send_confirm_with_buttons(user.phone, confirm_msg)
+            user.set_state(config.STATE_SHOP_ADDRESS)
+            send_whatsapp(user.phone, config.SHOP_ADDRESS_PROMPT)
         else:
             user.set_state(config.STATE_SHOP_LIST)
             send_whatsapp(user.phone, config.SHOP_PROMPT)
@@ -2007,9 +2011,12 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
     elif service_type == config.SERVICE_SHOP:
         if confirmation.get("corrected_details"):
             user.set_temp_data('shop_list', confirmation["corrected_details"])
+        if confirmation.get("corrected_to"):
+            user.set_temp_data('shop_address', _canonicalize_address_value(confirmation["corrected_to"]))
         
         order_details = user.get_temp_data('shop_list', '')
-        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, delivery_fee=_runtime_setting("shop_delivery_fee", config.SHOP_DELIVERY_FEE))
+        address = user.get_temp_data('shop_address', '')
+        confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, address=address)
         _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PHARMACY:
@@ -2180,23 +2187,28 @@ def _submit_cafe_order(user: User, db) -> tuple:
 def _submit_shop_order(user: User, db) -> tuple:
     """Отправка заказа из магазина — направляем в группу такси"""
     shop_list = user.get_temp_data('shop_list', '')
+    shop_address = user.get_temp_data('shop_address', '')
 
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_SHOP,
-        details=shop_list
+        details=shop_list,
+        address=shop_address
     )
+
+    address_line = f"\n\ud83d\udccd *Куда доставить:* {shop_address}" if shop_address else ""
 
     telegram_msg = f"""🛒 *ДОСТАВКА ИЗ МАГАЗИНА*
 
 📋 *Список покупок:*
-{shop_list}
+{shop_list}{address_line}
 
 📞 *Клиент:* {user.phone}
 💰 *За доставку:* {_runtime_setting('shop_delivery_fee', config.SHOP_DELIVERY_FEE)} сом
 💰 *Комиссия:* {_runtime_setting('taxi_commission', config.TAXI_COMMISSION)} сом
 
 Нужно купить и доставить клиенту."""
+
 
     buttons = [{
         "text": "🚖 Взять заказ",
@@ -2425,14 +2437,36 @@ def handle_web_order_address(user: User, message: str, db) -> tuple:
 # =============================================================================
 
 def handle_shop_list(user: User, message: str, db) -> tuple:
-    """Обработка списка покупок — переход к подтверждению"""
+    """Обработка списка покупок — переход к запросу адреса"""
     user.set_temp_data('shop_list', message)
     user.set_temp_data('service_type', config.SERVICE_SHOP)
     
-    user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.CONFIRM_SHOP.format(order_details=message)
-    _send_confirm_with_buttons(user.phone, confirm_msg)
+    user.set_state(config.STATE_SHOP_ADDRESS)
+    send_whatsapp(user.phone, config.SHOP_ADDRESS_PROMPT)
     
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_shop_address(user: User, message: str, db) -> tuple:
+    """Обработка адреса доставки для магазина — переход к подтверждению"""
+    address = _canonicalize_address_value(message)
+
+    # Проверка на слишком общий адрес
+    if _is_vague_address(address):
+        send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    user.set_temp_data('shop_address', address)
+
+    shop_list = user.get_temp_data('shop_list', '')
+
+    user.set_state(config.STATE_CONFIRM_ORDER)
+    confirm_msg = config.CONFIRM_SHOP.format(
+        order_details=shop_list,
+        address=address
+    )
+    _send_confirm_with_buttons(user.phone, confirm_msg)
+
     return jsonify({"status": "ok"}), 200
 
 

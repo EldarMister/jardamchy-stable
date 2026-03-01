@@ -1,4 +1,4 @@
-﻿"""
+"""
 Конфигурация и Константы для Бизнес Жардамчы ГО
 Business Assistant GO - Configuration
 Автор: @Eldar
@@ -161,6 +161,7 @@ STATE_CAFE_DECLINE_REASON = "CAFE_DECLINE_REASON"
 
 # Магазин
 STATE_SHOP_LIST = "SHOP_LIST"
+STATE_SHOP_ADDRESS = "SHOP_ADDRESS"
 STATE_SHOP_CONFIRM = "SHOP_CONFIRM"
 STATE_SHOP_WAIT_PRICE = "SHOP_WAIT_PRICE"
 STATE_SHOP_DELIVERY_CHOICE = "SHOP_DELIVERY_CHOICE"
@@ -334,6 +335,10 @@ SHOP_PROMPT = """🚚 *Жеткирүү*
 - Жумуртка 10 даана
 - Өсүмдүк майы"""
 
+SHOP_ADDRESS_PROMPT = """📍 *Жеткирүү дареги*
+
+Заказ кайда жеткирилсин? Даректи жазыңыз."""
+
 SHOP_CONFIRM_PROMPT = """🛒 *Тастыктоо*
 
 ✅ Тастыктайсызбы?
@@ -399,6 +404,7 @@ CONFIRM_SHOP = """🚚 *Жеткирүү*
 📋 *Тизме:*
 {order_details}
 
+📍 *Дарек:* {address}
 🚗 *Жеткирүү:* таксист менен сүйлөшүү
 
 ✅ Баары туурабы? Тастыктайсызбы?"""
