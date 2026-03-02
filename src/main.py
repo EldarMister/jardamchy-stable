@@ -3021,14 +3021,6 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             send_whatsapp(user.phone, config.WELCOME_MESSAGE)
             return jsonify({"status": "ok"}), 200
 
-        if button_response in {WHATSAPP_CANCEL_BUTTON_ID, "btn_cancel", "cancel"}:
-            handle_client_cancel(user, db)
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            _reset_unknown_fallback(user)
-            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
-            return jsonify({"status": "ok"}), 200
-
         # Универсальное подтверждение заказа (Cloud API кнопки Да/Нет)
         if user.current_state == config.STATE_CONFIRM_ORDER:
             if button_response == "confirm_yes":
