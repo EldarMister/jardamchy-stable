@@ -82,24 +82,28 @@ FLOW_STALE_BUTTON_CONTINUE = "btn_stale_continue"
 FLOW_SWITCH_SCOPE = {
     config.SERVICE_TAXI,
     config.SERVICE_CAFE,
+    config.SERVICE_SHOP,
     config.SERVICE_PORTER,
     config.SERVICE_ANT,
 }
 FLOW_STALE_TTL_MINUTES = {
     config.SERVICE_TAXI: 45,
     config.SERVICE_CAFE: 240,
+    config.SERVICE_SHOP: 240,
     config.SERVICE_PORTER: 240,
     config.SERVICE_ANT: 240,
 }
 FLOW_LABELS = {
     config.SERVICE_TAXI: "Такси",
     config.SERVICE_CAFE: "Кафе/Меню",
+    config.SERVICE_SHOP: "Жеткирүү",
     config.SERVICE_PORTER: "Груз",
     config.SERVICE_ANT: "Муравей",
 }
 FLOW_LABELS_LOWER = {
     config.SERVICE_TAXI: "такси",
     config.SERVICE_CAFE: "кафе",
+    config.SERVICE_SHOP: "жеткирүү",
     config.SERVICE_PORTER: "груз",
     config.SERVICE_ANT: "муравей",
 }
@@ -929,21 +933,27 @@ def _resend_confirm_step(user: User) -> bool:
         return True
 
     if service_type == config.SERVICE_PORTER:
+        _cargo = (user.get_temp_data("porter_cargo") or "").strip()
+        _cargo_line = f"\n📦 *Жүк:* {_cargo}" if _cargo else ""
         _send_confirm_with_buttons(
             user.phone,
             config.CONFIRM_PORTER.format(
                 from_address=user.get_temp_data("porter_from", ""),
                 to_address=user.get_temp_data("porter_to", ""),
+                cargo_line=_cargo_line,
             ),
         )
         return True
 
     if service_type == config.SERVICE_ANT:
+        _cargo = (user.get_temp_data("ant_cargo") or "").strip()
+        _cargo_line = f"\n📦 *Жүк:* {_cargo}" if _cargo else ""
         _send_confirm_with_buttons(
             user.phone,
             config.CONFIRM_ANT.format(
                 from_address=user.get_temp_data("ant_from", ""),
                 to_address=user.get_temp_data("ant_to", ""),
+                cargo_line=_cargo_line,
             ),
         )
         return True
@@ -2037,9 +2047,12 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         to_addr = user.get_temp_data('porter_to', '')
         user.set_temp_data('porter_route', f"{from_addr} — {to_addr}")
 
+        cargo = (user.get_temp_data('porter_cargo') or "").strip()
+        cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
         confirm_msg = config.CONFIRM_PORTER.format(
             from_address=from_addr,
-            to_address=to_addr
+            to_address=to_addr,
+            cargo_line=cargo_line,
         )
         _send_confirm_with_buttons(user.phone, confirm_msg)
 
@@ -2053,9 +2066,12 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         to_addr = user.get_temp_data('ant_to', '')
         user.set_temp_data('ant_route', f"{from_addr} — {to_addr}")
 
+        cargo = (user.get_temp_data('ant_cargo') or "").strip()
+        cargo_line = f"\n📦 *Жүк:* {cargo}" if cargo else ""
         confirm_msg = config.CONFIRM_ANT.format(
             from_address=from_addr,
-            to_address=to_addr
+            to_address=to_addr,
+            cargo_line=cargo_line,
         )
         _send_confirm_with_buttons(user.phone, confirm_msg)
     

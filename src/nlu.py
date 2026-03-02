@@ -24,7 +24,7 @@ def _build_http_session() -> requests.Session:
         read=2,
         backoff_factor=0.15,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
+        allowed_methods=frozenset({"GET", "POST"}),
     )
     adapter = HTTPAdapter(pool_connections=12, pool_maxsize=24, max_retries=retries)
     session.mount("https://", adapter)
