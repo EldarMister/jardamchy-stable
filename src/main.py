@@ -1724,13 +1724,29 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
     menu_keywords = ["меню", "мену", "мэню", "менью", "менйу", "миню", "менюу", "menu", "меню керек", "мага меню"]
+
+    # Быстрые ключевые слова — пропускают OpenAI (экономят ~500мс)
+    _QUICK_INTENTS = {
+        "такси": "taxi", "taxi": "taxi", "машина": "taxi", "унаа": "taxi", "унаа керек": "taxi",
+        "кафе": "cafe", "ашкана": "cafe", "тамак": "cafe", "еда": "cafe",
+        "магазин": "shop", "дүкөн": "shop", "дукон": "shop", "продукты": "shop",
+        "аптека": "pharmacy", "дарыкана": "pharmacy",
+        "портер": "porter", "жүк": "porter",
+        "муравей": "ant", "желмаян": "ant",
+    }
+
+    _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+
     selected_intent = service_intent_by_number.get(msg_trim) or service_intent_by_number.get(first_token_digits)
     if selected_intent:
-        nlu_result = {"intent": selected_intent, "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+        nlu_result = {"intent": selected_intent, **_EMPTY_NLU}
+    elif msg_lower in _QUICK_INTENTS:
+        nlu_result = {"intent": _QUICK_INTENTS[msg_lower], **_EMPTY_NLU}
+        logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
     elif any(k in msg_lower for k in menu_keywords):
-        nlu_result = {"intent": "cafe", "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+        nlu_result = {"intent": "cafe", **_EMPTY_NLU}
     elif _looks_like_greeting(message):
-        nlu_result = {"intent": "greeting", "from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+        nlu_result = {"intent": "greeting", **_EMPTY_NLU}
     else:
         # Используем ИИ для определения намерения
         nlu_result = parse_user_message(message)
@@ -1943,11 +1959,29 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 # UNIVERSAL CONFIRM ORDER HANDLER
 # =============================================================================
 
+_FAST_CONFIRM_YES = frozenset({
+    "да", "ооба", "оа", "ok", "ок", "yes", "ага", "жакшы", "макул", "майли", "хоп", "ха",
+    "конечно", "верно", "правильно", "хорошо", "албетте", "мм", "ыы",
+})
+_FAST_CONFIRM_NO = frozenset({
+    "нет", "жок", "no", "cancel", "отмена", "жо", "жог",
+})
+
+
 def handle_confirm_order(user: User, message: str, db) -> tuple:
     """Универсальная обработка подтверждения заказа (с ИИ)"""
-    
-    # ИИ определяет: подтвердил, отменил, или исправляет
-    confirmation = parse_confirmation(message)
+    msg_lower = message.lower().strip()
+
+    # Быстрый путь для простых да/нет — пропускаем NLU (~500мс экономии)
+    if msg_lower in _FAST_CONFIRM_YES:
+        confirmation = {"confirmed": True, "is_correction": False,
+                        "corrected_from": None, "corrected_to": None, "corrected_details": None}
+    elif msg_lower in _FAST_CONFIRM_NO:
+        confirmation = {"confirmed": False, "is_correction": False,
+                        "corrected_from": None, "corrected_to": None, "corrected_details": None}
+    else:
+        # Только для сложных случаев (исправление адреса и т.п.) — вызываем NLU
+        confirmation = parse_confirmation(message)
     
     service_type = user.get_temp_data('service_type', '')
     

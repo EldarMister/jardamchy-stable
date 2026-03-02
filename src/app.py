@@ -3,7 +3,7 @@ Application Factory для Business Assistant GO
 Обновленная версия согласно ТЗ v2.0
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, copy_current_request_context
 import logging
 import os
 import threading
@@ -76,7 +76,14 @@ def create_app():
 
     @app.route('/webhook', methods=['POST'])
     def webhook_receive():
-        return handle_whatsapp()
+        @copy_current_request_context
+        def _bg():
+            try:
+                handle_whatsapp()
+            except Exception:
+                logger.exception("Error in background whatsapp handler")
+        threading.Thread(target=_bg, daemon=True).start()
+        return jsonify({"status": "ok"}), 200
 
     @app.route('/telegram_webhook', methods=['POST'])
     def telegram_webhook():
