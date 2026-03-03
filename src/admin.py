@@ -79,54 +79,71 @@ def get_dashboard():
         cafe_commission_percent = float(runtime["cafe_commission_percent"])
         porter_commission = float(runtime["porter_commission"])
         ant_commission = float(runtime["ant_commission"])
-        taxi_custom_price_commission = float(runtime["taxi_custom_price_commission"])
+        taxi_commission = float(runtime["taxi_commission"])
         taxi_shop_commission = float(runtime["taxi_shop_commission"])
         pharmacy_commission_percent = float(runtime["pharmacy_commission_percent"])
+        taxi_turnover = 120  # Фиксированный оборот такси за заказ
 
         # --- Orders and earnings for selected periods ---
         with db.get_cursor() as cur:
             # Сегодня
-            cur.execute("""
-                SELECT 
+            cur.execute(f"""
+                SELECT
                     COUNT(*) as total,
                     COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
                     COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled,
                     COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending,
-                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
-                    COALESCE(SUM(commission), 0) as commission
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                    ELSE 0 END), 0) as revenue,
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
+                    ELSE 0 END), 0) as commission
                 FROM orders WHERE DATE(created_at) = CURRENT_DATE
             """)
             today = _clean_row(cur.fetchone())
 
             # Неделя
-            cur.execute("""
-                SELECT 
+            cur.execute(f"""
+                SELECT
                     COUNT(*) as total,
                     COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
-                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
-                    COALESCE(SUM(commission), 0) as commission
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                    ELSE 0 END), 0) as revenue,
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
+                    ELSE 0 END), 0) as commission
                 FROM orders WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
             """)
             week = _clean_row(cur.fetchone())
 
             # Месяц
-            cur.execute("""
-                SELECT 
+            cur.execute(f"""
+                SELECT
                     COUNT(*) as total,
                     COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
-                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
-                    COALESCE(SUM(commission), 0) as commission
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                    ELSE 0 END), 0) as revenue,
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
+                    ELSE 0 END), 0) as commission
                 FROM orders WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
             """)
             month = _clean_row(cur.fetchone())
 
             # Все время
-            cur.execute("""
-                SELECT 
+            cur.execute(f"""
+                SELECT
                     COUNT(*) as total,
                     COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
-                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
-                    COALESCE(SUM(commission), 0) as commission
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                    ELSE 0 END), 0) as revenue,
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
+                    ELSE 0 END), 0) as commission
                 FROM orders
             """)
             all_time = _clean_row(cur.fetchone())
@@ -143,7 +160,9 @@ def get_dashboard():
                     SELECT
                         service_type,
                         COUNT(*) as count,
-                        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue,
+                        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                            CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                        ELSE 0 END), 0) as revenue,
                         COALESCE(SUM(
                             CASE WHEN status = 'COMPLETED' THEN
                                 CASE
@@ -151,7 +170,7 @@ def get_dashboard():
                                     WHEN service_type = 'porter' THEN {porter_commission}
                                     WHEN service_type = 'ant' THEN {ant_commission}
                                     WHEN service_type = 'pharmacy' THEN price_total * ({pharmacy_commission_percent} / 100.0)
-                                    WHEN service_type = 'taxi' THEN GREATEST(COALESCE(commission, 0), {taxi_custom_price_commission})
+                                    WHEN service_type = 'taxi' THEN {taxi_commission}
                                     WHEN service_type = 'shop' THEN {taxi_shop_commission}
                                     ELSE COALESCE(commission, 0)
                                 END
@@ -171,12 +190,14 @@ def get_dashboard():
             by_service = by_service_all  # backward compat
 
             # Заказы по дням за последние 7 дней
-            cur.execute("""
-                SELECT 
+            cur.execute(f"""
+                SELECT
                     DATE(created_at) as date,
                     COUNT(*) as count,
-                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN price_total ELSE 0 END), 0) as revenue
-                FROM orders 
+                    COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
+                        CASE WHEN service_type = 'taxi' THEN {taxi_turnover} ELSE price_total END
+                    ELSE 0 END), 0) as revenue
+                FROM orders
                 WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
                 GROUP BY DATE(created_at)
                 ORDER BY date
