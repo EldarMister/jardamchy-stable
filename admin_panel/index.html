@@ -1104,23 +1104,28 @@
     <div class="toast-container" id="toast-container"></div>
 
     <!-- Modal: Быстрый импорт меню -->
-    <div id="modal-bulk-import" class="modal" style="display:none">
-        <div class="modal-content" style="max-width:560px">
-            <h3>📋 Быстрый импорт меню</h3>
-            <p style="font-size:13px;color:#666;margin-bottom:10px">
-                Формат: строка <code>== Категория ==</code>, затем <code>Блюдо - цена</code>
-            </p>
-            <textarea id="bulk-import-text" rows="14"
-                style="width:100%;font-family:monospace;font-size:13px;box-sizing:border-box;"
-                placeholder="== Завтраки ==
+    <div id="modal-bulk-import" class="modal-overlay">
+        <div class="modal" style="max-width:560px">
+            <div class="modal-header">
+                <h3 class="modal-title">📋 Быстрый импорт меню</h3>
+                <button class="modal-close" onclick="closeModal('modal-bulk-import')">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:13px;color:#666;margin-bottom:10px">
+                    Формат: строка <code>== Категория ==</code>, затем <code>Блюдо - цена</code>
+                </p>
+                <textarea id="bulk-import-text" rows="14"
+                    style="width:100%;font-family:monospace;font-size:13px;box-sizing:border-box;"
+                    placeholder="== Завтраки ==
 Яичница с беконом - 150
 Омлет с сыром - 120
 
 == Напитки ==
 Чай - 50
 Кофе черный - 80"></textarea>
-            <div id="bulk-import-preview" style="margin-top:8px;font-size:13px;color:#666;min-height:18px"></div>
-            <div style="margin-top:12px;display:flex;gap:8px">
+                <div id="bulk-import-preview" style="margin-top:8px;font-size:13px;color:#666;min-height:18px"></div>
+            </div>
+            <div class="modal-footer">
                 <button class="btn btn-primary" onclick="submitBulkImport()">Импортировать</button>
                 <button class="btn btn-ghost" onclick="closeModal('modal-bulk-import')">Отмена</button>
             </div>
