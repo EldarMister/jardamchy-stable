@@ -1161,6 +1161,54 @@ async function deleteMenuItem(id) {
     }
 }
 
+// ============ BULK IMPORT ============
+
+function showBulkImportModal() {
+    if (!selectedMenuCafeId) { toast('Сначала выберите кафе', 'error'); return; }
+    document.getElementById('bulk-import-text').value = '';
+    document.getElementById('bulk-import-preview').textContent = '';
+    openModal('modal-bulk-import');
+}
+
+function parseBulkMenuText(text) {
+    const lines = text.split('\n');
+    const result = [];
+    let currentCategory = 'Основное';
+    for (let line of lines) {
+        line = line.trim();
+        if (!line) continue;
+        const catMatch = line.match(/^==\s*(.+?)\s*==$/);
+        if (catMatch) { currentCategory = catMatch[1]; continue; }
+        const priceMatch = line.match(/^(.+?)\s*-\s*(\d+(?:\.\d+)?)\s*$/);
+        if (priceMatch) {
+            result.push({ name: priceMatch[1].trim(), price: parseFloat(priceMatch[2]), category_name: currentCategory });
+        }
+    }
+    return result;
+}
+
+async function submitBulkImport() {
+    const text = document.getElementById('bulk-import-text').value;
+    const items = parseBulkMenuText(text);
+    const preview = document.getElementById('bulk-import-preview');
+    if (!items.length) { toast('Нет данных для импорта', 'error'); return; }
+    preview.textContent = `Найдено блюд: ${items.length}. Импортирую...`;
+    try {
+        const data = await api('/../menu/api/admin/items/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cafe_id: selectedMenuCafeId, items })
+        });
+        toast(`✅ Добавлено: ${data.added_items} блюд, ${data.added_categories} категорий`, 'success');
+        closeModal('modal-bulk-import');
+        loadMenuCategories();
+        loadMenuTable();
+    } catch (e) {
+        preview.textContent = '';
+        toast('Ошибка импорта: ' + e.message, 'error');
+    }
+}
+
 // ============ EDIT MENU ITEM ============
 
 function showEditMenuItemModal(id) {

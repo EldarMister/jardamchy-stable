@@ -1899,6 +1899,51 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row else None
 
+    def bulk_add_menu(self, cafe_id: int, items: list) -> dict:
+        """Массовое добавление категорий и блюд.
+        items = [{name, price, category_name}, ...]
+        """
+        added_categories = 0
+        added_items = 0
+        errors = []
+        category_cache = {}  # name -> id
+
+        with self.get_cursor(commit=True) as cur:
+            for item in items:
+                cat_name = item.get('category_name', 'Основное')
+                if cat_name not in category_cache:
+                    cur.execute(
+                        """INSERT INTO cafe_categories (cafe_id, name, sort_order)
+                           VALUES (%s, %s, 0)
+                           ON CONFLICT (cafe_id, name) DO NOTHING
+                           RETURNING id""",
+                        (cafe_id, cat_name)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        category_cache[cat_name] = row['id']
+                        added_categories += 1
+                    else:
+                        cur.execute(
+                            "SELECT id FROM cafe_categories WHERE cafe_id=%s AND name=%s",
+                            (cafe_id, cat_name)
+                        )
+                        row = cur.fetchone()
+                        category_cache[cat_name] = row['id'] if row else None
+
+                cat_id = category_cache.get(cat_name)
+                try:
+                    cur.execute(
+                        """INSERT INTO menu_items (cafe_id, name, price, category, category_id, is_available)
+                           VALUES (%s, %s, %s, %s, %s, TRUE)""",
+                        (cafe_id, item['name'], item['price'], cat_name, cat_id)
+                    )
+                    added_items += 1
+                except Exception as e:
+                    errors.append(f"{item['name']}: {e}")
+
+        return {"added_categories": added_categories, "added_items": added_items, "errors": errors}
+
     # ==========================================================================
     # CAFE SETTINGS (global discount)
     # ==========================================================================

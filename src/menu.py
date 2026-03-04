@@ -229,6 +229,22 @@ def admin_delete_item(item_id):
         current_app.logger.exception("Admin delete item failed")
         return jsonify({"error": str(e)}), 500
 
+@menu_bp.route('/api/admin/items/bulk', methods=['POST'])
+def admin_bulk_add_items():
+    """Админка: массовый импорт блюд из текста"""
+    try:
+        db = get_db()
+        data = request.get_json()
+        cafe_id = data.get('cafe_id')
+        items = data.get('items', [])
+        if not cafe_id or not items:
+            return jsonify({"error": "cafe_id and items required"}), 400
+        result = db.bulk_add_menu(int(cafe_id), items)
+        return jsonify(result), 200
+    except Exception as e:
+        current_app.logger.exception("Bulk add items failed")
+        return jsonify({"error": str(e)}), 500
+
 # =============================================================================
 # ADMIN API for Categories
 # =============================================================================
