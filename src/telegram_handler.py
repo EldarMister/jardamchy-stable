@@ -182,8 +182,8 @@ def handle_callback_query(callback_query: dict) -> tuple:
         elif data.startswith("taxi_finish_"):
             return handle_taxi_finish(data, user_id, user_name, chat_id, message_id, db)
         
-        # === ПОРТЕР ===
-        elif data.startswith("porter_take_"):
+        # === ПОРТЕР / МУРАВЕЙ ===
+        elif data.startswith("porter_take_") or data.startswith("ant_take_"):
             return handle_porter_take(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
         
         # === МАГАЗИН ===
@@ -993,7 +993,7 @@ def handle_taxi_cancel(data: str, user_id: str, user_name: str,
 def handle_porter_take(data: str, user_id: str, user_name: str,
                        chat_id: str, message_id: int, db,
                        callback_query_id: str = None) -> tuple:
-    """Обработка взятия заказа портером"""
+    """Обработка взятия заказа портером/муравьём"""
     lock = None
     try:
         order_id = data.split("_")[2]
@@ -1031,6 +1031,17 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
                 user_id,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
+            return jsonify({"status": "ok"}), 200
+
+        order_service_type = (order.get('service_type') or '').strip().lower()
+        driver_type = (driver.get('driver_type') or '').strip().lower()
+
+        # Strict type isolation between porter and ant.
+        if order_service_type == config.SERVICE_PORTER and driver_type != 'porter':
+            send_telegram_private(user_id, "❌ Заказ портера могут брать только портеристы.")
+            return jsonify({"status": "ok"}), 200
+        if order_service_type == config.SERVICE_ANT and driver_type != 'ant':
+            send_telegram_private(user_id, "❌ Заказ муравея могут брать только муравьи.")
             return jsonify({"status": "ok"}), 200
 
         # Проверяем: нет ли у портера уже активного заказа
@@ -1121,7 +1132,8 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
-        db.log_transaction("PORTER_ORDER_TAKEN", user_id, order_id)
+        log_action = "ANT_ORDER_TAKEN" if order_service_type == config.SERVICE_ANT else "PORTER_ORDER_TAKEN"
+        db.log_transaction(log_action, user_id, order_id)
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
