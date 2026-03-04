@@ -1164,7 +1164,8 @@ async function deleteMenuItem(id) {
 // ============ BULK IMPORT ============
 
 function showBulkImportModal() {
-    if (!selectedMenuCafeId) { toast('Сначала выберите кафе', 'error'); return; }
+    const cafeId = document.getElementById('menu-cafe-select').value;
+    if (!cafeId) { toast('Сначала выберите кафе', 'error'); return; }
     document.getElementById('bulk-import-text').value = '';
     document.getElementById('bulk-import-preview').textContent = '';
     openModal('modal-bulk-import');
@@ -1188,6 +1189,8 @@ function parseBulkMenuText(text) {
 }
 
 async function submitBulkImport() {
+    const cafeId = document.getElementById('menu-cafe-select').value;
+    if (!cafeId) { toast('Сначала выберите кафе', 'error'); return; }
     const text = document.getElementById('bulk-import-text').value;
     const items = parseBulkMenuText(text);
     const preview = document.getElementById('bulk-import-preview');
@@ -1197,7 +1200,7 @@ async function submitBulkImport() {
         const data = await api('/../menu/api/admin/items/bulk', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cafe_id: selectedMenuCafeId, items })
+            body: JSON.stringify({ cafe_id: parseInt(cafeId), items })
         });
         toast(`✅ Добавлено: ${data.added_items} блюд, ${data.added_categories} категорий`, 'success');
         closeModal('modal-bulk-import');

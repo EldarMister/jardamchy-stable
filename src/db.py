@@ -1932,6 +1932,13 @@ class Database:
                         category_cache[cat_name] = row['id'] if row else None
 
                 cat_id = category_cache.get(cat_name)
+                # Пропускаем если блюдо с таким именем уже есть у этого кафе
+                cur.execute(
+                    "SELECT id FROM menu_items WHERE cafe_id=%s AND name=%s LIMIT 1",
+                    (cafe_id, item['name'])
+                )
+                if cur.fetchone():
+                    continue
                 try:
                     cur.execute(
                         """INSERT INTO menu_items (cafe_id, name, price, category, category_id, is_available)
