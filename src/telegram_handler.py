@@ -74,7 +74,7 @@ def _format_phone_for_whatsapp(phone: str) -> str:
 
 
 def _format_phone_for_telegram(phone: str) -> str:
-    """Форматировать телефон для Telegram в кликабельный вид (+996 XXX XXX XXX)."""
+    """Форматировать телефон для Telegram в кликабельный вид без пробелов (+996XXXXXXXXX)."""
     if not phone:
         return "—"
 
@@ -85,11 +85,11 @@ def _format_phone_for_telegram(phone: str) -> str:
 
     # KG international: 996XXXXXXXXX
     if digits.startswith("996") and len(digits) == 12:
-        return f"+996 {digits[3:6]} {digits[6:9]} {digits[9:]}"
+        return f"+{digits}"
 
     # KG local: 0XXXXXXXXX -> +996XXXXXXXXX
     if digits.startswith("0") and len(digits) == 10:
-        return f"+996 {digits[1:4]} {digits[4:7]} {digits[7:]}"
+        return f"+996{digits[1:]}"
 
     # RU local: 8XXXXXXXXXX -> +7XXXXXXXXXX
     if digits.startswith("8") and len(digits) == 11:
@@ -101,7 +101,7 @@ def _format_phone_for_telegram(phone: str) -> str:
 
     # RU/KZ: 7XXXXXXXXXX
     if digits.startswith("7") and len(digits) == 11:
-        return f"+7 {digits[1:4]} {digits[4:7]} {digits[7:9]} {digits[9:]}"
+        return f"+{digits}"
 
     # Fallback: keep as international with +
     if len(digits) >= 9:
