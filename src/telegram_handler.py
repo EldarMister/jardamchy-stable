@@ -73,6 +73,43 @@ def _format_phone_for_whatsapp(phone: str) -> str:
     return phone
 
 
+def _format_phone_for_telegram(phone: str) -> str:
+    """Форматировать телефон для Telegram в кликабельный вид (+996 XXX XXX XXX)."""
+    if not phone:
+        return "—"
+
+    raw = str(phone).strip()
+    digits = ''.join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return raw
+
+    # KG international: 996XXXXXXXXX
+    if digits.startswith("996") and len(digits) == 12:
+        return f"+996 {digits[3:6]} {digits[6:9]} {digits[9:]}"
+
+    # KG local: 0XXXXXXXXX -> +996XXXXXXXXX
+    if digits.startswith("0") and len(digits) == 10:
+        return f"+996 {digits[1:4]} {digits[4:7]} {digits[7:]}"
+
+    # RU local: 8XXXXXXXXXX -> +7XXXXXXXXXX
+    if digits.startswith("8") and len(digits) == 11:
+        digits = "7" + digits[1:]
+
+    # RU mobile without country code: 9XXXXXXXXX -> +79XXXXXXXXX
+    if digits.startswith("9") and len(digits) == 10:
+        digits = "7" + digits
+
+    # RU/KZ: 7XXXXXXXXXX
+    if digits.startswith("7") and len(digits) == 11:
+        return f"+7 {digits[1:4]} {digits[4:7]} {digits[7:9]} {digits[9:]}"
+
+    # Fallback: keep as international with +
+    if len(digits) >= 9:
+        return f"+{digits}"
+
+    return raw
+
+
 def _normalize_driver_profile(driver, fallback_name: str = "") -> dict:
     """Normalize driver profile data from DB with safe fallbacks."""
     def _clean(value):
@@ -704,12 +741,13 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         
         # Заказ захвачен - получаем данные для уведомлений
         order = db.get_order(order_id)
+        client_phone_tg = _format_phone_for_telegram(order.get('client_phone', ''))
         
         # Сразу обновляем сообщение в группе
         updated_text = f"""🚖 *ЗАКАЗ ЗАБРАН* ✅
 
 👤 Водитель: *{user_name}*
-📞 Клиент: {order.get('client_phone', '')}
+📞 Клиент: {client_phone_tg}
 
 ⏱ Заказ в работе."""
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
@@ -743,7 +781,7 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         # Сообщаем водителю с кнопкой "Приехал"
         driver_private_msg = f"""🚖 *Заказ ваш!*
 
-📞 *Клиент:* {order.get('client_phone', '')}
+📞 *Клиент:* {client_phone_tg}
 🛣 *Маршрут:* {order.get('details', '')}
 
 💰 Не забудьте взять оплату по прибытию.{commission_msg}
@@ -765,7 +803,7 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
         updated_text = f"""🚖 *ЗАКАЗ ЗАБРАН* ✅
 
 👤 Водитель: *{user_name}*
-📞 Клиент: {order.get('client_phone', '')}
+📞 Клиент: {client_phone_tg}
 
 ⏱ Заказ в работе."""
         
