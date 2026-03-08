@@ -176,10 +176,15 @@ def send_whatsapp_plain(phone: str, message: str) -> bool:
 
 def send_order_cancelled_with_main_menu(phone: str) -> bool:
     """Send cancelled-order message with a dedicated main-menu button."""
+    return send_whatsapp_with_main_menu(phone, config.ORDER_CANCELLED)
+
+
+def send_whatsapp_with_main_menu(phone: str, message: str) -> bool:
+    """Send WhatsApp message with a dedicated main-menu button."""
     buttons = [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": WHATSAPP_MAIN_MENU_BUTTON_TEXT}]
     if config.WHATSAPP_PROVIDER == "cloud":
-        return send_whatsapp_buttons(phone, config.ORDER_CANCELLED, buttons, include_cancel=False)
-    return send_whatsapp_plain(phone, config.ORDER_CANCELLED)
+        return send_whatsapp_buttons(phone, message, buttons, include_cancel=False)
+    return send_whatsapp_plain(phone, message)
 
 
 

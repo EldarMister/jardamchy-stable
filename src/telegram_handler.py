@@ -13,7 +13,8 @@ from datetime import datetime
 import config
 from db import get_db, get_runtime_setting
 from services import (
-    send_whatsapp, send_whatsapp_buttons, send_telegram_private, send_telegram_group,
+    send_whatsapp, send_whatsapp_buttons, send_whatsapp_with_main_menu,
+    send_telegram_private, send_telegram_group,
     edit_telegram_message, delete_telegram_message, format_phone,
     answer_telegram_callback
 )
@@ -931,7 +932,10 @@ def handle_taxi_finish(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
 
         db.update_order_status(order_id, config.ORDER_STATUS_COMPLETED, completed_at=datetime.now())
-        send_whatsapp(order.get('client_phone', ''), "✅ Ваша поездка завершена. Спасибо, что выбрали нас!")
+        send_whatsapp_with_main_menu(
+            order.get('client_phone', ''),
+            "✅ Ваша поездка завершена. Спасибо, что выбрали нас!"
+        )
 
         db.set_telegram_session_data(user_id, _taxi_driver_key(order_id, "closed"), True)
         db.set_telegram_session_data(user_id, _taxi_driver_key(order_id, "active_message_id"), int(message_id))
@@ -1657,7 +1661,10 @@ def handle_delivery_finish(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
 
         db.update_order_status(order_id, config.ORDER_STATUS_COMPLETED, completed_at=datetime.now())
-        send_whatsapp(order.get('client_phone', ''), "✅ Доставка завершена. Спасибо, что выбрали нас!")
+        send_whatsapp_with_main_menu(
+            order.get('client_phone', ''),
+            "✅ Доставка завершена. Спасибо, что выбрали нас!"
+        )
 
         db.set_telegram_session_data(user_id, _delivery_driver_key(order_id, "closed"), True)
         db.set_telegram_session_data(user_id, _delivery_driver_key(order_id, "active_message_id"), int(message_id))
