@@ -314,7 +314,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
                 from db import get_db as _get_db
                 btn_titles = ' / '.join(b['reply']['title'] for b in cloud_buttons)
                 _get_db().save_message(phone=phone, direction='out',
-                                       body=f"{message}\n[РљРЅРѕРїРєРё: {btn_titles}]",
+                                       body=f"{message}\n[Кнопки: {btn_titles}]",
                                        msg_type='interactive', wa_message_id=sent_id)
             except Exception:
                 pass

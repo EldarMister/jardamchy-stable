@@ -404,6 +404,12 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
             send_telegram_private(user_id, "❌ Заказ ещё не принят кафе. Указать время нельзя.")
             return jsonify({"status": "ok"}), 200
 
+        cafe_profile = db.get_cafe(user_id) or {}
+        cafe_phone = (cafe_profile.get('phone') or '').strip()
+        cafe_phone_line = ""
+        if cafe_phone:
+            cafe_phone_line = f"📞 *Телефон кафе:* {_format_phone_for_whatsapp(cafe_phone)}\n"
+
         # Обновляем заказ
         db.update_order_status(order_id, config.ORDER_STATUS_READY, ready_time=ready_time)
         
@@ -440,11 +446,10 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
         client_msg = f"""✅ *Заказ #{order_id}*
 
 🏠 *Кафе:* {user_name}
-⏱ *Готово через:* {ready_time} минут
+{cafe_phone_line}⏱ *Готово через:* {ready_time} минут
 🚖 Ищем курьера для доставки...
+"""
 
-💳 Оплата: {config.PAYMENT_METHODS.get(order.get('payment_method'), 'Наличные')}"""
-        
         send_whatsapp(order.get('client_phone', ''), client_msg)
         
         # Уведомляем кафе

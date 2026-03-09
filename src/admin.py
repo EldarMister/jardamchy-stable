@@ -37,11 +37,31 @@ def _serialize(obj):
     return obj
 
 
+_MOJIBAKE_HINT_CHARS = set("Ѓѓ‚„…†‡€‰Љ‹ЊЌЋЏљњћџЎўЈҐ¦§Ё©Є«¬®Їєїії")
+
+
+def _repair_mojibake(value):
+    """Fix common UTF-8 text that was mis-decoded/stored as CP1251 mojibake."""
+    if not isinstance(value, str) or not value:
+        return value
+    if not any(ch in value for ch in _MOJIBAKE_HINT_CHARS):
+        return value
+    try:
+        repaired = value.encode('cp1251').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+    return repaired if repaired else value
+
+
 def _clean_row(row):
     """Очистить строку от несериализуемых типов"""
     if not row:
         return row
-    return {k: _serialize(v) for k, v in row.items()}
+    cleaned = {}
+    for key, value in row.items():
+        serialized = _serialize(value)
+        cleaned[key] = _repair_mojibake(serialized)
+    return cleaned
 
 
 def _clean_rows(rows):
