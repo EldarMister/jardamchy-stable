@@ -78,6 +78,8 @@ FLOW_SWITCH_BUTTON_YES = "btn_switch_yes"
 FLOW_SWITCH_BUTTON_NO = "btn_switch_no"
 FLOW_STALE_BUTTON_NEW = "btn_stale_new"
 FLOW_STALE_BUTTON_CONTINUE = "btn_stale_continue"
+MED_EJE_NEED_BUTTON_ID = "med_eje_need"
+MED_EJE_BACK_BUTTON_ID = "med_eje_back"
 
 FLOW_SWITCH_SCOPE = {
     config.SERVICE_TAXI,
@@ -123,6 +125,7 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
     config.STATE_PHARMACY_REORDER_CHOICE: "ожидаю ответ по повтору заказа аптеки",
+    config.STATE_MED_EJE_MENU: "ожидаю выбор по медпомощи",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
     config.STATE_SHOP_LIST: "ожидаю список покупок",
@@ -1214,7 +1217,13 @@ def _is_vague_address(address: str) -> bool:
 _SUPPORT_KEYWORDS = {
     "жардам", "жардам бер", "помощь", "помоги", "помогите",
     "поддержка", "техподдержка", "тех поддержка", "тех.поддержка",
-    "help", "support", "колдоо", "кömek", "комек",
+    "help", "support", "колдоо", "кömek", "комек", "8",
+}
+
+_MED_EJE_KEYWORDS = {
+    "7", "доктор", "мед эже", "медеже", "медсестра", "мед сестра",
+    "мед помощь", "медициналык жардам",
+    "врач", "укол", "уколы", "капельница", "капельницу", "капельницы",
 }
 
 def _is_support_request(msg_lower: str) -> bool:
@@ -1224,6 +1233,69 @@ def _is_support_request(msg_lower: str) -> bool:
         return True
     first = s.split()[0] if s else ""
     return first in _SUPPORT_KEYWORDS
+
+
+def _is_med_eje_request(message: str) -> bool:
+    """Проверяет, просит ли пользователь медицинскую помощь / Мед Эже."""
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+
+    compact = normalized.replace(" ", "")
+    if normalized in _MED_EJE_KEYWORDS or compact in _MED_EJE_KEYWORDS:
+        return True
+
+    return any(
+        phrase in normalized
+        for phrase in (
+            "мед помощь",
+            "мед эже",
+            "медициналык жардам",
+            "мед сестра",
+            "медсестра",
+            "капельница",
+            "укол",
+        )
+    )
+
+
+def _show_med_eje_menu(user: User):
+    _reset_unknown_fallback(user)
+    user.clear_temp_data()
+    user.set_state(config.STATE_MED_EJE_MENU)
+    send_whatsapp_buttons(
+        user.phone,
+        config.MED_EJE_MESSAGE,
+        [
+            {"id": MED_EJE_NEED_BUTTON_ID, "text": "✅ Керек"},
+            {"id": MED_EJE_BACK_BUTTON_ID, "text": "🏠 Артка"},
+        ],
+        include_cancel=False,
+    )
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_med_eje_menu(user: User, message: str, db) -> tuple:
+    normalized = _normalize_loose_text(message)
+
+    if normalized in {"керек", "нужно", "надо", "need"}:
+        user.set_state(config.STATE_IDLE)
+        user.clear_temp_data()
+        send_whatsapp(
+            user.phone,
+            config.MED_EJE_PHONE_MESSAGE.format(phone=config.MED_EJE_PHONE),
+        )
+        return jsonify({"status": "ok"}), 200
+
+    if normalized in {"артка", "назад", "back", "меню"}:
+        user.set_state(config.STATE_IDLE)
+        user.clear_temp_data()
+        _reset_unknown_fallback(user)
+        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        db.update_last_welcome(user.phone)
+        return jsonify({"status": "ok"}), 200
+
+    return _show_med_eje_menu(user)
 
 
 def _is_cancellation(message: str) -> bool:
@@ -1607,6 +1679,9 @@ def handle_whatsapp():
             return pending_result
         
         # === ROUTING ===
+
+        if user.current_state == config.STATE_MED_EJE_MENU:
+            return handle_med_eje_menu(user, incoming_msg, db)
         
         # Проверка на отмену (в любом состоянии)
         msg_lower = incoming_msg.lower().strip()
@@ -1631,6 +1706,9 @@ def handle_whatsapp():
                 ))
             return jsonify({"status": "ok"}), 200
 
+        if _is_med_eje_request(incoming_msg):
+            return _show_med_eje_menu(user)
+
         if user.current_state != config.STATE_IDLE:
             _reset_unknown_fallback(user)
             switch_prompt_result = _maybe_prompt_flow_switch(user, incoming_msg)
@@ -1645,6 +1723,8 @@ def handle_whatsapp():
 
         if user.current_state == config.STATE_IDLE:
             return handle_idle_state(user, incoming_msg, db)
+        elif user.current_state == config.STATE_MED_EJE_MENU:
+            return handle_med_eje_menu(user, incoming_msg, db)
         
         # Подтверждение заказа (универсальное)
         elif user.current_state == config.STATE_CONFIRM_ORDER:
@@ -1719,7 +1799,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "4": "taxi",
         "5": "porter",
         "6": "ant",
-        "7": "support",
+        "7": "med_eje",
+        "8": "support",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -1733,6 +1814,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "аптека": "pharmacy", "дарыкана": "pharmacy",
         "портер": "porter", "жүк": "porter",
         "муравей": "ant", "желмаян": "ant",
+        "мед эже": "med_eje", "медеже": "med_eje", "мед помощь": "med_eje", "доктор": "med_eje",
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
@@ -1743,6 +1825,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     elif msg_lower in _QUICK_INTENTS:
         nlu_result = {"intent": _QUICK_INTENTS[msg_lower], **_EMPTY_NLU}
         logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
+    elif _is_med_eje_request(message):
+        nlu_result = {"intent": "med_eje", **_EMPTY_NLU}
     elif any(k in msg_lower for k in menu_keywords):
         nlu_result = {"intent": "cafe", **_EMPTY_NLU}
     elif _looks_like_greeting(message):
@@ -1753,7 +1837,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === WEB ORDER CODE (W-xxxxx) ===
@@ -1932,6 +2016,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             send_whatsapp(user.phone, config.ANT_PROMPT)
 
         return jsonify({"status": "ok"}), 200
+
+    # === МЕД ЭЖЕ ===
+    elif intent == "med_eje":
+        return _show_med_eje_menu(user)
     
     # === ТЕХ ПОДДЕРЖКА ===
     elif intent == "support":
@@ -3006,6 +3094,23 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
     try:
         _reset_unknown_fallback(user)
         if button_response in {WHATSAPP_MAIN_MENU_BUTTON_ID, "btn_main_menu", "main_menu"}:
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            _reset_unknown_fallback(user)
+            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+            db.update_last_welcome(user.phone)
+            return jsonify({"status": "ok"}), 200
+
+        if button_response == MED_EJE_NEED_BUTTON_ID:
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            send_whatsapp(
+                user.phone,
+                config.MED_EJE_PHONE_MESSAGE.format(phone=config.MED_EJE_PHONE),
+            )
+            return jsonify({"status": "ok"}), 200
+
+        if button_response == MED_EJE_BACK_BUTTON_ID:
             user.set_state(config.STATE_IDLE)
             user.clear_temp_data()
             _reset_unknown_fallback(user)

@@ -78,6 +78,7 @@ SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
 # Тех поддержка
 SUPPORT_PHONE = os.getenv("SUPPORT_PHONE", "0226410410")
 SUPPORT_TELEGRAM_ID = os.getenv("SUPPORT_TELEGRAM_ID", "")
+MED_EJE_PHONE = os.getenv("MED_EJE_PHONE", "+996 224 223 623")
 
 # =============================================================================
 # API КЛЮЧИ
@@ -151,6 +152,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/busin
 # Основные состояния
 STATE_IDLE = "IDLE"
 STATE_MENU = "MENU"
+STATE_MED_EJE_MENU = "MED_EJE_MENU"
 
 # Кафе
 STATE_CAFE_ORDER = "CAFE_ORDER"
@@ -228,6 +230,7 @@ SERVICE_PHARMACY = "pharmacy"
 SERVICE_TAXI = "taxi"
 SERVICE_PORTER = "porter"
 SERVICE_ANT = "ant"
+SERVICE_MED_EJE = "med_eje"
 SERVICE_SUPPORT = "support"
 
 # =============================================================================
@@ -281,7 +284,8 @@ WELCOME_MESSAGE = """👋 Салам! Мен *Жардамчы ГО* - сизд�
 🚖 *4. Такси* - Такси чакыруу
 🚛 *5. Портер* - Жүк ташуу
 🐜 *6. Муравей* - Желмаян
-🆘 *7. Жардам/Оператор* - 0226410410
+🩺 *7. Мед Эже* - Медициналык жардам
+🆘 *8. Жардам/Оператор* - 0226410410
 
 Номер же атын жазыңыз."""
 
@@ -434,6 +438,20 @@ ORDER_CANCELLED = """❌ *Заказ жокко чыгарылды*
 ORDER_SENT_GENERIC = """✅ *Заказ жөнөтүлдү!*
 
 ⏱ Жооп күтөбүз..."""
+
+MED_EJE_MESSAGE = """🩺 *Мед Эже - Медициналык жардам*
+
+МЕДСЕСТРА НА ДОМ
+Внутримышечно — 50
+В/В струйно — 50
+В/В капельно 100,0 (обычный) — 100
+В/В капельно 100,0–200,0 (сложный) — 200
+В/В капельно 400,0–500,0 — 250
+Вызов — 200"""
+
+MED_EJE_PHONE_MESSAGE = """🩺 *Мед Эже*
+
+📞 {phone}"""
 
 SUPPORT_TO_CLIENT = """🆘 *Колдоо кызматы*
 
