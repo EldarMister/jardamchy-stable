@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 def _runtime_setting(key: str, default):
     return get_runtime_setting(key, default)
 
+
+def _bishkek_now_naive() -> datetime:
+    return datetime.utcnow() + timedelta(hours=6)
+
 # Unknown/fallback anti-flood settings (IDLE only)
 UNKNOWN_FALLBACK_MAX_ATTEMPTS = 5
 UNKNOWN_FALLBACK_RESET_MINUTES = 15
@@ -155,6 +159,13 @@ INTENT_KEYWORDS_ANT = (
 )
 INTENT_KEYWORDS_PORTER = (
     "груз", "перевезти", "портер", "таш", "кум", "мал", "жүк", "жук",
+)
+
+
+INTENT_KEYWORDS_COMPUTER = (
+    "компьютер", "компьютерные услуги", "компьютер кызматы", "компьютер кызматтар",
+    "компьютер кызматтары", "компьютердик кызматтар", "ноутбук", "пк", "принтер",
+    "полиграфия", "баннер", "визитка", "dtf", "сайт", "сайттар", "crm", "saas",
 )
 
 
@@ -1217,7 +1228,7 @@ def _is_vague_address(address: str) -> bool:
 _SUPPORT_KEYWORDS = {
     "жардам", "жардам бер", "помощь", "помоги", "помогите",
     "поддержка", "техподдержка", "тех поддержка", "тех.поддержка",
-    "help", "support", "колдоо", "кömek", "комек", "8",
+    "help", "support", "колдоо", "кömek", "комек",
 }
 
 _MED_EJE_KEYWORDS = {
@@ -1226,6 +1237,19 @@ _MED_EJE_KEYWORDS = {
     "врач", "укол", "уколы", "капельница", "капельницу", "капельницы",
 }
 
+_COMPUTER_SERVICE_FUZZY_TARGETS = tuple(
+    phrase.replace(" ", "")
+    for phrase in (
+        "компьютерные услуги",
+        "компютерные услуги",
+        "компьютер кызматы",
+        "компьютер кызматтар",
+        "компьютер кызматтары",
+        "компьютердик кызматтар",
+    )
+)
+
+
 def _is_support_request(msg_lower: str) -> bool:
     """Проверяет, просит ли пользователь тех поддержку"""
     s = msg_lower.strip()
@@ -1233,6 +1257,38 @@ def _is_support_request(msg_lower: str) -> bool:
         return True
     first = s.split()[0] if s else ""
     return first in _SUPPORT_KEYWORDS
+
+
+def _is_computer_service_request(message: str) -> bool:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+
+    if normalized in {"8", "8."}:
+        return True
+
+    compact = normalized.replace(" ", "")
+    if any(keyword in normalized for keyword in INTENT_KEYWORDS_COMPUTER if len(keyword) > 2):
+        return True
+
+    tokens = normalized.split()
+    if any(token.startswith("комп") for token in tokens):
+        if len(tokens) == 1:
+            return True
+        if any(
+            token.startswith(prefix)
+            for token in tokens
+            for prefix in ("услуг", "кызмат", "сайт", "полиграф", "автомат", "визит", "баннер")
+        ):
+            return True
+
+    if len(compact) >= 8 and any(
+        SequenceMatcher(None, compact, target).ratio() >= 0.78
+        for target in _COMPUTER_SERVICE_FUZZY_TARGETS
+    ):
+        return True
+
+    return False
 
 
 def _is_med_eje_request(message: str) -> bool:
@@ -1272,6 +1328,59 @@ def _show_med_eje_menu(user: User):
         ],
         include_cancel=False,
     )
+    return jsonify({"status": "ok"}), 200
+
+
+def _send_specialist_request(user: User, client_message: str, service_name: str):
+    _reset_unknown_fallback(user)
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    send_whatsapp(user.phone, client_message)
+    if config.SUPPORT_TELEGRAM_ID:
+        send_telegram_private(
+            config.SUPPORT_TELEGRAM_ID,
+            config.SPECIALIST_REQUEST_TO_OPERATOR.format(
+                service_name=service_name,
+                client_phone=user.phone,
+            ),
+        )
+    return jsonify({"status": "ok"}), 200
+
+
+def _send_poputka_list(user: User, db):
+    _reset_unknown_fallback(user)
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+
+    offers = db.list_active_poputka_offers(limit=15, now_local=_bishkek_now_naive())
+    if not offers:
+        send_whatsapp(user.phone, config.POPUTKA_LIST_EMPTY)
+        return jsonify({"status": "ok"}), 200
+
+    lines = [config.POPUTKA_LIST_HEADER, ""]
+    for idx, offer in enumerate(offers, start=1):
+        driver_name = (offer.get("driver_name") or "Водитель").strip()
+        phone = format_phone((offer.get("driver_phone") or "").strip()) if offer.get("driver_phone") else "—"
+        car_model = (offer.get("car_model") or "").strip()
+        plate = (offer.get("plate") or "").strip()
+        car_line = ""
+        if car_model and plate:
+            car_line = f"\n🚗 {car_model} ({plate})"
+        elif car_model:
+            car_line = f"\n🚗 {car_model}"
+
+        departure_time = offer.get("departure_time")
+        departure_text = departure_time.strftime("%H:%M") if hasattr(departure_time, "strftime") else str(departure_time)
+        lines.append(
+            f"*{idx}. {driver_name}*\n"
+            f"📍 {offer.get('from_address', '')} → {offer.get('to_address', '')}\n"
+            f"👥 Мест: {offer.get('seats_available', 0)}\n"
+            f"🕒 Выезд: {departure_text}"
+            f"{car_line}\n"
+            f"📞 {phone}"
+        )
+
+    send_whatsapp(user.phone, "\n\n".join(lines))
     return jsonify({"status": "ok"}), 200
 
 
@@ -1706,6 +1815,13 @@ def handle_whatsapp():
                 ))
             return jsonify({"status": "ok"}), 200
 
+        if _is_computer_service_request(incoming_msg):
+            return _send_specialist_request(
+                user,
+                config.COMPUTER_SERVICES_MESSAGE,
+                "Компьютерные услуги",
+            )
+
         if _is_med_eje_request(incoming_msg):
             return _show_med_eje_menu(user)
 
@@ -1800,7 +1916,9 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "5": "porter",
         "6": "ant",
         "7": "med_eje",
-        "8": "support",
+        "8": "computer",
+        "9": "poputka",
+        "10": "plumbing",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -1815,6 +1933,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "портер": "porter", "жүк": "porter",
         "муравей": "ant", "желмаян": "ant",
         "мед эже": "med_eje", "медеже": "med_eje", "мед помощь": "med_eje", "доктор": "med_eje",
+        "компьютер": "computer", "компьютерные услуги": "computer", "ноутбук": "computer",
+        "пк": "computer", "принтер": "computer", "интернет": "computer",
+        "попутка": "poputka", "попутчик": "poputka", "попутка керек": "poputka",
+        "сантехника": "plumbing", "сантехник": "plumbing", "сантех": "plumbing",
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
@@ -1822,6 +1944,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     selected_intent = service_intent_by_number.get(msg_trim) or service_intent_by_number.get(first_token_digits)
     if selected_intent:
         nlu_result = {"intent": selected_intent, **_EMPTY_NLU}
+    elif _is_computer_service_request(message):
+        nlu_result = {"intent": "computer", **_EMPTY_NLU}
     elif msg_lower in _QUICK_INTENTS:
         nlu_result = {"intent": _QUICK_INTENTS[msg_lower], **_EMPTY_NLU}
         logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
@@ -1837,7 +1961,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === WEB ORDER CODE (W-xxxxx) ===
@@ -2020,6 +2144,30 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === МЕД ЭЖЕ ===
     elif intent == "med_eje":
         return _show_med_eje_menu(user)
+
+    # === КОМПЬЮТЕРНЫЕ УСЛУГИ ===
+    elif intent == "computer":
+        return _send_specialist_request(
+            user,
+            config.COMPUTER_SERVICES_MESSAGE.format(
+                support_phone=config.SUPPORT_PHONE,
+            ),
+            "Компьютерные услуги",
+        )
+
+    # === ПОПУТКА ===
+    elif intent == "poputka":
+        return _send_poputka_list(user, db)
+
+    # === САНТЕХНИКА ===
+    elif intent == "plumbing":
+        return _send_specialist_request(
+            user,
+            config.PLUMBING_MESSAGE.format(
+                support_phone=config.SUPPORT_PHONE,
+            ),
+            "Сантехника",
+        )
     
     # === ТЕХ ПОДДЕРЖКА ===
     elif intent == "support":

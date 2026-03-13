@@ -8,7 +8,7 @@ from flask import request, jsonify
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 from db import get_db, get_runtime_setting
@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 def _runtime_setting(key: str, default):
     return get_runtime_setting(key, default)
+
+
+def _bishkek_now_naive() -> datetime:
+    return datetime.utcnow() + timedelta(hours=6)
 
 
 # =============================================================================
@@ -1771,6 +1775,8 @@ def _handle_cmd_button(data: str, user_id: str, db) -> tuple:
             return _handle_profile_command(user_id, db)
         elif cmd == "stats":
             return _handle_stats_command(user_id, db)
+        elif cmd == "poputka":
+            return _start_poputka_flow(user_id, db)
         elif cmd == "help":
             send_telegram_private(user_id, config.DRIVER_HELP_MSG)
             return jsonify({"status": "ok"}), 200
@@ -1838,6 +1844,10 @@ def handle_telegram_message(message: dict) -> tuple:
         # /stats — Моя статистика
         if text_lower in ('/stats', 'stats', 'статистика'):
             return _handle_stats_command(user_id, db)
+
+        # /poputka — добавить ближайший выезд
+        if text_lower in ('/poputka', 'poputka', 'попутка'):
+            return _start_poputka_flow(user_id, db)
         
         # /cancel — Отмена текущего действия
         if text_lower in ('/cancel', 'cancel', 'отмена'):
@@ -1872,6 +1882,18 @@ def handle_telegram_message(message: dict) -> tuple:
             
             elif state == config.STATE_DRIVER_REG_CONFIRM:
                 return _handle_reg_confirm(user_id, text, db)
+
+            elif state == config.STATE_POPUTKA_FROM:
+                return _handle_poputka_from(user_id, text, db)
+
+            elif state == config.STATE_POPUTKA_TO:
+                return _handle_poputka_to(user_id, text, db)
+
+            elif state == config.STATE_POPUTKA_SEATS:
+                return _handle_poputka_seats(user_id, text, db)
+
+            elif state == config.STATE_POPUTKA_TIME:
+                return _handle_poputka_time(user_id, text, db)
             
             elif state == config.STATE_CAFE_DECLINE_REASON:
                 return _handle_cafe_decline_reason(user_id, user_name, text, db)
@@ -2048,6 +2070,120 @@ def _handle_stats_command(user_id: str, db) -> tuple:
 💰 Текущий баланс: {balance} сом"""
     
     send_telegram_private(user_id, msg)
+    return jsonify({"status": "ok"}), 200
+
+
+def _start_poputka_flow(user_id: str, db) -> tuple:
+    driver = db.get_driver(user_id)
+    if not driver:
+        send_telegram_private(
+            user_id,
+            "❌ Вы не зарегистрированы как водитель.\n\nСначала напишите /register."
+        )
+        return jsonify({"status": "ok"}), 200
+
+    db.create_telegram_session(user_id)
+    db.set_telegram_session_state(user_id, config.STATE_POPUTKA_FROM)
+    send_telegram_private(user_id, config.POPUTKA_DRIVER_START)
+    return jsonify({"status": "ok"}), 200
+
+
+def _handle_poputka_from(user_id: str, text: str, db) -> tuple:
+    value = text.strip()
+    if len(value) < 2:
+        send_telegram_private(user_id, "⚠️ Напишите, откуда отправляетесь.")
+        return jsonify({"status": "ok"}), 200
+
+    db.set_telegram_session_data(user_id, "poputka_from", value)
+    db.set_telegram_session_state(user_id, config.STATE_POPUTKA_TO)
+    send_telegram_private(user_id, config.POPUTKA_DRIVER_TO_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def _handle_poputka_to(user_id: str, text: str, db) -> tuple:
+    value = text.strip()
+    if len(value) < 2:
+        send_telegram_private(user_id, "⚠️ Напишите, куда едете.")
+        return jsonify({"status": "ok"}), 200
+
+    db.set_telegram_session_data(user_id, "poputka_to", value)
+    db.set_telegram_session_state(user_id, config.STATE_POPUTKA_SEATS)
+    send_telegram_private(user_id, config.POPUTKA_DRIVER_SEATS_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def _handle_poputka_seats(user_id: str, text: str, db) -> tuple:
+    raw = text.strip()
+    if not raw.isdigit():
+        send_telegram_private(user_id, config.POPUTKA_DRIVER_INVALID_SEATS)
+        return jsonify({"status": "ok"}), 200
+
+    seats = int(raw)
+    if seats < 1 or seats > 20:
+        send_telegram_private(user_id, config.POPUTKA_DRIVER_INVALID_SEATS)
+        return jsonify({"status": "ok"}), 200
+
+    db.set_telegram_session_data(user_id, "poputka_seats", seats)
+    db.set_telegram_session_state(user_id, config.STATE_POPUTKA_TIME)
+    send_telegram_private(user_id, config.POPUTKA_DRIVER_TIME_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def _parse_poputka_departure_time(raw: str) -> datetime | None:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", raw.strip())
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23 or minute > 59:
+        return None
+
+    now_local = _bishkek_now_naive()
+    departure = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if departure <= now_local:
+        return None
+    return departure
+
+
+def _handle_poputka_time(user_id: str, text: str, db) -> tuple:
+    departure_time = _parse_poputka_departure_time(text)
+    if departure_time is None:
+        send_telegram_private(user_id, config.POPUTKA_DRIVER_INVALID_TIME)
+        return jsonify({"status": "ok"}), 200
+
+    session = db.get_telegram_session(user_id)
+    temp_data = (session.get("temp_data") or {}) if session else {}
+    from_address = (temp_data.get("poputka_from") or "").strip()
+    to_address = (temp_data.get("poputka_to") or "").strip()
+    seats = int(temp_data.get("poputka_seats") or 0)
+
+    if not from_address or not to_address or seats <= 0:
+        db.clear_telegram_session(user_id)
+        send_telegram_private(
+            user_id,
+            "❌ Не удалось сохранить попутку. Начните заново через /poputka."
+        )
+        return jsonify({"status": "ok"}), 200
+
+    db.create_poputka_offer(
+        driver_id=user_id,
+        from_address=from_address,
+        to_address=to_address,
+        seats_available=seats,
+        departure_time=departure_time,
+    )
+    db.clear_telegram_session(user_id)
+
+    send_telegram_private(
+        user_id,
+        config.POPUTKA_DRIVER_SUCCESS.format(
+            from_address=from_address,
+            to_address=to_address,
+            seats=seats,
+            departure_time=departure_time.strftime("%H:%M"),
+        )
+    )
     return jsonify({"status": "ok"}), 200
 
 

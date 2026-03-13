@@ -69,6 +69,11 @@ def _normalize_runtime_value(key: str, value: Any) -> float:
     return float(number)
 
 
+def _bishkek_now_naive() -> datetime:
+    """Local naive datetime for Kyrgyzstan (UTC+6)."""
+    return datetime.utcnow() + timedelta(hours=6)
+
+
 class Database:
     """Класс для работы с PostgreSQL"""
     
@@ -178,6 +183,20 @@ class Database:
                         balance DECIMAL(10, 2) DEFAULT 0,
                         is_active BOOLEAN DEFAULT TRUE,
                         is_blocked BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS poputka_offers (
+                        id SERIAL PRIMARY KEY,
+                        driver_id VARCHAR(50) NOT NULL,
+                        from_address VARCHAR(255) NOT NULL,
+                        to_address VARCHAR(255) NOT NULL,
+                        seats_available INTEGER NOT NULL,
+                        departure_time TIMESTAMP NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -417,6 +436,7 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_phone)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_auction_timers ON auction_timers(expires_at, is_processed)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_poputka_offers_active_time ON poputka_offers(is_active, departure_time)")
 
                 # Заполняем дефолты runtime-настроек, если ключей еще нет
                 self._seed_runtime_settings(cur)
@@ -1770,6 +1790,71 @@ class Database:
                 'total_orders': 0, 'completed': 0, 
                 'cancelled': 0, 'today': 0
             }
+
+    # ==========================================================================
+    # POPUTKA OFFERS
+    # ==========================================================================
+
+    def create_poputka_offer(
+        self,
+        driver_id: str,
+        from_address: str,
+        to_address: str,
+        seats_available: int,
+        departure_time: datetime,
+    ) -> Optional[Dict]:
+        now_local = _bishkek_now_naive()
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE poputka_offers
+                   SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                   WHERE driver_id = %s
+                     AND is_active = TRUE
+                     AND departure_time > %s""",
+                (str(driver_id), now_local)
+            )
+            cur.execute(
+                """INSERT INTO poputka_offers
+                   (driver_id, from_address, to_address, seats_available, departure_time)
+                   VALUES (%s, %s, %s, %s, %s)
+                   RETURNING *""",
+                (str(driver_id), from_address, to_address, int(seats_available), departure_time)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def cleanup_expired_poputka_offers(self, now_local: datetime = None) -> int:
+        now_local = now_local or _bishkek_now_naive()
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE poputka_offers
+                   SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                   WHERE is_active = TRUE
+                     AND departure_time <= %s""",
+                (now_local,)
+            )
+            return cur.rowcount
+
+    def list_active_poputka_offers(self, limit: int = 15, now_local: datetime = None) -> List[Dict]:
+        now_local = now_local or _bishkek_now_naive()
+        self.cleanup_expired_poputka_offers(now_local)
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT
+                       p.*,
+                       d.name AS driver_name,
+                       d.phone AS driver_phone,
+                       d.car_model,
+                       d.plate
+                   FROM poputka_offers p
+                   LEFT JOIN drivers d ON d.telegram_id = p.driver_id
+                   WHERE p.is_active = TRUE
+                     AND p.departure_time > %s
+                   ORDER BY p.departure_time ASC, p.created_at ASC
+                   LIMIT %s""",
+                (now_local, int(limit))
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     # ==========================================================================
     # MENU ITEMS
