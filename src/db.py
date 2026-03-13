@@ -1810,11 +1810,11 @@ class Database:
     def create_poputka_offer(
         self,
         driver_id: str,
-        driver_phone: str | None = None,
         from_address: str,
         to_address: str,
         seats_available: int,
         departure_time: datetime,
+        driver_phone: str | None = None,
     ) -> Optional[Dict]:
         now_local = _bishkek_now_naive()
         with self.get_cursor(commit=True) as cur:

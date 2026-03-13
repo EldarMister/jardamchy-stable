@@ -1,4 +1,4 @@
-"""
+﻿"""
 Конфигурация и Константы для Бизнес Жардамчы ГО
 Business Assistant GO - Configuration
 Автор: @Eldar
@@ -78,7 +78,8 @@ SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
 # Тех поддержка
 SUPPORT_PHONE = os.getenv("SUPPORT_PHONE", "0226410410")
 SUPPORT_TELEGRAM_ID = os.getenv("SUPPORT_TELEGRAM_ID", "")
-MED_EJE_PHONE = os.getenv("MED_EJE_PHONE", "+996 224 223 623")
+MED_EJE_PHONE = os.getenv("MED_EJE_PHONE", "0 224 223 623")
+MED_EJE_PHONE_2 = os.getenv("MED_EJE_PHONE_2", "0 702 521 073")
 
 # =============================================================================
 # API КЛЮЧИ
@@ -467,7 +468,8 @@ MED_EJE_MESSAGE = """🩺 *Мед Эже - Медициналык жардам*
 
 MED_EJE_PHONE_MESSAGE = """🩺 *Мед Эже*
 
-📞 {phone}"""
+📞 *1.* {phone_1}
+📞 *2.* {phone_2}"""
 
 SUPPORT_TO_CLIENT = """🆘 *Колдоо кызматы*
 
@@ -498,8 +500,7 @@ CRM, SaaS платформалар, заказдарды автоматташт�
 Заманбап, ылдам жана ыңгайлуу сайттар.
 
 📞 *Байланыш:* 220 122 232
-📞 *Сайттар:* 226 410 410
-
+ 
 Кайсысы керек экенин жазыңыз — багыттайбыз."""
 
 POPUTKA_MESSAGE = """🚘 *Попутка*
