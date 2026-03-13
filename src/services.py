@@ -888,7 +888,9 @@ def _transcribe_with_whisper_best(audio_content: bytes) -> str:
 
     candidates: List[Tuple[int, str, str]] = []
     for lang in lang_sequence:
-        text = _transcribe_with_whisper(audio_content, language=lang)
+        text = _transcribe_with_whisper_model(audio_content, language=lang, model="gpt-4o-transcribe")
+        if not text or (text.startswith("[") and text.endswith("]")):
+            text = _transcribe_with_whisper_model(audio_content, language=lang, model="whisper-1")
         if not text:
             continue
         cleaned = text.strip()
@@ -941,6 +943,38 @@ def _score_transcription(text: str) -> int:
         score += 10
 
     return score
+
+
+def _transcribe_with_whisper_model(
+    audio_content: bytes,
+    language: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Transcribe audio with a specific OpenAI model."""
+    try:
+        model_name = model or "gpt-4o-transcribe"
+        url = "https://api.openai.com/v1/audio/transcriptions"
+
+        headers = {
+            "Authorization": f"Bearer {config.OPENAI_API_KEY}"
+        }
+
+        files = {
+            'file': ('audio.ogg', audio_content, 'audio/ogg'),
+            'model': (None, model_name),
+            'language': (None, (language or config.WHISPER_LANGUAGE or "ru")),
+            'prompt': (None, config.WHISPER_PROMPT),
+        }
+
+        response = _http_post(url, headers=headers, files=files, timeout=60)
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("text", "")
+        print(f"Whisper API error ({model_name}): {response.text}")
+        return "[Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎР‚Р В°РЎРѓР С—Р С•Р В·Р Р…Р В°Р Р†Р В°Р Р…Р С‘РЎРЏ]"
+    except Exception as e:
+        print(f"Exception in Whisper transcription ({model}): {e}")
+        return "[Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎР‚Р В°РЎРѓР С—Р С•Р В·Р Р…Р В°Р Р†Р В°Р Р…Р С‘РЎРЏ]"
 
 
 def _transcribe_with_whisper(audio_content: bytes, language: str | None = None) -> str:

@@ -229,7 +229,7 @@ def _extract_green_message_payload(message_data: dict) -> tuple:
         media_url = media_data.get("downloadUrl", "")
         media_type = media_data.get("mimeType", "image/jpeg")
         incoming_msg = media_data.get("caption", "")
-    elif type_message in ("audioMessage", "pttMessage"):
+    elif type_message in ("audioMessage", "pttMessage", "voiceMessage", "voiceNoteMessage", "audio", "voice"):
         media_data = message_data.get("fileMessageData", {})
         media_url = media_data.get("downloadUrl", "")
         media_type = media_data.get("mimeType", "audio/ogg")
