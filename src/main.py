@@ -1374,10 +1374,13 @@ def _send_poputka_list(user: User, db):
         departure_time = offer.get("departure_time")
         departure_text = departure_time.strftime("%H:%M") if hasattr(departure_time, "strftime") else str(departure_time)
         phone = format_phone((offer.get("driver_phone") or "").strip()) if offer.get("driver_phone") else "—"
+        seats = offer.get("seats_available")
+        seats_text = str(seats) if seats is not None else "—"
         route = f"{offer.get('from_address', '')} → {offer.get('to_address', '')}"
         lines.append(
             f"*{idx}.*\n"
             f"📍 Маршрут: {route}\n"
+            f"👥 Орун: {seats_text}\n"
             f"🕒 Чыгуу: {departure_text}\n"
             f"📞 Телефон: {phone}"
         )

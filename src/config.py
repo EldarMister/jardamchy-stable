@@ -200,6 +200,7 @@ STATE_DRIVER_REG_TYPE = "DRIVER_REG_TYPE"           # Выбор типа (та�
 STATE_DRIVER_REG_NAME = "DRIVER_REG_NAME"           # Ввод имени
 STATE_DRIVER_REG_PHONE = "DRIVER_REG_PHONE"         # Ввод телефона
 STATE_DRIVER_REG_CAR = "DRIVER_REG_CAR"             # Ввод марки авто
+STATE_POPUTKA_PHONE = "POPUTKA_PHONE"
 STATE_POPUTKA_FROM = "POPUTKA_FROM"
 STATE_POPUTKA_TO = "POPUTKA_TO"
 STATE_POPUTKA_SEATS = "POPUTKA_SEATS"
@@ -299,7 +300,7 @@ WELCOME_MESSAGE = """👋 Салам! Мен *Жардамчы ГО* - сизд�
 🐜 *6. Муравей* - Желмаян
 🩺 *7. Мед Эже* - Медициналык жардам
 💻 *8. Компьютердик кызматтар*
-🚘 *9. Попутка*
+🚘 *9. Такси 7 область*
 🔧 *10. Мастер чакыруу*
 
 Номер же атын жазыңыз."""
@@ -822,6 +823,14 @@ POPUTKA_DRIVER_START = """🚘 *Попутка*
 Азыр сиздин жакынкы чыгууңузду WhatsApp тизмесине кошобуз.
 
 *Кайдан* чыгасыз?"""
+
+POPUTKA_DRIVER_PHONE_PROMPT = """🚘 *Попутка*
+
+Телефон номериңизди жазыңыз же *Контактты бөлүшүү* баскычын басыңыз."""
+
+POPUTKA_DRIVER_INVALID_PHONE = """⚠️ Телефон номери туура эмес.
+
+Мисал: *0555123456*"""
 
 POPUTKA_DRIVER_TO_PROMPT = """🚘 *Попутка*
 

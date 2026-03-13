@@ -697,6 +697,30 @@ def send_telegram_message(chat_id: str, message: str,
         return None
 
 
+def send_telegram_contact_request(chat_id: str, message: str, button_text: str) -> Optional[Dict]:
+    """Отправить сообщение с запросом контакта (reply keyboard)."""
+    try:
+        url = f"{config.TELEGRAM_API_URL}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "reply_markup": {
+                "keyboard": [[{"text": button_text, "request_contact": True}]],
+                "resize_keyboard": True,
+                "one_time_keyboard": True,
+            },
+        }
+        response = _http_post(url, json=payload, timeout=30)
+        if response.status_code == 200:
+            return response.json().get("result")
+        print(f"Telegram contact request error: {response.text}")
+        return None
+    except Exception as e:
+        print(f"Exception sending Telegram contact request: {e}")
+        return None
+
+
 def send_telegram_group(chat_id: str, message: str, 
                         buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
     """Отправить сообщение в Telegram группу"""

@@ -192,6 +192,7 @@ class Database:
                     CREATE TABLE IF NOT EXISTS poputka_offers (
                         id SERIAL PRIMARY KEY,
                         driver_id VARCHAR(50) NOT NULL,
+                        driver_phone VARCHAR(20),
                         from_address VARCHAR(255) NOT NULL,
                         to_address VARCHAR(255) NOT NULL,
                         seats_available INTEGER NOT NULL,
@@ -200,6 +201,17 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'poputka_offers' AND column_name = 'driver_phone'
+                        ) THEN
+                            ALTER TABLE poputka_offers ADD COLUMN driver_phone VARCHAR(20);
+                        END IF;
+                    END $$;
                 """)
             
                 # Таблица кафе
@@ -1798,6 +1810,7 @@ class Database:
     def create_poputka_offer(
         self,
         driver_id: str,
+        driver_phone: str | None = None,
         from_address: str,
         to_address: str,
         seats_available: int,
@@ -1815,10 +1828,10 @@ class Database:
             )
             cur.execute(
                 """INSERT INTO poputka_offers
-                   (driver_id, from_address, to_address, seats_available, departure_time)
-                   VALUES (%s, %s, %s, %s, %s)
+                   (driver_id, driver_phone, from_address, to_address, seats_available, departure_time)
+                   VALUES (%s, %s, %s, %s, %s, %s)
                    RETURNING *""",
-                (str(driver_id), from_address, to_address, int(seats_available), departure_time)
+                (str(driver_id), driver_phone, from_address, to_address, int(seats_available), departure_time)
             )
             row = cur.fetchone()
             return dict(row) if row else None
@@ -1843,7 +1856,7 @@ class Database:
                 """SELECT
                        p.*,
                        d.name AS driver_name,
-                       d.phone AS driver_phone,
+                       COALESCE(p.driver_phone, d.phone) AS driver_phone,
                        d.car_model,
                        d.plate
                    FROM poputka_offers p

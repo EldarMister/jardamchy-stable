@@ -16,7 +16,7 @@ from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_with_main_menu,
     send_telegram_private, send_telegram_group,
     edit_telegram_message, delete_telegram_message, format_phone,
-    answer_telegram_callback
+    answer_telegram_callback, send_telegram_contact_request
 )
 
 # In-memory lock для защиты от двойного нажатия (1 действие = 1 нажатие)
@@ -1804,11 +1804,17 @@ def handle_telegram_message(message: dict) -> tuple:
         text = message.get('text', '').strip()
         user_id = str(message['from']['id'])
         user_name = message['from'].get('first_name', 'Unknown')
-        
+        contact = message.get('contact') or {}
+
+        db = get_db()
+
+        if contact and contact.get('phone_number'):
+            session = db.get_telegram_session(user_id)
+            if session and session.get('state') == config.STATE_POPUTKA_PHONE:
+                return _handle_poputka_phone(user_id, contact.get('phone_number', ''), db)
+
         if not text:
             return jsonify({"status": "ok"}), 200
-        
-        db = get_db()
         
         logger.info(f"Telegram DM from {user_name} ({user_id}): {text}")
         
@@ -1882,6 +1888,9 @@ def handle_telegram_message(message: dict) -> tuple:
             
             elif state == config.STATE_DRIVER_REG_CONFIRM:
                 return _handle_reg_confirm(user_id, text, db)
+
+            elif state == config.STATE_POPUTKA_PHONE:
+                return _handle_poputka_phone(user_id, text, db)
 
             elif state == config.STATE_POPUTKA_FROM:
                 return _handle_poputka_from(user_id, text, db)
@@ -2074,15 +2083,31 @@ def _handle_stats_command(user_id: str, db) -> tuple:
 
 
 def _start_poputka_flow(user_id: str, db) -> tuple:
+    db.create_telegram_session(user_id)
     driver = db.get_driver(user_id)
-    if not driver:
-        send_telegram_private(
-            user_id,
-            "❌ Сиз айдоочу катары каттала элексиз.\n\nАлгач /register жазыңыз."
-        )
+    driver_phone = (driver.get("phone") or "").strip() if driver else ""
+    if driver_phone:
+        db.set_telegram_session_data(user_id, "poputka_phone", driver_phone)
+        db.set_telegram_session_state(user_id, config.STATE_POPUTKA_FROM)
+        send_telegram_private(user_id, config.POPUTKA_DRIVER_START)
         return jsonify({"status": "ok"}), 200
 
-    db.create_telegram_session(user_id)
+    db.set_telegram_session_state(user_id, config.STATE_POPUTKA_PHONE)
+    send_telegram_contact_request(user_id, config.POPUTKA_DRIVER_PHONE_PROMPT, "📱 Контактты бөлүшүү")
+    return jsonify({"status": "ok"}), 200
+
+
+def _handle_poputka_phone(user_id: str, text: str, db) -> tuple:
+    raw = (text or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if digits.startswith("996"):
+        digits = "0" + digits[3:]
+
+    if len(digits) < 9 or len(digits) > 12:
+        send_telegram_private(user_id, config.POPUTKA_DRIVER_INVALID_PHONE)
+        return jsonify({"status": "ok"}), 200
+
+    db.set_telegram_session_data(user_id, "poputka_phone", digits)
     db.set_telegram_session_state(user_id, config.STATE_POPUTKA_FROM)
     send_telegram_private(user_id, config.POPUTKA_DRIVER_START)
     return jsonify({"status": "ok"}), 200
@@ -2157,8 +2182,12 @@ def _handle_poputka_time(user_id: str, text: str, db) -> tuple:
     from_address = (temp_data.get("poputka_from") or "").strip()
     to_address = (temp_data.get("poputka_to") or "").strip()
     seats = int(temp_data.get("poputka_seats") or 0)
+    phone = (temp_data.get("poputka_phone") or "").strip()
+    if not phone:
+        driver = db.get_driver(user_id)
+        phone = (driver.get("phone") or "").strip() if driver else ""
 
-    if not from_address or not to_address or seats <= 0:
+    if not from_address or not to_address or seats <= 0 or not phone:
         db.clear_telegram_session(user_id)
         send_telegram_private(
             user_id,
@@ -2168,6 +2197,7 @@ def _handle_poputka_time(user_id: str, text: str, db) -> tuple:
 
     db.create_poputka_offer(
         driver_id=user_id,
+        driver_phone=phone,
         from_address=from_address,
         to_address=to_address,
         seats_available=seats,
