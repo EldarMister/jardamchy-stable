@@ -2078,7 +2078,7 @@ def _start_poputka_flow(user_id: str, db) -> tuple:
     if not driver:
         send_telegram_private(
             user_id,
-            "❌ Вы не зарегистрированы как водитель.\n\nСначала напишите /register."
+            "❌ Сиз айдоочу катары каттала элексиз.\n\nАлгач /register жазыңыз."
         )
         return jsonify({"status": "ok"}), 200
 
@@ -2091,7 +2091,7 @@ def _start_poputka_flow(user_id: str, db) -> tuple:
 def _handle_poputka_from(user_id: str, text: str, db) -> tuple:
     value = text.strip()
     if len(value) < 2:
-        send_telegram_private(user_id, "⚠️ Напишите, откуда отправляетесь.")
+        send_telegram_private(user_id, "⚠️ Кайдан чыгарыңызды жазыңыз.")
         return jsonify({"status": "ok"}), 200
 
     db.set_telegram_session_data(user_id, "poputka_from", value)
@@ -2103,7 +2103,7 @@ def _handle_poputka_from(user_id: str, text: str, db) -> tuple:
 def _handle_poputka_to(user_id: str, text: str, db) -> tuple:
     value = text.strip()
     if len(value) < 2:
-        send_telegram_private(user_id, "⚠️ Напишите, куда едете.")
+        send_telegram_private(user_id, "⚠️ Кайда барарыңызды жазыңыз.")
         return jsonify({"status": "ok"}), 200
 
     db.set_telegram_session_data(user_id, "poputka_to", value)
@@ -2162,7 +2162,7 @@ def _handle_poputka_time(user_id: str, text: str, db) -> tuple:
         db.clear_telegram_session(user_id)
         send_telegram_private(
             user_id,
-            "❌ Не удалось сохранить попутку. Начните заново через /poputka."
+            "❌ Попутканы сактай албай калдык. /poputka менен кайра баштаңыз."
         )
         return jsonify({"status": "ok"}), 200
 
