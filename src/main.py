@@ -1357,15 +1357,15 @@ def _send_poputka_list(user: User, db):
         send_whatsapp(user.phone, config.POPUTKA_LIST_EMPTY)
         return jsonify({"status": "ok"}), 200
 
-    lines = [config.POPUTKA_LIST_HEADER, ""]
+    lines = [config.POPUTKA_LIST_HEADER]
     for idx, offer in enumerate(offers, start=1):
         departure_time = offer.get("departure_time")
         departure_text = departure_time.strftime("%H:%M") if hasattr(departure_time, "strftime") else str(departure_time)
         phone = format_phone((offer.get("driver_phone") or "").strip()) if offer.get("driver_phone") else "—"
+        route = f"{offer.get('from_address', '')} → {offer.get('to_address', '')}"
         lines.append(
             f"*{idx}.*\n"
-            f"📍 Кайдан: {offer.get('from_address', '')}\n"
-            f"📍 Кайда: {offer.get('to_address', '')}\n"
+            f"📍 Маршрут: {route}\n"
             f"🕒 Чыгуу: {departure_text}\n"
             f"📞 Телефон: {phone}"
         )
