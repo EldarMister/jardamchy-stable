@@ -16,46 +16,46 @@ from urllib.parse import urlencode
 import config
 
 WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
-WHATSAPP_CANCEL_BUTTON_TEXT = "? ������"
+WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
 WHATSAPP_MAIN_MENU_BUTTON_ID = "btn_main_menu"
-WHATSAPP_MAIN_MENU_BUTTON_TEXT = "?? ����� ����"
+WHATSAPP_MAIN_MENU_BUTTON_TEXT = "🏠 Башкы меню"
 NO_CANCEL_MESSAGE_PHRASES = (
-    "����� �����",
-    "����� �����",
-    "����� �����",
-    "�������� �����",
-    "�������� �����",
+    "заказ отмен",
+    "заказ отменё",
+    "заказ жокко",
+    "доставка отмен",
+    "доставка жокко",
 )
 
 STT_SERVICE_KEYWORDS = (
-    "�����", "taxi", "����", "������", "������", "�����",
-    "����", "�����", "�����", "����", "����",
-    "�������", "�?�?�", "�������", "�����",
-    "������", "��������", "����", "���������",
-    "������", "�?�", "���", "����", "�����", "�����",
-    "�������", "�������",
-    # ���� ����� � �������� ������� ������ ������������
-    "�����", "�����������", "������", "���", "���", "���", "�����", "�����",
-    "��", "������", "����", "������", "�����", "�����", "������", "������",
+    "такси", "taxi", "унаа", "машина", "кайдан", "кайда",
+    "кафе", "тамак", "оокат", "меню", "жейм",
+    "магазин", "дүкөн", "продукт", "товар",
+    "аптека", "дарыкана", "дары", "лекарство",
+    "портер", "жүк", "жук", "груз", "ташыш", "ташуу",
+    "муравей", "желмаян",
+    # Типы груза — помогают выбрать лучшую транскрипцию
+    "диван", "холодильник", "мебель", "кум", "таш", "мал", "жыгач", "уголь",
+    "ун", "жугору", "арпа", "буудай", "жемиш", "мешок", "кирпич", "цемент",
 )
 STT_ADDRESS_KEYWORDS = (
-    # �������� ���������
-    "�����", "��", "����������", "����", "�������",
-    # ����� / ������ � ��������
-    "��������", "�����", "�������", "������", "����",
-    "����������", "����������", "������",
-    "��������", "��������", "���������", "������",
-    # ����� � �������������� (�� ������������ NLU)
-    "��������", "���������", "������", "����������",
-    "��������", "������", "�����������", "����������",
-    "����������", "�������", "�������", "��������",
-    "����������", "��������",
-    # ������� ��������� � ��������
-    "������", "��?", "�����", "��?�����", "���������", "��������",
-    "�������", "�������", "777", "������", "�� ����",
+    # Основные ориентиры
+    "базар", "жд", "микрорайон", "адыр", "ынтымак",
+    # Улицы / районы — основные
+    "северная", "южная", "пушкина", "ленина", "аксы",
+    "орозбекова", "набережная", "достук",
+    "айтматов", "раззаков", "панфилова", "фрунзе",
+    # Улицы — дополнительные (из нормализации NLU)
+    "нагорная", "солнечная", "горная", "лермонтова",
+    "сыдыкова", "дружба", "зулпукарова", "тарыкчиева",
+    "тыныбекова", "исанова", "кураева", "сергеева",
+    "пионерская", "токтосун",
+    # Местные ориентиры и магазины
+    "салкын", "миң", "кумар", "кеңешбек", "жээнмырза", "атакулов",
+    "миллион", "самурай", "777", "глобус", "ак кеме",
 )
 STT_NOISE_MARKERS = (
-    "[������", "[��������", "[error", "[recognition"
+    "[ошибка", "[распозна", "[error", "[recognition"
 )
 
 
@@ -151,7 +151,7 @@ def _is_plain_whatsapp_message(message: str) -> bool:
     if any(phrase in message_lower for phrase in NO_CANCEL_MESSAGE_PHRASES):
         return True
     # Auto-cancel and similar cancellation notifications for orders/deliveries.
-    if "�����" in message_lower and ("�����" in message_lower or "��������" in message_lower):
+    if "отмена" in message_lower and ("заказ" in message_lower or "доставка" in message_lower):
         return True
     return False
 
@@ -315,7 +315,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
                 from db import get_db as _get_db
                 btn_titles = ' / '.join(b['reply']['title'] for b in cloud_buttons)
                 _get_db().save_message(phone=phone, direction='out',
-                                       body=f"{message}\n[������: {btn_titles}]",
+                                       body=f"{message}\n[Кнопки: {btn_titles}]",
                                        msg_type='interactive', wa_message_id=sent_id)
             except Exception:
                 pass
@@ -389,17 +389,17 @@ def send_confirmation_buttons(phone: str) -> bool:
     if config.WHATSAPP_PROVIDER != "cloud":
         return False
     buttons = [
-        {"id": "confirm_yes", "text": "? ����"},
-        {"id": "confirm_no", "text": "? ���"},
+        {"id": "confirm_yes", "text": "✅ Ооба"},
+        {"id": "confirm_no", "text": "❌ Жок"},
     ]
-    return _send_whatsapp_buttons_cloud(phone, "��������������?", buttons)
+    return _send_whatsapp_buttons_cloud(phone, "Тастыктайсызбы?", buttons)
 
 
 def send_whatsapp_url_button(phone: str, message: str, btn_text: str, url: str) -> bool:
-    """��������� ��������� � �������-������� � WhatsApp.
-    Cloud API: ��� cta_url (���� URL-������).
-    Green API: templateButtons � urlButton.
-    Fallback: plain text � URL.
+    """Отправить сообщение с кнопкой-ссылкой в WhatsApp.
+    Cloud API: тип cta_url (одна URL-кнопка).
+    Green API: templateButtons с urlButton.
+    Fallback: plain text с URL.
     """
     if config.WHATSAPP_PROVIDER == "cloud":
         return _send_whatsapp_cta_url_cloud(phone, message, btn_text, url)
@@ -410,7 +410,7 @@ def send_whatsapp_url_button(phone: str, message: str, btn_text: str, url: str) 
 
 
 def _send_whatsapp_cta_url_cloud(phone: str, message: str, btn_text: str, url: str) -> bool:
-    """Cloud API: ������������� ��������� ���� cta_url (���� ������-������)."""
+    """Cloud API: интерактивное сообщение типа cta_url (одна кнопка-ссылка)."""
     try:
         api_url = (
             f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
@@ -444,7 +444,7 @@ def _send_whatsapp_cta_url_cloud(phone: str, message: str, btn_text: str, url: s
                 sent_id = (response.json().get("messages") or [{}])[0].get("id") or None
                 _get_db().save_message(
                     phone=phone, direction="out",
-                    body=f"{message}\n[������: {btn_text} > {url}]",
+                    body=f"{message}\n[Кнопка: {btn_text} > {url}]",
                     msg_type="interactive", wa_message_id=sent_id,
                 )
             except Exception:
@@ -458,7 +458,7 @@ def _send_whatsapp_cta_url_cloud(phone: str, message: str, btn_text: str, url: s
 
 
 def _send_whatsapp_url_button_green(phone: str, message: str, btn_text: str, url: str) -> bool:
-    """Green API: templateButtons � urlButton."""
+    """Green API: templateButtons с urlButton."""
     try:
         api_url = f"{config.GREEN_API_URL}/sendTemplateButtons/{config.GREEN_API_TOKEN}"
         phone_clean = _clean_phone(phone)
@@ -942,7 +942,7 @@ def _score_transcription(text: str) -> int:
         return -80
 
     score = 0
-    token_count = len(re.findall(r"[a-z�-��?????�0-9]+", normalized, flags=re.IGNORECASE))
+    token_count = len(re.findall(r"[a-zа-яёүөңқһі0-9]+", normalized, flags=re.IGNORECASE))
     if token_count >= 3:
         score += 10
     if token_count >= 6:
@@ -956,15 +956,15 @@ def _score_transcription(text: str) -> int:
             score += 8
 
     # Route patterns (addresses + direction markers) are highly valuable.
-    if re.search(r"\b(������|�����|������|����|��|��)\b", normalized):
+    if re.search(r"\b(кайдан|кайда|откуда|куда|от|до)\b", normalized):
         score += 15
-    if re.search(r"\b(���|���|���|���|���|���|���|�?�|��|��|��|��|��|�?|��|�?)\b", normalized):
+    if re.search(r"\b(дан|ден|тан|тен|нан|нен|дон|дөн|га|ге|ка|ке|го|гө|ко|кө)\b", normalized):
         score += 10
 
     # House numbers / route separators usually indicate useful address content.
     if re.search(r"\b\d{1,4}\b", normalized):
         score += 12
-    if " - " in normalized or " � " in normalized:
+    if " - " in normalized or " — " in normalized:
         score += 10
 
     return score
