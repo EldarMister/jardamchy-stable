@@ -71,6 +71,16 @@ _SERVICE_TEXT_HINTS = (
 _SHORT_VOICE_OK = {
     "да", "нет", "жок", "ок", "ok", "yes", "no", "1", "2"
 }
+_VOICE_ERROR_MARKERS = (
+    "ошибка распозна",
+    "ошибка загрузки аудио",
+    "распознавание голоса недоступно",
+    "не удалось распознать",
+    "error recognition",
+    "speech recognition error",
+    "transcription error",
+    "no api key",
+)
 _WHATSAPP_PRIVATE_SUFFIXES = ("@c.us", "@s.whatsapp.net", "@lid")
 _WHATSAPP_GROUP_SUFFIX = "@g.us"
 
@@ -730,6 +740,8 @@ def _is_bad_voice_transcription(text: str) -> bool:
     if not normalized:
         return True
     if not any(ch.isalnum() for ch in normalized):
+        return True
+    if any(marker in normalized for marker in _VOICE_ERROR_MARKERS):
         return True
 
     if len(normalized) < 4:
@@ -1743,22 +1755,33 @@ def handle_whatsapp():
             ))
             return jsonify({"status": "ok"}), 200
 
+        type_message_lower = (type_message or "").lower()
         is_voice_message = (
-            type_message in ("audioMessage", "pttMessage", "audio", "voice")
-            or (media_type and media_type.lower().startswith("audio/"))
+            (media_type and media_type.lower().startswith("audio/"))
+            or type_message_lower in ("audiomessage", "pttmessage", "voicemessage", "voicenotemessage", "audio", "voice")
+            or "audio" in type_message_lower
+            or "voice" in type_message_lower
+            or "ptt" in type_message_lower
         )
 
         # Обработка голосового сообщения
         if is_voice_message and media_url:
-            logger.info(f"Processing voice from {sender_phone}")
+            safe_media_ref = "cloud_media" if media_url.startswith("cloud_media:") else (media_url[:80] + "...")
+            logger.info(
+                "Processing voice from %s type=%s mime=%s url=%s",
+                sender_phone,
+                type_message,
+                media_type or "-",
+                safe_media_ref,
+            )
             incoming_msg = speech_to_text(media_url)
-            incoming_msg = _enhance_voice_transcript(incoming_msg)
             if _is_bad_voice_transcription(incoming_msg):
                 send_whatsapp(
                     sender_phone,
                     "Не расслышал голосовое. Напишите текстом или отправьте голосовое ещё раз, пожалуйста."
                 )
                 return jsonify({"status": "ok"}), 200
+            incoming_msg = _enhance_voice_transcript(incoming_msg)
         
         # Обработка фото (сохраняем URL)
         if media_type and media_type.startswith('image/'):
