@@ -1398,8 +1398,8 @@ def handle_med_eje_menu(user: User, message: str, db) -> tuple:
         send_whatsapp(
             user.phone,
             config.MED_EJE_PHONE_MESSAGE.format(
-                phone_1=config.MED_EJE_PHONE,
-                phone_2=config.MED_EJE_PHONE_2,
+                phone_1=format_phone(config.MED_EJE_PHONE),
+                phone_2=format_phone(config.MED_EJE_PHONE_2),
             ),
         )
         return jsonify({"status": "ok"}), 200
@@ -3274,8 +3274,8 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             send_whatsapp(
                 user.phone,
                 config.MED_EJE_PHONE_MESSAGE.format(
-                    phone_1=config.MED_EJE_PHONE,
-                    phone_2=config.MED_EJE_PHONE_2,
+                    phone_1=format_phone(config.MED_EJE_PHONE),
+                    phone_2=format_phone(config.MED_EJE_PHONE_2),
                 ),
             )
             return jsonify({"status": "ok"}), 200

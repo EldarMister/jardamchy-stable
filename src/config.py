@@ -79,7 +79,7 @@ SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
 SUPPORT_PHONE = os.getenv("SUPPORT_PHONE", "0226410410")
 SUPPORT_TELEGRAM_ID = os.getenv("SUPPORT_TELEGRAM_ID", "")
 MED_EJE_PHONE = os.getenv("MED_EJE_PHONE", "0 224 223 623")
-MED_EJE_PHONE_2 = os.getenv("MED_EJE_PHONE_2", "0 702 521 073")
+MED_EJE_PHONE_2 = os.getenv("MED_EJE_PHONE_2", "0702 521 073")
 
 # =============================================================================
 # API КЛЮЧИ
