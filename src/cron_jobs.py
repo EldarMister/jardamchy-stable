@@ -8,7 +8,14 @@ from datetime import datetime
 
 import config
 from db import get_db, get_runtime_setting
-from services import edit_telegram_message, send_telegram_group, delete_telegram_message, send_whatsapp, send_whatsapp_buttons
+from services import (
+    edit_telegram_message,
+    send_telegram_group,
+    delete_telegram_message,
+    send_whatsapp,
+    send_whatsapp_buttons,
+    process_telegram_group_outbox,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +346,11 @@ def check_in_delivery_auto_complete():
 def run_all_cron_jobs():
     """Запуск всех cron-задач"""
     logger.info("Running cron jobs...")
-    
+
+    sent_from_outbox = process_telegram_group_outbox()
+    if sent_from_outbox:
+        logger.info("Telegram group outbox processed: sent=%s", sent_from_outbox)
+
     check_cafe_timeouts()
     check_taxi_timeouts()
     check_pharmacy_timeouts()

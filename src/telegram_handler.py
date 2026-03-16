@@ -14,7 +14,7 @@ import config
 from db import get_db, get_runtime_setting
 from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_with_main_menu,
-    send_telegram_private, send_telegram_group,
+    send_telegram_private, dispatch_telegram_group_notification,
     edit_telegram_message, delete_telegram_message, format_phone,
     answer_telegram_callback, send_telegram_contact_request
 )
@@ -444,7 +444,7 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
             "callback": f"delivery_take_{order_id}"
         }]
         
-        send_telegram_group(config.GROUP_TAXI_ID, taxi_msg, buttons)
+        dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
         
         # Уведомляем клиента
         client_msg = f"""✅ *Заказ #{order_id}*
@@ -1320,7 +1320,7 @@ def handle_shop_call_taxi(data: str, user_id: str, chat_id: str, message_id: int
             "callback": f"delivery_take_{order_id}"
         }]
         
-        send_telegram_group(config.GROUP_TAXI_ID, taxi_msg, buttons)
+        dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
         
         # Уведомляем закупщика
         send_telegram_private(

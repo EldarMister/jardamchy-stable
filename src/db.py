@@ -430,6 +430,48 @@ class Database:
                         is_processed BOOLEAN DEFAULT FALSE
                     )
                 """)
+
+                # Очередь сообщений в Telegram-группы, которые не ушли сразу
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS telegram_group_outbox (
+                        id SERIAL PRIMARY KEY,
+                        chat_id VARCHAR(50) NOT NULL,
+                        message_kind VARCHAR(20) DEFAULT 'message',
+                        message_text TEXT,
+                        photo_url TEXT,
+                        buttons JSONB DEFAULT '[]',
+                        parse_mode VARCHAR(20) DEFAULT 'Markdown',
+                        order_id VARCHAR(20),
+                        service_type VARCHAR(20),
+                        timeout_seconds INTEGER,
+                        status VARCHAR(20) DEFAULT 'PENDING',
+                        attempts INTEGER DEFAULT 0,
+                        next_retry_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_error TEXT,
+                        telegram_message_id VARCHAR(50),
+                        sent_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Очередь входящих WhatsApp webhook для надёжной обработки после cold start
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_webhook_queue (
+                        id SERIAL PRIMARY KEY,
+                        payload_json JSONB NOT NULL,
+                        provider VARCHAR(30),
+                        sender_phone VARCHAR(20),
+                        external_message_id VARCHAR(100),
+                        status VARCHAR(20) DEFAULT 'PENDING',
+                        attempts INTEGER DEFAULT 0,
+                        next_retry_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_error TEXT,
+                        processed_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
             
                 # Таблица цен от аптек (временная)
                 cur.execute("""
@@ -448,6 +490,18 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_phone)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_auction_timers ON auction_timers(expires_at, is_processed)")
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tg_group_outbox_status ON telegram_group_outbox(status, next_retry_at, created_at)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tg_group_outbox_order ON telegram_group_outbox(order_id, service_type)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_wa_webhook_queue_status ON whatsapp_webhook_queue(status, next_retry_at, created_at)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_wa_webhook_queue_msg ON whatsapp_webhook_queue(external_message_id, sender_phone)"
+                )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_poputka_offers_active_time ON poputka_offers(is_active, departure_time)")
 
                 # Заполняем дефолты runtime-настроек, если ключей еще нет
@@ -1595,6 +1649,225 @@ class Database:
             cur.execute(
                 "UPDATE auction_timers SET is_processed = TRUE WHERE id = %s AND is_processed = FALSE",
                 (timer_id,)
+            )
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # TELEGRAM GROUP OUTBOX
+    # ==========================================================================
+
+    def enqueue_telegram_group_outbox(
+        self,
+        chat_id: str,
+        message_text: str = "",
+        buttons: Optional[List[Dict]] = None,
+        *,
+        message_kind: str = "message",
+        photo_url: str = None,
+        parse_mode: str = "Markdown",
+        order_id: str = None,
+        service_type: str = None,
+        timeout_seconds: int = None,
+        last_error: str = "",
+    ) -> int:
+        """Поставить сообщение в очередь на повторную отправку в Telegram-группу."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """INSERT INTO telegram_group_outbox
+                   (
+                       chat_id, message_kind, message_text, photo_url, buttons, parse_mode,
+                       order_id, service_type, timeout_seconds, last_error
+                   )
+                   VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    chat_id,
+                    message_kind,
+                    message_text,
+                    photo_url,
+                    json.dumps(buttons or []),
+                    parse_mode,
+                    order_id,
+                    service_type,
+                    timeout_seconds,
+                    last_error,
+                )
+            )
+            row = cur.fetchone()
+            return int(row["id"])
+
+    def claim_telegram_group_outbox(
+        self,
+        limit: int = 20,
+        stale_after_seconds: int = 300,
+    ) -> List[Dict]:
+        """Забрать пачку готовых к отправке сообщений с защитой от гонок между воркерами."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                WITH picked AS (
+                    SELECT id
+                    FROM telegram_group_outbox
+                    WHERE
+                        (
+                            status IN ('PENDING', 'RETRY')
+                            AND next_retry_at <= CURRENT_TIMESTAMP
+                        )
+                        OR (
+                            status = 'PROCESSING'
+                            AND updated_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                        )
+                    ORDER BY created_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT %s
+                )
+                UPDATE telegram_group_outbox AS o
+                SET
+                    status = 'PROCESSING',
+                    attempts = o.attempts + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE o.id IN (SELECT id FROM picked)
+                RETURNING *
+                """,
+                (stale_after_seconds, limit)
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows] if rows else []
+
+    def mark_telegram_group_outbox_sent(
+        self,
+        outbox_id: int,
+        telegram_message_id: str = None,
+    ) -> bool:
+        """Пометить сообщение как успешно отправленное."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE telegram_group_outbox
+                   SET status = 'SENT',
+                       telegram_message_id = COALESCE(%s, telegram_message_id),
+                       sent_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP,
+                       last_error = NULL
+                   WHERE id = %s""",
+                (telegram_message_id, outbox_id)
+            )
+            return cur.rowcount > 0
+
+    def mark_telegram_group_outbox_retry(
+        self,
+        outbox_id: int,
+        last_error: str = "",
+        delay_seconds: int = 30,
+    ) -> bool:
+        """Вернуть сообщение в очередь с задержкой перед следующим повтором."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE telegram_group_outbox
+                   SET status = 'RETRY',
+                       next_retry_at = CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'),
+                       updated_at = CURRENT_TIMESTAMP,
+                       last_error = %s
+                   WHERE id = %s""",
+                (max(int(delay_seconds), 1), last_error[:2000], outbox_id)
+            )
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # WHATSAPP WEBHOOK QUEUE
+    # ==========================================================================
+
+    def enqueue_whatsapp_webhook(
+        self,
+        payload_json: Dict,
+        provider: str = None,
+        sender_phone: str = None,
+        external_message_id: str = None,
+    ) -> int:
+        """Сохранить входящий webhook в очередь до фактической обработки."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """INSERT INTO whatsapp_webhook_queue
+                   (payload_json, provider, sender_phone, external_message_id)
+                   VALUES (%s::jsonb, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    json.dumps(payload_json or {}),
+                    provider,
+                    sender_phone,
+                    external_message_id,
+                )
+            )
+            row = cur.fetchone()
+            return int(row["id"])
+
+    def claim_whatsapp_webhooks(
+        self,
+        limit: int = 20,
+        stale_after_seconds: int = 300,
+    ) -> List[Dict]:
+        """Атомарно забрать входящие webhook на обработку."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                WITH picked AS (
+                    SELECT id
+                    FROM whatsapp_webhook_queue
+                    WHERE
+                        (
+                            status IN ('PENDING', 'RETRY')
+                            AND next_retry_at <= CURRENT_TIMESTAMP
+                        )
+                        OR (
+                            status = 'PROCESSING'
+                            AND updated_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                        )
+                    ORDER BY created_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT %s
+                )
+                UPDATE whatsapp_webhook_queue AS q
+                SET
+                    status = 'PROCESSING',
+                    attempts = q.attempts + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE q.id IN (SELECT id FROM picked)
+                RETURNING *
+                """,
+                (stale_after_seconds, limit)
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows] if rows else []
+
+    def mark_whatsapp_webhook_processed(self, queue_id: int) -> bool:
+        """Пометить webhook как успешно обработанный."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE whatsapp_webhook_queue
+                   SET status = 'PROCESSED',
+                       processed_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP,
+                       last_error = NULL
+                   WHERE id = %s""",
+                (queue_id,)
+            )
+            return cur.rowcount > 0
+
+    def mark_whatsapp_webhook_retry(
+        self,
+        queue_id: int,
+        last_error: str = "",
+        delay_seconds: int = 30,
+    ) -> bool:
+        """Вернуть webhook в очередь для повторной обработки."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE whatsapp_webhook_queue
+                   SET status = 'RETRY',
+                       next_retry_at = CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'),
+                       updated_at = CURRENT_TIMESTAMP,
+                       last_error = %s
+                   WHERE id = %s""",
+                (max(int(delay_seconds), 1), last_error[:2000], queue_id)
             )
             return cur.rowcount > 0
     

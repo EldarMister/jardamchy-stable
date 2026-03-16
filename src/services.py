@@ -5,6 +5,7 @@ Services Module for Business Assistant GO
 """
 
 import json
+import logging
 import time
 import re
 import requests
@@ -14,6 +15,8 @@ from urllib3.util.retry import Retry
 from urllib.parse import urlencode
 
 import config
+
+logger = logging.getLogger(__name__)
 
 WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
 WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
@@ -731,6 +734,207 @@ def send_telegram_private(telegram_id: str, message: str,
                           buttons: Optional[List[Dict]] = None) -> Optional[Dict]:
     """Отправить личное сообщение в Telegram"""
     return send_telegram_message(telegram_id, message, buttons)
+
+
+def _coerce_telegram_buttons(raw_buttons) -> List[Dict]:
+    if not raw_buttons:
+        return []
+    if isinstance(raw_buttons, list):
+        return raw_buttons
+    if isinstance(raw_buttons, str):
+        try:
+            parsed = json.loads(raw_buttons)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _ensure_auction_timer(
+    order_id: str,
+    service_type: str,
+    chat_id: str,
+    message_id,
+    timeout_seconds: Optional[int],
+) -> None:
+    """Создать таймер аукциона только один раз, даже если сообщение дошло через очередь."""
+    if not order_id or not service_type or not timeout_seconds or message_id is None:
+        return
+
+    try:
+        from db import get_db as _get_db
+
+        db = _get_db()
+        existing_timer = db.get_latest_auction_timer(order_id, service_type)
+        if existing_timer:
+            return
+
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type=service_type,
+            telegram_message_id=str(message_id),
+            chat_id=chat_id,
+            timeout_seconds=int(timeout_seconds),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to create auction timer for order_id=%s service_type=%s",
+            order_id,
+            service_type,
+        )
+
+
+def dispatch_telegram_group_notification(
+    chat_id: str,
+    message: str,
+    buttons: Optional[List[Dict]] = None,
+    *,
+    order_id: str = None,
+    service_type: str = None,
+    timeout_seconds: Optional[int] = None,
+    photo_url: str = None,
+    parse_mode: str = "Markdown",
+) -> Optional[Dict]:
+    """
+    Надёжная отправка в Telegram-группу.
+    Если первая отправка не удалась, сохраняем сообщение в БД и cron дошлёт его позже.
+    """
+    result = (
+        send_telegram_photo(chat_id, photo_url, message, buttons=buttons)
+        if photo_url
+        else send_telegram_message(chat_id, message, buttons, parse_mode=parse_mode)
+    )
+    if result:
+        _ensure_auction_timer(
+            order_id=order_id,
+            service_type=service_type,
+            chat_id=chat_id,
+            message_id=result.get("message_id"),
+            timeout_seconds=timeout_seconds,
+        )
+        return result
+
+    try:
+        from db import get_db as _get_db
+
+        outbox_id = _get_db().enqueue_telegram_group_outbox(
+            chat_id=chat_id,
+            message_text=message,
+            buttons=buttons,
+            message_kind="photo" if photo_url else "message",
+            photo_url=photo_url,
+            parse_mode=parse_mode,
+            order_id=order_id,
+            service_type=service_type,
+            timeout_seconds=int(timeout_seconds) if timeout_seconds is not None else None,
+            last_error="Immediate Telegram send failed",
+        )
+        logger.warning(
+            "Queued Telegram group message id=%s chat_id=%s order_id=%s service_type=%s",
+            outbox_id,
+            chat_id,
+            order_id,
+            service_type,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to queue Telegram group message chat_id=%s order_id=%s service_type=%s",
+            chat_id,
+            order_id,
+            service_type,
+        )
+    return None
+
+
+def process_telegram_group_outbox(limit: int = 20, stale_after_seconds: int = 300) -> int:
+    """Повторно отправить сообщения в Telegram-группы, которые не ушли сразу."""
+    try:
+        from db import get_db as _get_db
+
+        db = _get_db()
+        entries = db.claim_telegram_group_outbox(
+            limit=limit,
+            stale_after_seconds=stale_after_seconds,
+        )
+    except Exception:
+        logger.exception("Failed to claim Telegram group outbox")
+        return 0
+
+    sent_count = 0
+    for entry in entries:
+        entry_id = entry["id"]
+        chat_id = entry.get("chat_id")
+        order_id = entry.get("order_id")
+        service_type = entry.get("service_type")
+        timeout_seconds = entry.get("timeout_seconds")
+
+        try:
+            existing_timer = None
+            if order_id and service_type:
+                existing_timer = db.get_latest_auction_timer(order_id, service_type)
+            if existing_timer:
+                db.mark_telegram_group_outbox_sent(entry_id, existing_timer.get("telegram_message_id"))
+                logger.info(
+                    "Telegram outbox id=%s skipped because timer already exists for order_id=%s service_type=%s",
+                    entry_id,
+                    order_id,
+                    service_type,
+                )
+                continue
+
+            buttons = _coerce_telegram_buttons(entry.get("buttons"))
+            if entry.get("message_kind") == "photo":
+                result = send_telegram_photo(
+                    chat_id,
+                    entry.get("photo_url") or "",
+                    entry.get("message_text") or "",
+                    buttons=buttons,
+                )
+            else:
+                result = send_telegram_message(
+                    chat_id,
+                    entry.get("message_text") or "",
+                    buttons,
+                    parse_mode=entry.get("parse_mode") or "Markdown",
+                )
+
+            if result:
+                message_id = result.get("message_id")
+                _ensure_auction_timer(
+                    order_id=order_id,
+                    service_type=service_type,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    timeout_seconds=timeout_seconds,
+                )
+                db.mark_telegram_group_outbox_sent(
+                    entry_id,
+                    str(message_id) if message_id is not None else None,
+                )
+                sent_count += 1
+                continue
+
+            attempts = int(entry.get("attempts") or 1)
+            delay_seconds = min(300, 15 * (2 ** min(max(attempts - 1, 0), 4)))
+            db.mark_telegram_group_outbox_retry(
+                entry_id,
+                last_error="Telegram resend failed",
+                delay_seconds=delay_seconds,
+            )
+        except Exception as exc:
+            attempts = int(entry.get("attempts") or 1)
+            delay_seconds = min(300, 15 * (2 ** min(max(attempts - 1, 0), 4)))
+            try:
+                db.mark_telegram_group_outbox_retry(
+                    entry_id,
+                    last_error=str(exc),
+                    delay_seconds=delay_seconds,
+                )
+            except Exception:
+                logger.exception("Failed to update retry state for Telegram outbox id=%s", entry_id)
+            logger.exception("Error processing Telegram outbox id=%s", entry_id)
+
+    return sent_count
 
 
 def answer_telegram_callback(callback_query_id: str, text: str = "",

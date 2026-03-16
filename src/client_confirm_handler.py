@@ -9,7 +9,7 @@ from typing import Tuple
 
 import config
 from db import get_db, User, get_runtime_setting
-from services import send_whatsapp, send_telegram_group
+from services import send_whatsapp, dispatch_telegram_group_notification
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def _confirm_pharmacy_order(user: User, db) -> Tuple[dict, int]:
             "callback": f"delivery_take_{order_id}"
         }]
         
-        send_telegram_group(config.GROUP_TAXI_ID, taxi_msg, buttons)
+        dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
         
         # Сбрасываем состояние
         user.set_state(config.STATE_IDLE)
@@ -230,16 +230,14 @@ def _confirm_shop_order(user: User, db) -> Tuple[dict, int]:
             "callback": f"taxi_take_{order_id}"
         }]
 
-        result = send_telegram_group(config.GROUP_TAXI_ID, telegram_msg, buttons)
-
-        if result:
-            db.create_auction_timer(
-                order_id=order_id,
-                service_type=config.SERVICE_SHOP,
-                telegram_message_id=str(result.get('message_id')),
-                chat_id=config.GROUP_TAXI_ID,
-                timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
-            )
+        dispatch_telegram_group_notification(
+            config.GROUP_TAXI_ID,
+            telegram_msg,
+            buttons,
+            order_id=order_id,
+            service_type=config.SERVICE_SHOP,
+            timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT)),
+        )
 
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()

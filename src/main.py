@@ -4,7 +4,7 @@ Main Module for Business Assistant GO
 Обновленная версия с ИИ (GPT-4.1-mini)
 """
 
-from flask import request, jsonify
+from flask import request, jsonify, has_request_context
 import json
 import re
 import logging
@@ -15,7 +15,8 @@ import config
 from db import get_db, User, get_runtime_setting
 from services import (
     send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
-    send_telegram_group, send_telegram_private, send_telegram_photo, edit_telegram_message,
+    send_telegram_private, edit_telegram_message,
+    dispatch_telegram_group_notification,
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
     WHATSAPP_CANCEL_BUTTON_ID, WHATSAPP_MAIN_MENU_BUTTON_ID, send_order_cancelled_with_main_menu
 )
@@ -1625,7 +1626,46 @@ def handle_client_cancel(user: User, db) -> bool:
 # WHATSAPP WEBHOOK HANDLER
 # =============================================================================
 
-def handle_whatsapp():
+def extract_whatsapp_queue_metadata(payload: dict) -> dict:
+    """Извлечь стабильные поля для очереди входящих WhatsApp webhook."""
+    metadata = {
+        "provider": "unknown",
+        "sender_phone": None,
+        "external_message_id": None,
+    }
+
+    if not isinstance(payload, dict):
+        return metadata
+
+    if payload.get("object") == "whatsapp_business_account":
+        entry = (payload.get("entry") or [{}])[0]
+        changes = (entry.get("changes") or [{}])[0]
+        value = changes.get("value") or {}
+        messages = value.get("messages") or [{}]
+        metadata["provider"] = "cloud"
+        metadata["sender_phone"] = "".join(ch for ch in str(messages[0].get("from") or "") if ch.isdigit()) or None
+        metadata["external_message_id"] = (messages[0].get("id") or "").strip() or None
+        return metadata
+
+    type_webhook = (payload.get("typeWebhook") or "").strip()
+    if type_webhook:
+        metadata["provider"] = type_webhook
+    sender_data = payload.get("senderData") or {}
+    message_data = payload.get("messageData") or {}
+    sender_phone, _, _ = _extract_green_sender(sender_data)
+    metadata["sender_phone"] = sender_phone or None
+    external_message_id = (
+        payload.get("idMessage")
+        or message_data.get("idMessage")
+        or (message_data.get("messageData") or {}).get("idMessage")
+        or (message_data.get("textMessageData") or {}).get("idMessage")
+        or ""
+    )
+    metadata["external_message_id"] = str(external_message_id).strip() or None
+    return metadata
+
+
+def handle_whatsapp(request_json: dict = None, form_values=None):
     """Главная функция обработки сообщений от Клиента"""
     try:
         incoming_msg = ''
@@ -1635,10 +1675,13 @@ def handle_whatsapp():
         button_response = ''
         type_message = ''
         wa_message_id = ''
-        
-        # 1. Попытка парсинга как JSON (Cloud API или Green API)
-        if request.is_json:
+
+        data = request_json if request_json is not None else None
+        if data is None and request.is_json:
             data = request.get_json()
+
+        # 1. Попытка парсинга как JSON (Cloud API или Green API)
+        if isinstance(data, dict):
 
             # --- WhatsApp Cloud API (Meta Graph API) ---
             if data.get('object') == 'whatsapp_business_account':
@@ -1706,12 +1749,13 @@ def handle_whatsapp():
 
         # 2. Попытка парсинга как Form Data (Twilio)
         if not sender_phone:
-            incoming_msg = request.values.get('Body', '').strip()
-            sender_phone = request.values.get('From', '').replace('whatsapp:', '')
-            media_url = request.values.get('MediaUrl0', '')
-            media_type = request.values.get('MediaContentType0', '')
-            button_response = request.values.get('ButtonResponse', '')
-            wa_message_id = request.values.get('MessageSid', '').strip()
+            values = form_values if form_values is not None else (request.values if has_request_context() else {})
+            incoming_msg = (values.get('Body', '') or '').strip()
+            sender_phone = (values.get('From', '') or '').replace('whatsapp:', '')
+            media_url = (values.get('MediaUrl0', '') or '')
+            media_type = (values.get('MediaContentType0', '') or '')
+            button_response = (values.get('ButtonResponse', '') or '')
+            wa_message_id = (values.get('MessageSid', '') or '').strip()
 
         if not sender_phone:
             return jsonify({"status": "ignored"}), 200
@@ -1914,6 +1958,48 @@ def handle_whatsapp():
     except Exception as e:
         logger.exception("Error handling WhatsApp webhook")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def process_whatsapp_webhook_queue(limit: int = 20, stale_after_seconds: int = 300) -> int:
+    """Обработать webhook-и WhatsApp, сохранённые в БД-очереди."""
+    db = get_db()
+    entries = db.claim_whatsapp_webhooks(limit=limit, stale_after_seconds=stale_after_seconds)
+    processed = 0
+
+    for entry in entries:
+        queue_id = entry["id"]
+        payload = entry.get("payload_json") or {}
+        try:
+            result = handle_whatsapp(request_json=payload)
+            status_code = 200
+            if isinstance(result, tuple) and len(result) >= 2:
+                status_code = int(result[1])
+            elif hasattr(result, "status_code"):
+                status_code = int(result.status_code)
+
+            if status_code >= 500:
+                attempts = int(entry.get("attempts") or 1)
+                delay_seconds = min(300, 15 * (2 ** min(max(attempts - 1, 0), 4)))
+                db.mark_whatsapp_webhook_retry(
+                    queue_id,
+                    last_error=f"Handler returned status={status_code}",
+                    delay_seconds=delay_seconds,
+                )
+                continue
+
+            db.mark_whatsapp_webhook_processed(queue_id)
+            processed += 1
+        except Exception as exc:
+            attempts = int(entry.get("attempts") or 1)
+            delay_seconds = min(300, 15 * (2 ** min(max(attempts - 1, 0), 4)))
+            db.mark_whatsapp_webhook_retry(
+                queue_id,
+                last_error=str(exc),
+                delay_seconds=delay_seconds,
+            )
+            logger.exception("Error processing WhatsApp webhook queue id=%s", queue_id)
+
+    return processed
 
 
 # =============================================================================
@@ -2398,16 +2484,14 @@ def _submit_taxi_order(user: User, db) -> tuple:
         "callback": f"taxi_take_{order_id}"
     }]
     
-    result = send_telegram_group(config.GROUP_TAXI_ID, telegram_msg, buttons)
-    
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_TAXI,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_TAXI_ID,
-            timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_TAXI_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_TAXI,
+        timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT)),
+    )
     
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
@@ -2466,18 +2550,14 @@ def _submit_cafe_order(user: User, db) -> tuple:
         {"text": "❌ Отказать", "callback": f"cafe_decline_{order_id}"}
     ]
     
-    # Кафе-заказы отправляем в группу кафе.
-    result = send_telegram_group(config.GROUP_CAFE_ID, telegram_msg, buttons)
-    target_chat_id = config.GROUP_CAFE_ID
-
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_CAFE,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=target_chat_id,
-            timeout_seconds=int(_runtime_setting("cafe_auction_timeout", config.CAFE_AUCTION_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_CAFE_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_CAFE,
+        timeout_seconds=int(_runtime_setting("cafe_auction_timeout", config.CAFE_AUCTION_TIMEOUT)),
+    )
     
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
@@ -2520,16 +2600,14 @@ def _submit_shop_order(user: User, db) -> tuple:
         "callback": f"taxi_take_{order_id}"
     }]
 
-    result = send_telegram_group(config.GROUP_TAXI_ID, telegram_msg, buttons)
-
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_SHOP,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_TAXI_ID,
-            timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_TAXI_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_SHOP,
+        timeout_seconds=int(_runtime_setting("taxi_response_timeout", config.TAXI_RESPONSE_TIMEOUT)),
+    )
 
     send_whatsapp(user.phone, config.ORDER_SENT_GENERIC)
     db.log_transaction("SHOP_ORDER_CREATED", user.phone, order_id)
@@ -2560,18 +2638,15 @@ def _submit_pharmacy_order(user: User, db) -> tuple:
         "text": "💊 У нас есть (указать цену)",
         "callback": f"pharm_bid_{order_id}"
     }]
-    if media_url:
-        result = send_telegram_photo(config.GROUP_PHARMACY_ID, media_url, telegram_msg, buttons=buttons)
-    else:
-        result = send_telegram_group(config.GROUP_PHARMACY_ID, telegram_msg, buttons)
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_PHARMACY,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_PHARMACY_ID,
-            timeout_seconds=int(_runtime_setting("pharmacy_response_timeout", config.PHARMACY_RESPONSE_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_PHARMACY_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_PHARMACY,
+        timeout_seconds=int(_runtime_setting("pharmacy_response_timeout", config.PHARMACY_RESPONSE_TIMEOUT)),
+        photo_url=media_url or None,
+    )
 
     user.set_state(config.STATE_PHARMACY_WAIT_PRICE)
     user.set_temp_data('pharmacy_order_id', order_id)
@@ -2607,15 +2682,14 @@ def _submit_porter_order(user: User, db) -> tuple:
         "callback": f"porter_take_{order_id}"
     }]
 
-    result = send_telegram_group(config.GROUP_PORTER_ID, telegram_msg, buttons)
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_PORTER,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_PORTER_ID,
-            timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_PORTER_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_PORTER,
+        timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT)),
+    )
 
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
@@ -2652,15 +2726,14 @@ def _submit_ant_order(user: User, db) -> tuple:
         "callback": f"ant_take_{order_id}"
     }]
 
-    result = send_telegram_group(config.GROUP_ANT_ID, telegram_msg, buttons)
-    if result:
-        db.create_auction_timer(
-            order_id=order_id,
-            service_type=config.SERVICE_ANT,
-            telegram_message_id=str(result.get('message_id')),
-            chat_id=config.GROUP_ANT_ID,
-            timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT))
-        )
+    dispatch_telegram_group_notification(
+        config.GROUP_ANT_ID,
+        telegram_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_ANT,
+        timeout_seconds=int(_runtime_setting("pending_order_auto_cancel_timeout", config.PENDING_ORDER_AUTO_CANCEL_TIMEOUT)),
+    )
 
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
@@ -2850,7 +2923,7 @@ def handle_pharmacy_delivery_address(user: User, message: str, db) -> tuple:
         "text": "🚖 Взять доставку",
         "callback": f"delivery_take_{order_id}"
     }]
-    send_telegram_group(config.GROUP_TAXI_ID, taxi_msg, buttons)
+    dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
 
     send_telegram_private(
         str(pharmacy_id),
