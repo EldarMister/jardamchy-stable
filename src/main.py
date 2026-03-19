@@ -1279,9 +1279,66 @@ def _is_support_request(msg_lower: str) -> bool:
     return first in _SUPPORT_KEYWORDS
 
 
+def _extract_web_order_code(message: str) -> str | None:
+    match = re.search(r"\bW\d{5}\b", (message or "").strip(), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(0).upper()
+
+
+def _looks_like_web_order_message(message: str) -> bool:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+    if "заказ с сайта" in normalized:
+        return True
+    if not _extract_web_order_code(message):
+        return False
+    return any(marker in normalized for marker in ("код", "кафе", "итого"))
+
+
+def _handle_web_order_code(user: User, message: str, db) -> tuple | None:
+    code = _extract_web_order_code(message)
+    if not code:
+        return None
+
+    looks_like_web_order = _looks_like_web_order_message(message) or message.strip().upper() == code
+    if not looks_like_web_order:
+        return None
+
+    order = db.get_web_order(code)
+    if not order:
+        send_whatsapp(user.phone, "❌ Мындай код менен заказ табылган жок. Кодду текшериңиз.")
+        return jsonify({"status": "ok"}), 200
+
+    if order['status'] in ['CONFIRMED', 'COMPLETED', 'CANCELLED']:
+        send_whatsapp(user.phone, f"⚠️ Бул заказ буга чейин иштелип бүткөн (Статус: {order['status']}).")
+        return jsonify({"status": "ok"}), 200
+
+    _reset_unknown_fallback(user)
+    user.set_temp_data('service_type', config.SERVICE_CAFE)
+    user.set_temp_data('web_order_code', code)
+    user.set_temp_data('cafe_id', order['cafe_id'])
+
+    items = order['items_json']
+    details_lines = [f"Кафе: {order['cafe_name']}"]
+    for item in items:
+        details_lines.append(f"- {item['name']} x{item['count']}")
+    details_lines.append(f"\nЖыйынтык: {int(order['total_price'])} сом")
+
+    order_details = "\n".join(details_lines)
+    user.set_temp_data('cafe_order_details', order_details)
+    user.set_state(config.STATE_WEB_ORDER_ADDRESS)
+    send_whatsapp(user.phone, "📍 Жеткирүү дарегин жазыңыз (же геолокация жөнөтүңүз):")
+    return jsonify({"status": "ok"}), 200
+
+
 def _is_computer_service_request(message: str) -> bool:
     normalized = _normalize_loose_text(message)
     if not normalized:
+        return False
+
+    if _looks_like_web_order_message(message):
         return False
 
     if normalized in {"8", "8."}:
@@ -1885,6 +1942,10 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
                 ))
             return jsonify({"status": "ok"}), 200
 
+        web_order_result = _handle_web_order_code(user, incoming_msg, db)
+        if web_order_result:
+            return web_order_result
+
         if _is_computer_service_request(incoming_msg):
             return _send_specialist_request(
                 user,
@@ -2076,41 +2137,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "greeting"}:
         _reset_unknown_fallback(user)
 
-    # === WEB ORDER CODE (W-xxxxx) ===
-    # Проверка на код заказа с сайта
-    if re.match(r'^W\d{5}$', message.strip(), re.IGNORECASE):
-        code = message.strip().upper()
-        order = db.get_web_order(code)
-        
-        if not order:
-            send_whatsapp(user.phone, "❌ Мындай код менен заказ табылган жок. Кодду текшериңиз.")
-            return jsonify({"status": "ok"}), 200
-            
-        if order['status'] in ['CONFIRMED', 'COMPLETED', 'CANCELLED']:
-             send_whatsapp(user.phone, f"⚠️ Бул заказ буга чейин иштелип бүткөн (Статус: {order['status']}).")
-             return jsonify({"status": "ok"}), 200
-
-        # Сохраняем контекст заказа
-        _reset_unknown_fallback(user)
-        user.set_temp_data('service_type', config.SERVICE_CAFE)
-        user.set_temp_data('web_order_code', code)
-        user.set_temp_data('cafe_id', order['cafe_id'])
-        
-        # Формируем детали заказа
-        items = order['items_json']
-        details_lines = [f"Кафе: {order['cafe_name']}"]
-        for item in items:
-            details_lines.append(f"- {item['name']} x{item['count']}")
-        details_lines.append(f"\nЖыйынтык: {int(order['total_price'])} сом")
-        
-        order_details = "\n".join(details_lines)
-        user.set_temp_data('cafe_order_details', order_details)
-        
-        # Переходим к вводу адреса
-        user.set_state(config.STATE_WEB_ORDER_ADDRESS)
-        send_whatsapp(user.phone, "📍 Жеткирүү дарегин жазыңыз (же геолокация жөнөтүңүз):")
-        return jsonify({"status": "ok"}), 200
-    
     # === ТАКСИ ===
     if intent == "taxi":
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
