@@ -163,6 +163,8 @@ class Database:
                         driver_commission DECIMAL(10, 2) DEFAULT 0,
                         cargo_type VARCHAR(50),
                         ready_time INTEGER,
+                        delivery_mode VARCHAR(30),
+                        external_courier_phone VARCHAR(20),
                         is_urgent BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -289,6 +291,28 @@ class Database:
                             WHERE table_name = 'orders' AND column_name = 'driver_commission'
                         ) THEN
                             ALTER TABLE orders ADD COLUMN driver_commission DECIMAL(10,2) DEFAULT 0;
+                        END IF;
+                    END $$;
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'orders' AND column_name = 'delivery_mode'
+                        ) THEN
+                            ALTER TABLE orders ADD COLUMN delivery_mode VARCHAR(30);
+                        END IF;
+                    END $$;
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'orders' AND column_name = 'external_courier_phone'
+                        ) THEN
+                            ALTER TABLE orders ADD COLUMN external_courier_phone VARCHAR(20);
                         END IF;
                     END $$;
                 """)
@@ -975,6 +999,40 @@ class Database:
                     details=f"Status changed to {status}"
                 )
             
+            return cur.rowcount > 0
+
+    def set_order_delivery_mode(
+        self,
+        order_id: str,
+        delivery_mode: str,
+        external_courier_phone: Optional[str] = None
+    ) -> bool:
+        """Сохранить способ доставки заказа и номер внешнего курьера."""
+        with self.get_cursor(commit=True) as cur:
+            updates = ["delivery_mode = %s", "updated_at = CURRENT_TIMESTAMP"]
+            params = [delivery_mode]
+
+            if external_courier_phone is None:
+                updates.append("external_courier_phone = NULL")
+            else:
+                updates.append("external_courier_phone = %s")
+                params.append(external_courier_phone)
+
+            params.append(order_id)
+
+            cur.execute(
+                f"UPDATE orders SET {', '.join(updates)} WHERE order_id = %s",
+                params
+            )
+
+            if cur.rowcount > 0:
+                phone_state = "set" if external_courier_phone else "null"
+                self.log_transaction(
+                    "ORDER_DELIVERY_MODE_UPDATED",
+                    order_id=order_id,
+                    details=f"delivery_mode={delivery_mode}, external_courier_phone={phone_state}"
+                )
+
             return cur.rowcount > 0
 
     def assign_order_to_driver(

@@ -207,6 +207,12 @@ def handle_callback_query(callback_query: dict) -> tuple:
             return handle_cafe_decline(data, user_id, user_name, chat_id, message_id, db)
         elif data.startswith("cafe_ready_"):
             return handle_cafe_ready_time(data, user_id, user_name, db)
+        elif data.startswith("cafe_delivery_self_"):
+            return handle_cafe_self_courier_choice(data, user_id, user_name, db)
+        elif data.startswith("cafe_delivery_go_"):
+            return handle_cafe_go_courier_choice(data, user_id, user_name, db)
+        elif data.startswith("cafe_self_done_"):
+            return handle_cafe_self_delivery_done(data, user_id, user_name, db)
         
         # === АПТЕКА ===
         elif data.startswith("pharm_bid_"):
@@ -408,27 +414,68 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
             send_telegram_private(user_id, "❌ Заказ ещё не принят кафе. Указать время нельзя.")
             return jsonify({"status": "ok"}), 200
 
-        cafe_profile = db.get_cafe(user_id) or {}
-        cafe_phone = (cafe_profile.get('phone') or '').strip()
-        cafe_phone_line = ""
-        if cafe_phone:
-            cafe_phone_line = f"📞 *Телефон кафе:* {_format_phone_for_whatsapp(cafe_phone)}\n"
-
         # Обновляем заказ
         db.update_order_status(order_id, config.ORDER_STATUS_READY, ready_time=ready_time)
         
         # Рассчитываем комиссию (5% всегда, без скидок)
         order_amount = order.get('price_total', 0) or 1000  # Если цена не указана, берем минимум
-        commission_added, new_debt = db.update_cafe_debt(user_id, order_amount)
+        db.update_cafe_debt(user_id, order_amount)
         commission_info = f"💰 Комиссия ({_runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)}%) добавлена в долг"
+        buttons = [
+            {"text": "🚶 Своим курьером", "callback": f"cafe_delivery_self_{order_id}"},
+            {"text": "🚖 Курьером Жардамчы GO", "callback": f"cafe_delivery_go_{order_id}"}
+        ]
+
+        send_telegram_private(
+            user_id,
+            f"⏱ Заказ #{order_id} будет готов через *{ready_time}* минут.\n\n"
+            f"Выберите способ доставки.\n{commission_info}",
+            buttons
+        )
         
-        order_details = (order.get('details') or '').strip()
-        details_block = f"\n📋 *Состав заказа:*\n{order_details[:500]}" if order_details else ""
+        db.log_transaction(
+            "CAFE_READY_TIME_SET",
+            user_id,
+            order_id,
+            details=f"Ready in {ready_time} min; awaiting delivery mode"
+        )
 
-        # Отправляем заявку в группу такси
-        taxi_msg = f"""📦 *ДОСТАВКА ЕДЫ*
+        return jsonify({"status": "ok"}), 200
 
-🏠 *Забрать из:* {user_name}
+    except Exception as e:
+        logger.exception("Error handling cafe ready time")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _normalize_cafe_courier_phone(raw: str) -> str | None:
+    digits = re.sub(r"\D", "", (raw or "").strip())
+    if digits.startswith("996") and len(digits) == 12:
+        digits = "0" + digits[3:]
+    elif len(digits) == 9:
+        digits = "0" + digits
+
+    if len(digits) != 10 or not digits.startswith("0"):
+        return None
+
+    return digits
+
+
+def _get_cafe_identity(db, cafe_telegram_id: str, fallback_name: str) -> tuple[str, str]:
+    cafe_profile = db.get_cafe(cafe_telegram_id) or {}
+    cafe_name = (cafe_profile.get('name') or fallback_name or "Кафе").strip()
+    cafe_phone = (cafe_profile.get('phone') or '').strip()
+    return cafe_name, cafe_phone
+
+
+def _dispatch_cafe_order_to_go_courier(order: dict, cafe_name: str, cafe_phone: str, commission_info: str) -> None:
+    order_id = order['order_id']
+    ready_time = order.get('ready_time') or 0
+    order_details = (order.get('details') or '').strip()
+    details_block = f"\n📋 *Состав заказа:*\n{order_details[:500]}" if order_details else ""
+
+    taxi_msg = f"""📦 *ДОСТАВКА ЕДЫ*
+
+🏠 *Забрать из:* {cafe_name}
 📋 *Заказ:* #{order_id}
 {details_block}
 ⏱ *Готово через:* {ready_time} мин
@@ -438,33 +485,208 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
 📞 *Клиент:* {order.get('client_phone', '')}
 
 {commission_info}"""
-        
-        buttons = [{
-            "text": "🚖 Взять доставку",
-            "callback": f"delivery_take_{order_id}"
-        }]
-        
-        dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
-        
-        # Уведомляем клиента
-        client_msg = f"""✅ *Заказ #{order_id}*
 
-🏠 *Кафе:* {user_name}
+    buttons = [{
+        "text": "🚖 Взять доставку",
+        "callback": f"delivery_take_{order_id}"
+    }]
+    dispatch_telegram_group_notification(config.GROUP_TAXI_ID, taxi_msg, buttons)
+
+    cafe_phone_line = ""
+    if cafe_phone:
+        cafe_phone_line = f"📞 *Телефон кафе:* {_format_phone_for_whatsapp(cafe_phone)}\n"
+
+    client_msg = f"""✅ *Заказ #{order_id}*
+
+🏠 *Кафе:* {cafe_name}
 {cafe_phone_line}⏱ *Готово через:* {ready_time} минут
 🚖 Ищем курьера для доставки...
 """
+    send_whatsapp(order.get('client_phone', ''), client_msg)
 
-        send_whatsapp(order.get('client_phone', ''), client_msg)
-        
-        # Уведомляем кафе
-        send_telegram_private(user_id, f"✅ Заказ #{order_id} передан на доставку. {commission_info}")
-        
-        db.log_transaction("CAFE_READY_TIME_SET", user_id, order_id, details=f"Ready in {ready_time} min")
-        
+
+def handle_cafe_go_courier_choice(data: str, user_id: str, user_name: str, db) -> tuple:
+    """Кафе выбрало доставку через Жардамчы GO."""
+    try:
+        order_id = data.split("_")[3]
+        order = db.get_order(order_id)
+        if not order:
+            return jsonify({"status": "error"}), 404
+
+        if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
+            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('provider_id') and str(order.get('provider_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Этот заказ закреплён за другим кафе.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('status') != config.ORDER_STATUS_READY:
+            send_telegram_private(user_id, "❌ Сначала укажите время готовности заказа.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') == config.DELIVERY_MODE_JARDAMCHY_GO:
+            send_telegram_private(user_id, f"✅ Заказ #{order_id} уже передан курьерам Жардамчы GO.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') == config.DELIVERY_MODE_SELF and order.get('external_courier_phone'):
+            send_telegram_private(user_id, f"❌ Заказ #{order_id} уже закреплён за вашим курьером.")
+            return jsonify({"status": "ok"}), 200
+
+        db.clear_telegram_session(user_id)
+        db.set_order_delivery_mode(order_id, config.DELIVERY_MODE_JARDAMCHY_GO)
+
+        cafe_name, cafe_phone = _get_cafe_identity(db, user_id, user_name)
+        commission_info = (
+            f"💰 Комиссия ({_runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)}%) "
+            "добавлена в долг"
+        )
+        _dispatch_cafe_order_to_go_courier(order, cafe_name, cafe_phone, commission_info)
+
+        send_telegram_private(user_id, f"✅ Заказ #{order_id} передан на доставку Жардамчы GO. {commission_info}")
+        db.log_transaction("CAFE_DELIVERY_GO_SELECTED", user_id, order_id)
         return jsonify({"status": "ok"}), 200
-        
+
     except Exception as e:
-        logger.exception("Error handling cafe ready time")
+        logger.exception("Error handling cafe GO courier choice")
+        send_telegram_private(user_id, "❌ Ошибка при передаче заказа курьерам Жардамчы GO.")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def handle_cafe_self_courier_choice(data: str, user_id: str, user_name: str, db) -> tuple:
+    """Кафе выбрало доставку своим курьером."""
+    try:
+        order_id = data.split("_")[3]
+        order = db.get_order(order_id)
+        if not order:
+            return jsonify({"status": "error"}), 404
+
+        if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
+            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('provider_id') and str(order.get('provider_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Этот заказ закреплён за другим кафе.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('status') != config.ORDER_STATUS_READY:
+            send_telegram_private(user_id, "❌ Сначала укажите время готовности заказа.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') == config.DELIVERY_MODE_JARDAMCHY_GO:
+            send_telegram_private(user_id, f"❌ Заказ #{order_id} уже передан курьерам Жардамчы GO.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') == config.DELIVERY_MODE_SELF and order.get('external_courier_phone'):
+            send_telegram_private(user_id, f"✅ Для заказа #{order_id} номер вашего курьера уже сохранён.")
+            return jsonify({"status": "ok"}), 200
+
+        db.set_order_delivery_mode(order_id, config.DELIVERY_MODE_SELF)
+        db.set_telegram_session_state(user_id, config.STATE_CAFE_OWN_COURIER_PHONE)
+        db.set_telegram_session_data(user_id, "cafe_self_courier_order_id", order_id)
+
+        prompt = (
+            f"📱 Отправьте номер телефона вашего курьера для заказа #{order_id}.\n\n"
+            "Клиент увидит этот номер.\n"
+            "Можно отправить контакт кнопкой ниже или написать номер текстом."
+        )
+        send_telegram_contact_request(user_id, prompt, "📱 Отправить контакт курьера")
+        db.log_transaction("CAFE_SELF_COURIER_SELECTED", user_id, order_id)
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        logger.exception("Error handling cafe self courier choice")
+        send_telegram_private(user_id, "❌ Ошибка при выборе своего курьера.")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _handle_cafe_self_courier_phone(user_id: str, user_name: str, text: str, db) -> tuple:
+    """Сохранить номер внешнего курьера кафе и уведомить клиента."""
+    phone = _normalize_cafe_courier_phone(text)
+    if not phone:
+        send_telegram_private(
+            user_id,
+            "⚠️ Введите корректный номер курьера.\nПример: `0555123456`."
+        )
+        return jsonify({"status": "ok"}), 200
+
+    order_id = db.get_telegram_session_data(user_id, "cafe_self_courier_order_id")
+    if not order_id:
+        db.clear_telegram_session(user_id)
+        send_telegram_private(user_id, "❌ Сессия выбора курьера не найдена. Укажите время готовности заново.")
+        return jsonify({"status": "ok"}), 200
+
+    order = db.get_order(order_id)
+    if not order:
+        db.clear_telegram_session(user_id)
+        send_telegram_private(user_id, "❌ Заказ не найден.")
+        return jsonify({"status": "ok"}), 200
+    if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
+        db.clear_telegram_session(user_id)
+        send_telegram_private(user_id, "❌ Заказ уже закрыт.")
+        return jsonify({"status": "ok"}), 200
+    if order.get('provider_id') and str(order.get('provider_id')) != str(user_id):
+        db.clear_telegram_session(user_id)
+        send_telegram_private(user_id, "❌ Этот заказ закреплён за другим кафе.")
+        return jsonify({"status": "ok"}), 200
+    if order.get('status') != config.ORDER_STATUS_READY:
+        db.clear_telegram_session(user_id)
+        send_telegram_private(user_id, "❌ Для этого заказа уже нельзя сохранить номер курьера.")
+        return jsonify({"status": "ok"}), 200
+
+    db.set_order_delivery_mode(order_id, config.DELIVERY_MODE_SELF, phone)
+    db.clear_telegram_session(user_id)
+
+    cafe_name, cafe_phone = _get_cafe_identity(db, user_id, user_name)
+    ready_time = order.get('ready_time') or 0
+    cafe_phone_line = ""
+    if cafe_phone:
+        cafe_phone_line = f"📞 *Телефон кафе:* {_format_phone_for_whatsapp(cafe_phone)}\n"
+
+    client_msg = f"""✅ *Заказ #{order_id}*
+
+🏠 *Кафе:* {cafe_name}
+{cafe_phone_line}⏱ *Готово через:* {ready_time} минут
+🚶 *Доставка:* своим курьером кафе
+📞 *Телефон курьера:* {_format_phone_for_whatsapp(phone)}
+"""
+    send_whatsapp(order.get('client_phone', ''), client_msg)
+
+    buttons = [{"text": "✅ Заказ доставлен", "callback": f"cafe_self_done_{order_id}"}]
+    send_telegram_private(
+        user_id,
+        f"✅ Номер курьера сохранён для заказа #{order_id}.\n"
+        f"Клиент получил номер: {_format_phone_for_whatsapp(phone)}.\n\n"
+        "Когда заказ будет доставлен, нажмите кнопку ниже.",
+        buttons
+    )
+
+    db.log_transaction("CAFE_SELF_COURIER_PHONE_SAVED", user_id, order_id, details=phone)
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_cafe_self_delivery_done(data: str, user_id: str, user_name: str, db) -> tuple:
+    """Кафе подтверждает, что свой курьер доставил заказ."""
+    try:
+        order_id = data.split("_")[3]
+        order = db.get_order(order_id)
+        if not order:
+            return jsonify({"status": "error"}), 404
+
+        if order.get('status') in (config.ORDER_STATUS_CANCELLED, config.ORDER_STATUS_COMPLETED):
+            send_telegram_private(user_id, "❌ Заказ уже закрыт.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('provider_id') and str(order.get('provider_id')) != str(user_id):
+            send_telegram_private(user_id, "❌ Этот заказ закреплён за другим кафе.")
+            return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') != config.DELIVERY_MODE_SELF:
+            send_telegram_private(user_id, "❌ Этот заказ не отмечен как доставка своим курьером.")
+            return jsonify({"status": "ok"}), 200
+
+        db.update_order_status(order_id, config.ORDER_STATUS_COMPLETED, completed_at=datetime.now())
+        send_whatsapp_with_main_menu(
+            order.get('client_phone', ''),
+            "✅ Заказ доставлен курьером кафе. Спасибо, что выбрали нас!"
+        )
+        send_telegram_private(user_id, f"✅ Заказ #{order_id} закрыт как доставленный вашим курьером.")
+        db.log_transaction("CAFE_SELF_DELIVERY_COMPLETED", user_id, order_id)
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        logger.exception("Error finishing cafe self delivery")
+        send_telegram_private(user_id, "❌ Ошибка при завершении доставки своим курьером.")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -1402,6 +1624,9 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
         if _is_delivery_order_closed(order):
             send_telegram_private(user_id, "❌ Заказ уже закрыт")
             return jsonify({"status": "ok"}), 200
+        if order.get('delivery_mode') == config.DELIVERY_MODE_SELF:
+            send_telegram_private(user_id, "❌ Этот заказ кафе доставляет своим курьером.")
+            return jsonify({"status": "ok"}), 200
         service_type = order.get('service_type')
         commission = 0
         commission_msg = ""
@@ -1812,6 +2037,13 @@ def handle_telegram_message(message: dict) -> tuple:
             session = db.get_telegram_session(user_id)
             if session and session.get('state') == config.STATE_POPUTKA_PHONE:
                 return _handle_poputka_phone(user_id, contact.get('phone_number', ''), db)
+            if session and session.get('state') == config.STATE_CAFE_OWN_COURIER_PHONE:
+                return _handle_cafe_self_courier_phone(
+                    user_id,
+                    user_name,
+                    contact.get('phone_number', ''),
+                    db
+                )
 
         if not text:
             return jsonify({"status": "ok"}), 200
@@ -1906,6 +2138,9 @@ def handle_telegram_message(message: dict) -> tuple:
             
             elif state == config.STATE_CAFE_DECLINE_REASON:
                 return _handle_cafe_decline_reason(user_id, user_name, text, db)
+
+            elif state == config.STATE_CAFE_OWN_COURIER_PHONE:
+                return _handle_cafe_self_courier_phone(user_id, user_name, text, db)
         
         # =====================================================================
         # ВВОД ЦЕНЫ АПТЕКОЙ (через ЛС)
