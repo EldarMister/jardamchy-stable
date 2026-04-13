@@ -110,6 +110,7 @@ FLOW_STALE_TTL_MINUTES = {
     config.SERVICE_PORTER: 240,
     config.SERVICE_ANT: 240,
     config.SERVICE_POPUTKA: 480,  # 8 часов — попутки бывают на следующий день
+    config.SERVICE_RAZNARABOCHI: 240,
 }
 FLOW_LABELS = {
     config.SERVICE_TAXI: "Такси",
@@ -139,6 +140,7 @@ FLOW_BY_STATE = {
     config.STATE_POPUTKA_CLIENT_DEST: config.SERVICE_POPUTKA,
     config.STATE_POPUTKA_CLIENT_DATE: config.SERVICE_POPUTKA,
     config.STATE_POPUTKA_CLIENT_SEATS: config.SERVICE_POPUTKA,
+    config.STATE_RAZNARABOCHI_DESC: config.SERVICE_RAZNARABOCHI,
 }
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
@@ -156,6 +158,7 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_POPUTKA_CLIENT_DEST: "ожидаю направление попутки",
     config.STATE_POPUTKA_CLIENT_DATE: "ожидаю дату попутки",
     config.STATE_POPUTKA_CLIENT_SEATS: "ожидаю количество мест",
+    config.STATE_RAZNARABOCHI_DESC: "ожидаю описание работы",
 }
 
 FLOW_SWITCH_IGNORE_MESSAGES = {
@@ -1605,6 +1608,62 @@ def _dispatch_poputka_to_group(user: User, db) -> None:
     send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)
 
 
+def _start_raznarabochi_flow(user: User) -> tuple:
+    """Начать поток разнарабочего — спросить описание работы."""
+    _reset_unknown_fallback(user)
+    user.clear_temp_data()
+    user.set_temp_data('service_type', config.SERVICE_RAZNARABOCHI)
+    user.set_state(config.STATE_RAZNARABOCHI_DESC)
+    send_whatsapp(user.phone, config.RAZNARABOCHI_DESC_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_raznarabochi_desc(user: User, message: str, db) -> tuple:
+    """Клиент описал работу — показать подтверждение."""
+    desc = message.strip()
+    if len(desc) < 5:
+        send_whatsapp(user.phone, "⚠️ Ишти кененирээк жазыңыз.")
+        return jsonify({"status": "ok"}), 200
+    user.set_temp_data('raznarabochi_desc', desc)
+    user.set_state(config.STATE_CONFIRM_ORDER)
+    confirm_msg = config.RAZNARABOCHI_CONFIRM.format(
+        desc=desc,
+        commission=config.RAZNARABOCHI_COMMISSION,
+    )
+    _send_confirm_with_buttons(user.phone, confirm_msg)
+    return jsonify({"status": "ok"}), 200
+
+
+def _dispatch_raznarabochi_to_group(user: User, db) -> None:
+    """Создать заказ разнарабочего и отправить в Telegram-группу."""
+    desc = user.get_temp_data('raznarabochi_desc', '')
+    order_id = db.create_order(
+        client_phone=user.phone,
+        service_type=config.SERVICE_RAZNARABOCHI,
+        address='',
+        details=desc,
+    )
+    if not order_id:
+        send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
+        return
+
+    group_msg = config.RAZNARABOCHI_GROUP_MSG.format(
+        order_id=order_id,
+        desc=desc,
+        commission=config.RAZNARABOCHI_COMMISSION,
+    )
+    buttons = [{"text": f"👷 Заказды алуу ({config.RAZNARABOCHI_COMMISSION} сом)", "callback": f"razna_accept_{order_id}"}]
+    dispatch_telegram_group_notification(
+        config.GROUP_RAZNARABOCHI_ID,
+        group_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_RAZNARABOCHI,
+        timeout_seconds=FLOW_STALE_TTL_MINUTES.get(config.SERVICE_RAZNARABOCHI, 240) * 60,
+    )
+    send_whatsapp(user.phone, config.RAZNARABOCHI_SENT)
+
+
 def handle_med_eje_menu(user: User, message: str, db) -> tuple:
     normalized = _normalize_loose_text(message)
 
@@ -2146,6 +2205,10 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         elif user.current_state == config.STATE_POPUTKA_CLIENT_SEATS:
             return handle_poputka_client_seats(user, incoming_msg, db)
 
+        # Разнарабочий (клиент)
+        elif user.current_state == config.STATE_RAZNARABOCHI_DESC:
+            return handle_raznarabochi_desc(user, incoming_msg, db)
+
         # Кафе
         elif user.current_state == config.STATE_CAFE_ORDER:
             return handle_cafe_order_details(user, incoming_msg, db)
@@ -2261,6 +2324,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "8": "computer",
         "9": "poputka",
         "10": "master",
+        "11": "raznarabochi",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -2281,6 +2345,9 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "сантехника": "plumbing", "сантехник": "plumbing", "сантех": "plumbing",
         "мастер": "master", "мастер чакыруу": "master", "мастерди чакыр": "master",
         "мастер кызматы": "master", "устачы": "master",
+        "разнарабочий": "raznarabochi", "разнорабочий": "raznarabochi",
+        "рабочий": "raznarabochi", "рабочие": "raznarabochi",
+        "жумушчу": "raznarabochi", "жумушчулар": "raznarabochi",
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
@@ -2305,7 +2372,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -2472,6 +2539,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     elif intent == "master":
         return _show_master_contacts(user, db)
 
+    # === РАЗНАРАБОЧИЙ ===
+    elif intent == "raznarabochi":
+        return _start_raznarabochi_flow(user)
+
     # === САНТЕХНИКА ===
     elif intent == "plumbing":
         return _send_specialist_request(
@@ -2554,6 +2625,11 @@ def handle_confirm_order(user: User, message: str, db) -> tuple:
             return _submit_ant_order(user, db)
         elif service_type == config.SERVICE_POPUTKA:
             _dispatch_poputka_to_group(user, db)
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            return jsonify({"status": "ok"}), 200
+        elif service_type == config.SERVICE_RAZNARABOCHI:
+            _dispatch_raznarabochi_to_group(user, db)
             user.set_state(config.STATE_IDLE)
             user.clear_temp_data()
             return jsonify({"status": "ok"}), 200

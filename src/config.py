@@ -50,6 +50,9 @@ PORTER_COMMISSION = 20  # Комиссия с портер 20 сом
 # Муравей
 ANT_COMMISSION = 10  # Комиссия с муравья 10 сом
 
+# Разнарабочий
+RAZNARABOCHI_COMMISSION = 10  # Комиссия 10 сом за одного рабочего
+
 # =============================================================================
 # ТАЙМАУТЫ (в секундах)
 # =============================================================================
@@ -72,6 +75,7 @@ GROUP_PORTER_ID = os.getenv("GROUP_PORTER_ID", "-100554433221")
 GROUP_ANT_ID = os.getenv("GROUP_ANT_ID", os.getenv("GROUP_PORTER_ID", "-100554433221"))  # По умолчанию = группа портеров
 GROUP_SHOP_ID = os.getenv("GROUP_SHOP_ID", "-100667788990")
 GROUP_POPUTKA_ID = os.getenv("GROUP_POPUTKA_ID", os.getenv("GROUP_TAXI_ID", "-100112233445"))
+GROUP_RAZNARABOCHI_ID = os.getenv("GROUP_RAZNARABOCHI_ID", os.getenv("GROUP_PORTER_ID", "-100554433221"))
 
 # ID закупщика (личные сообщения)
 SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
@@ -214,6 +218,9 @@ STATE_POPUTKA_CLIENT_DEST = "POPUTKA_CLIENT_DEST"
 STATE_POPUTKA_CLIENT_DATE = "POPUTKA_CLIENT_DATE"
 STATE_POPUTKA_CLIENT_SEATS = "POPUTKA_CLIENT_SEATS"
 
+# Разнарабочий (WhatsApp)
+STATE_RAZNARABOCHI_DESC = "RAZNARABOCHI_DESC"
+
 # Веб-заказ
 STATE_WEB_ORDER_ADDRESS = "WEB_ORDER_ADDRESS"         # Ввод адреса для веб-заказа
 
@@ -259,6 +266,7 @@ SERVICE_COMPUTER = "computer"
 SERVICE_POPUTKA = "poputka"
 SERVICE_PLUMBING = "plumbing"
 SERVICE_MASTER = "master"
+SERVICE_RAZNARABOCHI = "raznarabochi"
 
 # =============================================================================
 # ТИПЫ ГРУЗОВ (ПОРТЕР)
@@ -315,6 +323,7 @@ WELCOME_MESSAGE = """👋 Салам! Мен *Жардамчы ГО* - сизд�
 💻 *8. Компьютердик кызматтар*
 🚘 *9. Такси 7 область*
 🔧 *10. Мастер чакыруу*
+👷 *11. Разнарабочий*
 
 Номер же атын жазыңыз.
 
@@ -586,6 +595,37 @@ MASTER_MESSAGE = """🔧 *Мастер чакыруу*
 📞 *Мастер 13:* 0777 777 888
 📞 *Мастер 14:* 0777 777 888
 📞 *Мастер 15:* 0777 777 888"""
+
+RAZNARABOCHI_COMMISSION = 10  # дублируется для удобства шаблонов
+
+RAZNARABOCHI_DESC_PROMPT = """👷 *Разнарабочий*
+
+Эмне иш жана канча адам керек экенин жазыңыз.
+
+Мисалы: *2 адам, уголь түшүрүш керек* же *3 киши, жер казуу*"""
+
+RAZNARABOCHI_CONFIRM = """👷 *Разнарабочий — суроо*
+
+📋 Иш: {desc}
+💰 Комиссия: {commission} сом (ар бир рабочийден)
+
+Топко жиберейинби?"""
+
+RAZNARABOCHI_SENT = """✅ *Суроо жиберилди!*
+
+Рабочий табылганда сизге кабарлайбыз."""
+
+RAZNARABOCHI_GROUP_MSG = """👷 *РАЗНАРАБОЧИЙ #{order_id}*
+
+📋 Иш: {desc}
+💰 Комиссия: {commission} сом"""
+
+RAZNARABOCHI_WORKER_FOUND = """✅ *Рабочий табылды!*
+
+👤 Аты: {worker_name}
+📞 Телефон: {worker_phone}
+
+Байланышыңыз!"""
 
 SPECIALIST_REQUEST_TO_OPERATOR = """🛎 *Новая заявка: {service_name}*
 
