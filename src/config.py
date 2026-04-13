@@ -71,6 +71,7 @@ GROUP_TAXI_ID = os.getenv("GROUP_TAXI_ID", "-100112233445")
 GROUP_PORTER_ID = os.getenv("GROUP_PORTER_ID", "-100554433221")
 GROUP_ANT_ID = os.getenv("GROUP_ANT_ID", os.getenv("GROUP_PORTER_ID", "-100554433221"))  # По умолчанию = группа портеров
 GROUP_SHOP_ID = os.getenv("GROUP_SHOP_ID", "-100667788990")
+GROUP_POPUTKA_ID = os.getenv("GROUP_POPUTKA_ID", os.getenv("GROUP_TAXI_ID", "-100112233445"))
 
 # ID закупщика (личные сообщения)
 SHOPPER_TELEGRAM_ID = os.getenv("SHOPPER_TELEGRAM_ID", "")
@@ -208,6 +209,11 @@ STATE_POPUTKA_TO = "POPUTKA_TO"
 STATE_POPUTKA_SEATS = "POPUTKA_SEATS"
 STATE_POPUTKA_TIME = "POPUTKA_TIME"
 
+# Клиентский запрос попутки (WhatsApp)
+STATE_POPUTKA_CLIENT_DEST = "POPUTKA_CLIENT_DEST"
+STATE_POPUTKA_CLIENT_DATE = "POPUTKA_CLIENT_DATE"
+STATE_POPUTKA_CLIENT_SEATS = "POPUTKA_CLIENT_SEATS"
+
 # Веб-заказ
 STATE_WEB_ORDER_ADDRESS = "WEB_ORDER_ADDRESS"         # Ввод адреса для веб-заказа
 
@@ -309,7 +315,9 @@ WELCOME_MESSAGE = """👋 Салам! Мен *Жардамчы ГО* - сизд�
 🚘 *9. Такси 7 область*
 🔧 *10. Мастер чакыруу*
 
-Номер же атын жазыңыз."""
+Номер же атын жазыңыз.
+
+🆘 *Биз менен байланыш* — Суроолор боюнча: *0226 410 410*"""
 
 # Кафе
 CAFE_PROMPT = """🍔 *Кафе*
@@ -497,6 +505,52 @@ COMPUTER_SERVICES_MESSAGE = """💻 *Компьютердик кызматтар
 Той видео, фотосессия, виньетка, жарнамалык видео, бизнес тартуу.
 
 📞 *Байланыш:* 220 122 232"""
+
+POPUTKA_COMMISSION = 20  # сом, комиссия с водителя за принятие запроса
+
+POPUTKA_CLIENT_DEST_PROMPT = """🚘 *Попутка*
+
+Кайда барасыз?
+
+Мисалы: *Ош*, *Бишкек*, *Жалал-Абад* же башка жер."""
+
+POPUTKA_CLIENT_DATE_PROMPT = """🗓 Качан?
+
+Мисалы:
+• *Бүгүн* же *бүгүн 15:00*
+• *Эртең* же *эртең 08:00*
+• *15.06* же *15.06 09:30*"""
+
+POPUTKA_CLIENT_SEATS_PROMPT = """👥 Канча киши барасыз?
+
+Сан менен жазыңыз. Мисалы: *2*"""
+
+POPUTKA_CLIENT_CONFIRM = """🚘 *Попутка суроо*
+
+📍 Багыт: {destination}
+🗓 Качан: {date_text}
+👥 Киши: {seats}
+
+Топко жиберейинби?"""
+
+POPUTKA_CLIENT_SENT = """✅ *Суроо жиберилди!*
+
+Айдоочу табылганда сизге кабарлайбыз."""
+
+POPUTKA_CLIENT_DRIVER_FOUND = """✅ *Попутка табылды!*
+
+👤 Айдоочу: {driver_name}
+📞 Телефон: {driver_phone}
+🚗 Унаа: {car_info}
+
+Байланышыңыз!"""
+
+POPUTKA_GROUP_MSG = """🚘 *ПОПУТКА СУРОО #{order_id}*
+
+📍 Багыт: {destination}
+🗓 Качан: {date_text}
+👥 Киши: {seats}
+💰 Баасы: Келишимдүү"""
 
 POPUTKA_MESSAGE = """🚘 *Попутка*
 

@@ -109,6 +109,7 @@ FLOW_STALE_TTL_MINUTES = {
     config.SERVICE_SHOP: 240,
     config.SERVICE_PORTER: 240,
     config.SERVICE_ANT: 240,
+    config.SERVICE_POPUTKA: 480,  # 8 часов — попутки бывают на следующий день
 }
 FLOW_LABELS = {
     config.SERVICE_TAXI: "Такси",
@@ -135,6 +136,9 @@ FLOW_BY_STATE = {
     config.STATE_PORTER_CARGO_TYPE: config.SERVICE_PORTER,
     config.STATE_PORTER_ROUTE: config.SERVICE_PORTER,
     config.STATE_ANT_ROUTE: config.SERVICE_ANT,
+    config.STATE_POPUTKA_CLIENT_DEST: config.SERVICE_POPUTKA,
+    config.STATE_POPUTKA_CLIENT_DATE: config.SERVICE_POPUTKA,
+    config.STATE_POPUTKA_CLIENT_SEATS: config.SERVICE_POPUTKA,
 }
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
@@ -149,6 +153,9 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_PORTER_ROUTE: "ожидаю маршрут груза",
     config.STATE_ANT_ROUTE: "ожидаю маршрут",
     config.STATE_CONFIRM_ORDER: "ожидаю подтверждение заказа",
+    config.STATE_POPUTKA_CLIENT_DEST: "ожидаю направление попутки",
+    config.STATE_POPUTKA_CLIENT_DATE: "ожидаю дату попутки",
+    config.STATE_POPUTKA_CLIENT_SEATS: "ожидаю количество мест",
 }
 
 FLOW_SWITCH_IGNORE_MESSAGES = {
@@ -1424,34 +1431,140 @@ def _send_specialist_request(user: User, client_message: str, service_name: str)
     return jsonify({"status": "ok"}), 200
 
 
-def _send_poputka_list(user: User, db):
+def _start_poputka_client_flow(user: User) -> tuple:
+    """Начать клиентский запрос попутки — спросить направление."""
     _reset_unknown_fallback(user)
-    user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
+    user.set_temp_data('service_type', config.SERVICE_POPUTKA)
+    user.set_state(config.STATE_POPUTKA_CLIENT_DEST)
+    send_whatsapp(user.phone, config.POPUTKA_CLIENT_DEST_PROMPT)
+    return jsonify({"status": "ok"}), 200
 
-    offers = db.list_active_poputka_offers(limit=15, now_local=_bishkek_now_naive())
-    if not offers:
-        send_whatsapp(user.phone, config.POPUTKA_LIST_EMPTY)
+
+def _parse_poputka_client_date(raw: str) -> str | None:
+    """
+    Парсит дату/время для клиентского запроса попутки.
+    Возвращает читаемую строку или None если не распознал.
+    """
+    import re as _re
+    text = raw.lower().strip()
+
+    today_words = {"бүгүн", "bugün", "сегодня", "today"}
+    tomorrow_words = {"эртең", "erten", "завтра", "tomorrow"}
+
+    # Попробуем вычленить время HH:MM из строки
+    time_match = _re.search(r'(\d{1,2}):(\d{2})', text)
+    time_str = ""
+    if time_match:
+        h, m = int(time_match.group(1)), int(time_match.group(2))
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            time_str = f" {h:02d}:{m:02d}"
+
+    # Удаляем время из текста для проверки даты
+    text_no_time = _re.sub(r'\d{1,2}:\d{2}', '', text).strip()
+
+    if any(w in text_no_time for w in today_words):
+        return f"Бүгүн{time_str}"
+    if any(w in text_no_time for w in tomorrow_words):
+        return f"Эртең{time_str}"
+
+    # DD.MM или DD/MM
+    date_match = _re.search(r'(\d{1,2})[./](\d{1,2})', text_no_time)
+    if date_match:
+        d, m = date_match.group(1), date_match.group(2)
+        return f"{d}.{m}{time_str}"
+
+    # Просто время (предполагаем сегодня)
+    if time_str:
+        return f"Бүгүн{time_str}"
+
+    # Если написано хоть что-то (произвольная дата)
+    stripped = text_no_time.strip()
+    if len(stripped) >= 3:
+        return stripped.capitalize() + time_str
+
+    return None
+
+
+def handle_poputka_client_dest(user: User, message: str) -> tuple:
+    """Клиент указал направление — спросить дату."""
+    dest = message.strip()
+    if len(dest) < 2:
+        send_whatsapp(user.phone, "⚠️ Кайда барарыңызды жазыңыз. Мисалы: *Ош*")
+        return jsonify({"status": "ok"}), 200
+    user.set_temp_data('poputka_dest', dest)
+    user.set_state(config.STATE_POPUTKA_CLIENT_DATE)
+    send_whatsapp(user.phone, config.POPUTKA_CLIENT_DATE_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_poputka_client_date(user: User, message: str) -> tuple:
+    """Клиент указал дату — спросить количество мест."""
+    date_text = _parse_poputka_client_date(message)
+    if not date_text:
+        send_whatsapp(user.phone, config.POPUTKA_CLIENT_DATE_PROMPT)
+        return jsonify({"status": "ok"}), 200
+    user.set_temp_data('poputka_date', date_text)
+    user.set_state(config.STATE_POPUTKA_CLIENT_SEATS)
+    send_whatsapp(user.phone, config.POPUTKA_CLIENT_SEATS_PROMPT)
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_poputka_client_seats(user: User, message: str, db) -> tuple:
+    """Клиент указал количество мест — показать подтверждение."""
+    raw = message.strip()
+    if not raw.isdigit() or not (1 <= int(raw) <= 20):
+        send_whatsapp(user.phone, "⚠️ Санды туура жазыңыз (1–20). Мисалы: *2*")
         return jsonify({"status": "ok"}), 200
 
-    lines = [config.POPUTKA_LIST_HEADER]
-    for idx, offer in enumerate(offers, start=1):
-        departure_time = offer.get("departure_time")
-        departure_text = departure_time.strftime("%H:%M") if hasattr(departure_time, "strftime") else str(departure_time)
-        phone = format_phone((offer.get("driver_phone") or "").strip()) if offer.get("driver_phone") else "—"
-        seats = offer.get("seats_available")
-        seats_text = str(seats) if seats is not None else "—"
-        route = f"{offer.get('from_address', '')} → {offer.get('to_address', '')}"
-        lines.append(
-            f"*{idx}.*\n"
-            f"📍 Маршрут: {route}\n"
-            f"👥 Орун: {seats_text}\n"
-            f"🕒 Чыгуу: {departure_text}\n"
-            f"📞 Телефон: {phone}"
-        )
+    seats = int(raw)
+    dest = user.get_temp_data('poputka_dest', '')
+    date_text = user.get_temp_data('poputka_date', '')
+    user.set_temp_data('poputka_seats', seats)
+    user.set_state(config.STATE_CONFIRM_ORDER)
 
-    send_whatsapp(user.phone, "\n\n".join(lines))
+    confirm_msg = config.POPUTKA_CLIENT_CONFIRM.format(
+        destination=dest,
+        date_text=date_text,
+        seats=seats,
+    )
+    _send_confirm_with_buttons(user.phone, confirm_msg)
     return jsonify({"status": "ok"}), 200
+
+
+def _dispatch_poputka_to_group(user: User, db) -> None:
+    """Создать заказ попутки и отправить в Telegram-группу."""
+    dest = user.get_temp_data('poputka_dest', '')
+    date_text = user.get_temp_data('poputka_date', '')
+    seats = user.get_temp_data('poputka_seats', 1)
+
+    details = f"Багыт: {dest}\nКачан: {date_text}\nКиши: {seats}"
+    order_id = db.create_order(
+        client_phone=user.phone,
+        service_type=config.SERVICE_POPUTKA,
+        address=dest,
+        details=details,
+    )
+    if not order_id:
+        send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
+        return
+
+    group_msg = config.POPUTKA_GROUP_MSG.format(
+        order_id=order_id,
+        destination=dest,
+        date_text=date_text,
+        seats=seats,
+    )
+    buttons = [{"text": f"🚘 Заказды алуу ({config.POPUTKA_COMMISSION} сом)", "callback": f"poputka_accept_{order_id}"}]
+    dispatch_telegram_group_notification(
+        config.GROUP_POPUTKA_ID,
+        group_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_POPUTKA,
+        timeout_seconds=FLOW_STALE_TTL_MINUTES.get(config.SERVICE_POPUTKA, 240) * 60,
+    )
+    send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)
 
 
 def handle_med_eje_menu(user: User, message: str, db) -> tuple:
@@ -1993,12 +2106,20 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         elif user.current_state == config.STATE_CONFIRM_ORDER:
             return handle_confirm_order(user, incoming_msg, db)
         
+        # Попутка (клиент)
+        elif user.current_state == config.STATE_POPUTKA_CLIENT_DEST:
+            return handle_poputka_client_dest(user, incoming_msg)
+        elif user.current_state == config.STATE_POPUTKA_CLIENT_DATE:
+            return handle_poputka_client_date(user, incoming_msg)
+        elif user.current_state == config.STATE_POPUTKA_CLIENT_SEATS:
+            return handle_poputka_client_seats(user, incoming_msg, db)
+
         # Кафе
         elif user.current_state == config.STATE_CAFE_ORDER:
             return handle_cafe_order_details(user, incoming_msg, db)
         elif user.current_state == config.STATE_CAFE_ADDRESS:
             return handle_cafe_address(user, incoming_msg, db)
-        
+
         # Магазин
         elif user.current_state == config.STATE_SHOP_LIST:
             return handle_shop_list(user, incoming_msg, db)
@@ -2311,7 +2432,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 
     # === ПОПУТКА ===
     elif intent == "poputka":
-        return _send_poputka_list(user, db)
+        return _start_poputka_client_flow(user)
 
     # === САНТЕХНИКА ===
     elif intent == "plumbing":
@@ -2393,6 +2514,11 @@ def handle_confirm_order(user: User, message: str, db) -> tuple:
             return _submit_porter_order(user, db)
         elif service_type == config.SERVICE_ANT:
             return _submit_ant_order(user, db)
+        elif service_type == config.SERVICE_POPUTKA:
+            _dispatch_poputka_to_group(user, db)
+            user.set_state(config.STATE_IDLE)
+            user.clear_temp_data()
+            return jsonify({"status": "ok"}), 200
         else:
             # Неизвестный тип — сбрасываем
             user.set_state(config.STATE_IDLE)

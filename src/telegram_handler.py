@@ -214,6 +214,10 @@ def handle_callback_query(callback_query: dict) -> tuple:
         elif data.startswith("cafe_self_done_"):
             return handle_cafe_self_delivery_done(data, user_id, user_name, db)
         
+        # === ПОПУТКА ===
+        elif data.startswith("poputka_accept_"):
+            return handle_poputka_accept(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
+
         # === АПТЕКА ===
         elif data.startswith("pharm_bid_"):
             return handle_pharmacy_bid(data, user_id, user_name, chat_id, message_id, db)
@@ -2476,6 +2480,101 @@ def _handle_poputka_time(user_id: str, text: str, db) -> tuple:
         )
     )
     return jsonify({"status": "ok"}), 200
+
+
+# =============================================================================
+# ПОПУТКА — ПРИНЯТИЕ КЛИЕНТСКОГО ЗАПРОСА
+# =============================================================================
+
+def handle_poputka_accept(data: str, user_id: str, user_name: str,
+                          chat_id: str, message_id: int, db,
+                          callback_query_id: str = None) -> tuple:
+    """Водитель принимает клиентский запрос попутки."""
+    try:
+        order_id = data.split("_")[2]
+
+        def _reply(text: str = None) -> None:
+            _answer_callback(callback_query_id, text)
+
+        order = db.get_order(order_id)
+        if not order:
+            send_telegram_private(user_id, "❌ Заказ табылган жок.")
+            _reply()
+            return jsonify({"status": "ok"}), 200
+
+        if order.get('status') in (config.ORDER_STATUS_ACCEPTED, config.ORDER_STATUS_COMPLETED, config.ORDER_STATUS_CANCELLED):
+            send_telegram_private(user_id, "❌ Бул заказды башка айдоочу алып кетти.")
+            _reply()
+            return jsonify({"status": "ok"}), 200
+
+        # Проверка баланса водителя
+        commission = config.POPUTKA_COMMISSION
+        balance = db.get_driver_balance(user_id)
+        if balance < commission:
+            send_telegram_private(
+                user_id,
+                f"❌ *Балансыңыз жетишсиз.*\n\n"
+                f"💰 Комиссия: *{commission} сом*\n"
+                f"💳 Сиздин баланс: *{balance:.0f} сом*\n\n"
+                f"Балансты толтуруп, кайра аракет кылыңыз."
+            )
+            _reply()
+            return jsonify({"status": "ok"}), 200
+
+        # Списываем комиссию
+        db.update_driver_balance(user_id, -commission, reason=f"Поputka order {order_id} commission")
+
+        # Обновляем заказ
+        db.update_order_status(order_id, config.ORDER_STATUS_ACCEPTED, provider_id=user_id)
+
+        # Получаем профиль водителя
+        driver = db.get_driver(user_id)
+        driver_name = (driver.get('name') or user_name or "Айдоочу").strip() if driver else user_name
+        driver_phone = (driver.get('phone') or "—").strip() if driver else "—"
+        car_model = (driver.get('car_model') or "").strip() if driver else ""
+        plate = (driver.get('plate') or "").strip() if driver else ""
+        car_info = f"{car_model} {plate}".strip() or "—"
+        new_balance = balance - commission
+
+        # Уведомляем водителя
+        send_telegram_private(
+            user_id,
+            f"✅ *Заказ #{order_id} алынды!*\n\n"
+            f"📞 Кардар номери: {_format_phone_for_whatsapp(order.get('client_phone', '—'))}\n"
+            f"📍 Багыт: {order.get('address', '—')}\n"
+            f"📋 {order.get('details', '')}\n\n"
+            f"💰 Балансыңыздан {commission} сом алынды. Учурдагы баланс: *{new_balance:.0f} сом*"
+        )
+
+        # Обновляем сообщение в группе
+        edit_telegram_message(
+            chat_id, message_id,
+            f"🚘 *ПОПУТКА #{order_id} — АЛЫНДЫ* ✅\n\n"
+            f"👤 Айдоочу: {driver_name}",
+            buttons=[]
+        )
+
+        # Уведомляем клиента через WhatsApp
+        client_msg = config.POPUTKA_CLIENT_DRIVER_FOUND.format(
+            driver_name=driver_name,
+            driver_phone=_format_phone_for_whatsapp(driver_phone),
+            car_info=car_info,
+        )
+        send_whatsapp(order.get('client_phone', ''), client_msg)
+
+        # Закрываем таймер аукциона
+        timer = db.get_latest_auction_timer(order_id, config.SERVICE_POPUTKA)
+        if timer:
+            db.mark_auction_processed(timer['id'])
+
+        db.log_transaction("POPUTKA_ACCEPTED", user_id, order_id)
+        _reply()
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        logger.exception("Error handling poputka accept")
+        send_telegram_private(user_id, "❌ Ката кетти. Кайра аракет кылыңыз.")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # =============================================================================
