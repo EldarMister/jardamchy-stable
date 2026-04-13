@@ -1399,7 +1399,7 @@ def _is_med_eje_request(message: str) -> bool:
     )
 
 
-def _show_med_eje_menu(user: User):
+def _show_med_eje_menu(user: User, db=None):
     _reset_unknown_fallback(user)
     user.clear_temp_data()
     user.set_state(config.STATE_MED_EJE_MENU)
@@ -1413,6 +1413,44 @@ def _show_med_eje_menu(user: User):
         include_cancel=False,
     )
     return jsonify({"status": "ok"}), 200
+
+
+def _show_master_contacts(user: User, db) -> tuple:
+    """Отправить список мастеров из БД."""
+    _reset_unknown_fallback(user)
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    try:
+        masters = db.list_masters(active_only=True)
+    except Exception:
+        masters = []
+    if masters:
+        lines = ["🔧 *Мастер чакыруу*\n\nТөмөнкү мастерлерге түздөн-түз чалсаңыз болот:\n"]
+        for m in masters:
+            lines.append(f"📞 *{m['name']}:* {m['phone']}")
+        msg = "\n".join(lines)
+    else:
+        msg = config.MASTER_MESSAGE
+    send_whatsapp(user.phone, msg)
+    return jsonify({"status": "ok"}), 200
+
+
+def _get_med_eje_phones_msg(db) -> str:
+    """Получить сообщение с контактами Мед Эже из БД."""
+    try:
+        contacts = db.list_med_eje_contacts(active_only=True)
+    except Exception:
+        contacts = []
+    if contacts:
+        lines = ["🩺 *Мед Эже*\n"]
+        for i, c in enumerate(contacts, 1):
+            lines.append(f"📞 *{i}. {c['name']}:* {c['phone']}")
+        return "\n".join(lines)
+    # fallback к env переменным
+    return config.MED_EJE_PHONE_MESSAGE.format(
+        phone_1=format_phone(config.MED_EJE_PHONE),
+        phone_2=format_phone(config.MED_EJE_PHONE_2),
+    )
 
 
 def _send_specialist_request(user: User, client_message: str, service_name: str):
@@ -1573,13 +1611,7 @@ def handle_med_eje_menu(user: User, message: str, db) -> tuple:
     if normalized in {"керек", "нужно", "надо", "need"}:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
-        send_whatsapp(
-            user.phone,
-            config.MED_EJE_PHONE_MESSAGE.format(
-                phone_1=format_phone(config.MED_EJE_PHONE),
-                phone_2=format_phone(config.MED_EJE_PHONE_2),
-            ),
-        )
+        send_whatsapp(user.phone, _get_med_eje_phones_msg(db))
         return jsonify({"status": "ok"}), 200
 
     if normalized in {"артка", "назад", "back", "меню"}:
@@ -2228,7 +2260,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "7": "med_eje",
         "8": "computer",
         "9": "poputka",
-        "10": "plumbing",
+        "10": "master",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -2247,6 +2279,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "пк": "computer", "принтер": "computer", "интернет": "computer",
         "попутка": "poputka", "попутчик": "poputka", "попутка керек": "poputka",
         "сантехника": "plumbing", "сантехник": "plumbing", "сантех": "plumbing",
+        "мастер": "master", "мастер чакыруу": "master", "мастерди чакыр": "master",
+        "мастер кызматы": "master", "устачы": "master",
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
@@ -2271,7 +2305,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -2433,6 +2467,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === ПОПУТКА ===
     elif intent == "poputka":
         return _start_poputka_client_flow(user)
+
+    # === МАСТЕР ЧАКЫРУУ ===
+    elif intent == "master":
+        return _show_master_contacts(user, db)
 
     # === САНТЕХНИКА ===
     elif intent == "plumbing":
@@ -3519,13 +3557,7 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
         if button_response == MED_EJE_NEED_BUTTON_ID:
             user.set_state(config.STATE_IDLE)
             user.clear_temp_data()
-            send_whatsapp(
-                user.phone,
-                config.MED_EJE_PHONE_MESSAGE.format(
-                    phone_1=format_phone(config.MED_EJE_PHONE),
-                    phone_2=format_phone(config.MED_EJE_PHONE_2),
-                ),
-            )
+            send_whatsapp(user.phone, _get_med_eje_phones_msg(db))
             return jsonify({"status": "ok"}), 200
 
         if button_response == MED_EJE_BACK_BUTTON_ID:

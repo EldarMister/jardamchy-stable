@@ -610,6 +610,53 @@ class Database:
                         END IF;
                     END $$;
                 """)
+
+                # Таблица мастеров (Мастер чакыруу)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS masters (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        phone VARCHAR(30) NOT NULL,
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Таблица контактов Мед Эже
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS med_eje_contacts (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        phone VARCHAR(30) NOT NULL,
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Начальные данные: 15 мастеров (если таблица пустая)
+                cur.execute("SELECT COUNT(*) FROM masters")
+                if cur.fetchone()[0] == 0:
+                    for i in range(1, 16):
+                        cur.execute(
+                            "INSERT INTO masters (name, phone, sort_order) VALUES (%s, %s, %s)",
+                            (f"Мастер {i}", "0777 777 888", i)
+                        )
+
+                # Начальные данные: 2 контакта Мед Эже (если таблица пустая)
+                cur.execute("SELECT COUNT(*) FROM med_eje_contacts")
+                if cur.fetchone()[0] == 0:
+                    import os as _os
+                    cur.execute(
+                        "INSERT INTO med_eje_contacts (name, phone, sort_order) VALUES (%s, %s, %s)",
+                        ("Мед Эже 1", _os.getenv("MED_EJE_PHONE", "0 224 223 623"), 1)
+                    )
+                    cur.execute(
+                        "INSERT INTO med_eje_contacts (name, phone, sort_order) VALUES (%s, %s, %s)",
+                        ("Мед Эже 2", _os.getenv("MED_EJE_PHONE_2", "0702 521 073"), 2)
+                    )
+
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -1588,9 +1635,83 @@ class Database:
             return [dict(row) for row in cur.fetchall()]
     
     # ==========================================================================
+    # MASTERS METHODS
+    # ==========================================================================
+
+    def list_masters(self, active_only: bool = False) -> List[Dict]:
+        with self.get_cursor() as cur:
+            if active_only:
+                cur.execute("SELECT * FROM masters WHERE is_active = TRUE ORDER BY sort_order, id")
+            else:
+                cur.execute("SELECT * FROM masters ORDER BY sort_order, id")
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_master(self, name: str, phone: str) -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM masters"
+            )
+            sort_order = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO masters (name, phone, sort_order) VALUES (%s, %s, %s) RETURNING *",
+                (name.strip(), phone.strip(), sort_order)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_master(self, master_id: int, name: str, phone: str) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE masters SET name = %s, phone = %s WHERE id = %s",
+                (name.strip(), phone.strip(), master_id)
+            )
+            return cur.rowcount > 0
+
+    def delete_master(self, master_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM masters WHERE id = %s", (master_id,))
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # MED EJE CONTACTS METHODS
+    # ==========================================================================
+
+    def list_med_eje_contacts(self, active_only: bool = False) -> List[Dict]:
+        with self.get_cursor() as cur:
+            if active_only:
+                cur.execute("SELECT * FROM med_eje_contacts WHERE is_active = TRUE ORDER BY sort_order, id")
+            else:
+                cur.execute("SELECT * FROM med_eje_contacts ORDER BY sort_order, id")
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_med_eje_contact(self, name: str, phone: str) -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM med_eje_contacts")
+            sort_order = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO med_eje_contacts (name, phone, sort_order) VALUES (%s, %s, %s) RETURNING *",
+                (name.strip(), phone.strip(), sort_order)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_med_eje_contact(self, contact_id: int, name: str, phone: str) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE med_eje_contacts SET name = %s, phone = %s WHERE id = %s",
+                (name.strip(), phone.strip(), contact_id)
+            )
+            return cur.rowcount > 0
+
+    def delete_med_eje_contact(self, contact_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM med_eje_contacts WHERE id = %s", (contact_id,))
+            return cur.rowcount > 0
+
+    # ==========================================================================
     # PHARMACY METHODS
     # ==========================================================================
-    
+
     def get_pharmacy(self, telegram_id: str) -> Optional[Dict]:
         """Получить информацию об аптеке"""
         with self.get_cursor() as cur:

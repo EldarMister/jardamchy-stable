@@ -88,6 +88,8 @@ const sectionTitles = {
     drivers: '🚖 Водители',
     cafes: '🍔 Кафе',
     pharmacies: '💊 Аптеки',
+    masters: '🔧 Мастера',
+    'med-eje': '🩺 Мед Эже',
     shoppers: '🛒 Закупщики',
     stats: '📈 Статистика',
     transactions: '💰 Транзакции',
@@ -134,6 +136,8 @@ function loadSectionData(section) {
         case 'drivers': loadDrivers(); break;
         case 'cafes': loadCafes(); break;
         case 'pharmacies': loadPharmacies(); break;
+        case 'masters': loadMasters(); break;
+        case 'med-eje': loadMedEje(); break;
         case 'shoppers': loadShoppers(); break;
         case 'stats': loadStats(); break;
         case 'transactions': loadTransactions(); break;
@@ -2104,5 +2108,157 @@ async function sendChatMessage() {
         toast('Сообщение отправлено', 'success');
     } catch (err) {
         toast('Ошибка отправки: ' + err.message, 'error');
+    }
+}
+
+// ============================================================================
+// MASTERS
+// ============================================================================
+
+async function loadMasters() {
+    try {
+        const data = await api('/masters');
+        const body = document.getElementById('masters-body');
+        if (!data.masters || data.masters.length === 0) {
+            body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:40px;">Нет мастеров</td></tr>';
+            return;
+        }
+        body.innerHTML = data.masters.map((m, idx) => `
+            <tr>
+                <td>${idx + 1}</td>
+                <td>${esc(m.name)}</td>
+                <td>${esc(m.phone)}</td>
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-ghost btn-sm" onclick="showEditMasterModal(${m.id}, '${esc(m.name)}', '${esc(m.phone)}')">✏️</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteMaster(${m.id})">🗑️</button>
+                    </div>
+                </td>
+            </tr>`).join('');
+    } catch (err) {
+        toast('Ошибка загрузки мастеров', 'error');
+    }
+}
+
+function showAddMasterModal() {
+    document.getElementById('master-modal-title').textContent = '➕ Добавить мастера';
+    document.getElementById('master-id').value = '';
+    document.getElementById('master-name').value = '';
+    document.getElementById('master-phone').value = '';
+    openModal('modal-master');
+}
+
+function showEditMasterModal(id, name, phone) {
+    document.getElementById('master-modal-title').textContent = '✏️ Редактировать мастера';
+    document.getElementById('master-id').value = id;
+    document.getElementById('master-name').value = name;
+    document.getElementById('master-phone').value = phone;
+    openModal('modal-master');
+}
+
+async function submitMaster() {
+    const id = document.getElementById('master-id').value;
+    const name = document.getElementById('master-name').value.trim();
+    const phone = document.getElementById('master-phone').value.trim();
+    if (!name || !phone) { toast('Заполните имя и телефон', 'error'); return; }
+    try {
+        if (id) {
+            await api(`/masters/${id}`, { method: 'PUT', body: JSON.stringify({ name, phone }) });
+            toast('Мастер обновлён', 'success');
+        } else {
+            await api('/masters', { method: 'POST', body: JSON.stringify({ name, phone }) });
+            toast('Мастер добавлен', 'success');
+        }
+        closeModal('modal-master');
+        loadMasters();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteMaster(id) {
+    if (!confirm('Удалить мастера?')) return;
+    try {
+        await api(`/masters/${id}`, { method: 'DELETE' });
+        toast('Мастер удалён', 'success');
+        loadMasters();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+// ============================================================================
+// MED EJE CONTACTS
+// ============================================================================
+
+async function loadMedEje() {
+    try {
+        const data = await api('/med-eje');
+        const body = document.getElementById('med-eje-body');
+        if (!data.contacts || data.contacts.length === 0) {
+            body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:40px;">Нет контактов</td></tr>';
+            return;
+        }
+        body.innerHTML = data.contacts.map((c, idx) => `
+            <tr>
+                <td>${idx + 1}</td>
+                <td>${esc(c.name)}</td>
+                <td>${esc(c.phone)}</td>
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-ghost btn-sm" onclick="showEditMedEjeModal(${c.id}, '${esc(c.name)}', '${esc(c.phone)}')">✏️</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteMedEje(${c.id})">🗑️</button>
+                    </div>
+                </td>
+            </tr>`).join('');
+    } catch (err) {
+        toast('Ошибка загрузки контактов', 'error');
+    }
+}
+
+function showAddMedEjeModal() {
+    document.getElementById('med-eje-modal-title').textContent = '➕ Добавить контакт';
+    document.getElementById('med-eje-id').value = '';
+    document.getElementById('med-eje-name').value = '';
+    document.getElementById('med-eje-phone').value = '';
+    openModal('modal-med-eje');
+}
+
+function showEditMedEjeModal(id, name, phone) {
+    document.getElementById('med-eje-modal-title').textContent = '✏️ Редактировать контакт';
+    document.getElementById('med-eje-id').value = id;
+    document.getElementById('med-eje-name').value = name;
+    document.getElementById('med-eje-phone').value = phone;
+    openModal('modal-med-eje');
+}
+
+async function submitMedEje() {
+    const id = document.getElementById('med-eje-id').value;
+    const name = document.getElementById('med-eje-name').value.trim();
+    const phone = document.getElementById('med-eje-phone').value.trim();
+    if (!name || !phone) { toast('Заполните имя и телефон', 'error'); return; }
+    try {
+        if (id) {
+            await api(`/med-eje/${id}`, { method: 'PUT', body: JSON.stringify({ name, phone }) });
+            toast('Контакт обновлён', 'success');
+        } else {
+            await api('/med-eje', { method: 'POST', body: JSON.stringify({ name, phone }) });
+            toast('Контакт добавлен', 'success');
+        }
+        closeModal('modal-med-eje');
+        loadMedEje();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteMedEje(id) {
+    if (!confirm('Удалить контакт?')) return;
+    try {
+        await api(`/med-eje/${id}`, { method: 'DELETE' });
+        toast('Контакт удалён', 'success');
+        loadMedEje();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
     }
 }

@@ -47,6 +47,12 @@
                 <div class="nav-item" data-section="pharmacies">
                     <span class="nav-item-icon">💊</span> Аптеки
                 </div>
+                <div class="nav-item" data-section="masters">
+                    <span class="nav-item-icon">🔧</span> Мастера
+                </div>
+                <div class="nav-item" data-section="med-eje">
+                    <span class="nav-item-icon">🩺</span> Мед Эже
+                </div>
                 <!-- Закупщики отключены -->
                 <!-- <div class="nav-item" data-section="shoppers">
                     <span class="nav-item-icon">🛒</span> Закупщики
@@ -643,6 +649,56 @@
                 </div>
 
                 <!-- ====== ORDER MANAGEMENT ====== -->
+                <!-- ====== MASTERS ====== -->
+                <div class="section" id="sec-masters">
+                    <div class="filters-bar">
+                        <button class="btn btn-primary btn-sm" onclick="showAddMasterModal()">➕ Добавить мастера</button>
+                    </div>
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">🔧 Мастера</div>
+                        </div>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Имя</th>
+                                        <th>Телефон</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="masters-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====== MED EJE ====== -->
+                <div class="section" id="sec-med-eje">
+                    <div class="filters-bar">
+                        <button class="btn btn-primary btn-sm" onclick="showAddMedEjeModal()">➕ Добавить контакт</button>
+                    </div>
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">🩺 Мед Эже — контакты</div>
+                        </div>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Имя</th>
+                                        <th>Телефон</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="med-eje-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="section" id="sec-order-mgmt">
                     <div class="table-container">
                         <div class="table-header">
@@ -1128,6 +1184,56 @@
             <div class="modal-footer">
                 <button class="btn btn-primary" onclick="submitBulkImport()">Импортировать</button>
                 <button class="btn btn-ghost" onclick="closeModal('modal-bulk-import')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Master Modal -->
+    <div class="modal-overlay" id="modal-master">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="master-modal-title">➕ Добавить мастера</h3>
+                <button class="modal-close" onclick="closeModal('modal-master')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="master-id">
+                <div class="form-group">
+                    <label>Имя *</label>
+                    <input type="text" id="master-name" placeholder="Мастер 1">
+                </div>
+                <div class="form-group">
+                    <label>Телефон *</label>
+                    <input type="text" id="master-phone" placeholder="0777 123 456">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-master')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitMaster()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Med Eje Modal -->
+    <div class="modal-overlay" id="modal-med-eje">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="med-eje-modal-title">➕ Добавить контакт</h3>
+                <button class="modal-close" onclick="closeModal('modal-med-eje')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="med-eje-id">
+                <div class="form-group">
+                    <label>Имя *</label>
+                    <input type="text" id="med-eje-name" placeholder="Мед Эже 1">
+                </div>
+                <div class="form-group">
+                    <label>Телефон *</label>
+                    <input type="text" id="med-eje-phone" placeholder="0777 123 456">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-med-eje')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitMedEje()">Сохранить</button>
             </div>
         </div>
     </div>
