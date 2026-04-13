@@ -2165,6 +2165,57 @@ async function _loadMedEjeTable() {
     }
 }
 
+// --- Masters CRUD ---
+
+function showAddMasterModal() {
+    document.getElementById('master-modal-title').textContent = '➕ Добавить мастера';
+    document.getElementById('master-id').value = '';
+    document.getElementById('master-name').value = '';
+    document.getElementById('master-phone').value = '';
+    openModal('modal-master');
+}
+
+function showEditMasterModal(id, name, phone) {
+    document.getElementById('master-modal-title').textContent = '✏️ Редактировать мастера';
+    document.getElementById('master-id').value = id;
+    document.getElementById('master-name').value = name;
+    document.getElementById('master-phone').value = phone;
+    openModal('modal-master');
+}
+
+async function submitMaster() {
+    const id = document.getElementById('master-id').value;
+    const name = document.getElementById('master-name').value.trim();
+    const phone = document.getElementById('master-phone').value.trim();
+    if (!name || !phone) { toast('Заполните имя и телефон', 'error'); return; }
+    try {
+        if (id) {
+            await api(`/masters/${id}`, { method: 'PUT', body: JSON.stringify({ name, phone }) });
+            toast('Мастер обновлён', 'success');
+        } else {
+            await api('/masters', { method: 'POST', body: JSON.stringify({ name, phone }) });
+            toast('Мастер добавлен', 'success');
+        }
+        closeModal('modal-master');
+        loadContacts();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteMaster(id) {
+    if (!confirm('Удалить мастера?')) return;
+    try {
+        await api(`/masters/${id}`, { method: 'DELETE' });
+        toast('Мастер удалён', 'success');
+        loadContacts();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+// --- Med Eje CRUD ---
+
 function showAddMedEjeModal() {
     document.getElementById('med-eje-modal-title').textContent = '➕ Добавить контакт';
     document.getElementById('med-eje-id').value = '';
@@ -2195,7 +2246,7 @@ async function submitMedEje() {
             toast('Контакт добавлен', 'success');
         }
         closeModal('modal-med-eje');
-        loadMedEje();
+        loadContacts();
     } catch (err) {
         toast('Ошибка: ' + err.message, 'error');
     }
@@ -2206,7 +2257,7 @@ async function deleteMedEje(id) {
     try {
         await api(`/med-eje/${id}`, { method: 'DELETE' });
         toast('Контакт удалён', 'success');
-        loadMedEje();
+        loadContacts();
     } catch (err) {
         toast('Ошибка удаления', 'error');
     }
