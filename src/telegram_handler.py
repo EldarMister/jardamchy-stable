@@ -2067,6 +2067,8 @@ def handle_telegram_message(message: dict) -> tuple:
 
         if contact and contact.get('phone_number'):
             session = db.get_telegram_session(user_id)
+            if session and session.get('state') == config.STATE_DRIVER_REG_PHONE:
+                return _handle_reg_phone(user_id, contact.get('phone_number', ''), db)
             if session and session.get('state') == config.STATE_POPUTKA_PHONE:
                 return _handle_poputka_phone(user_id, contact.get('phone_number', ''), db)
             if session and session.get('state') == config.STATE_CAFE_OWN_COURIER_PHONE:
@@ -2226,7 +2228,7 @@ def _handle_register_command(user_id: str, command: str, db) -> tuple:
     profile_incomplete = False
     if driver:
         _dtype = driver.get('driver_type', 'taxi')
-        if _dtype in ('ant', 'scooter'):
+        if _dtype in ('ant', 'scooter', 'raznarabochi'):
             profile_incomplete = not (driver.get('name') and driver.get('phone'))
         else:
             profile_incomplete = not (driver.get('name') and driver.get('phone') and driver.get('car_model') and driver.get('plate'))
@@ -2251,18 +2253,20 @@ def _handle_register_command(user_id: str, command: str, db) -> tuple:
     # Начинаем регистрацию/обновление
     db.create_telegram_session(user_id)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_TYPE)
-    
+
     # DEBUG LOG - проверяем что сессия создана
     session = db.get_telegram_session(user_id)
     temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
     logger.info(f"[DRIVER_REG_START] tid={user_id} session created. state={session.get('state') if session else 'NO_SESSION'} temp_data={temp_data_log}")
-    
+
     # Отправляем с кнопками
     buttons = [
         {"text": "🚖 Такси", "callback": "dreg_type_taxi"},
         {"text": "🚛 Портер", "callback": "dreg_type_porter"},
         {"text": "🐜 Муравей", "callback": "dreg_type_ant"},
         {"text": "🛵 Скутер", "callback": "dreg_type_scooter"},
+        {"text": "👷 Разнарабочий", "callback": "dreg_type_raznarabochi"},
+        {"text": "🚘 Попутка", "callback": "dreg_type_poputka"},
     ]
 
     send_telegram_private(user_id, config.DRIVER_REG_TYPE_PROMPT, buttons)
@@ -2511,6 +2515,39 @@ def handle_poputka_accept(data: str, user_id: str, user_name: str,
             return jsonify({"status": "ok"}), 200
 
         # Проверка баланса водителя
+        expires_at = order.get('expires_at')
+        if expires_at and expires_at <= _bishkek_now_naive():
+            try:
+                if hasattr(db, "cancel_order_if_status"):
+                    db.cancel_order_if_status(
+                        order_id,
+                        [
+                            config.ORDER_STATUS_PENDING,
+                            config.ORDER_STATUS_AUCTION,
+                            config.ORDER_STATUS_URGENT,
+                        ],
+                    )
+                else:
+                    db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
+            except Exception:
+                logger.exception("Failed to cancel expired poputka order %s", order_id)
+
+            try:
+                timer = db.get_latest_auction_timer(order_id, config.SERVICE_POPUTKA)
+                if timer:
+                    db.mark_auction_processed(timer['id'])
+            except Exception:
+                logger.exception("Failed to close expired poputka timer %s", order_id)
+
+            try:
+                delete_telegram_message(chat_id, message_id)
+            except Exception:
+                edit_telegram_message(chat_id, message_id, "вЏ± РЈР±Р°РєС‹С‚С‹ С‚РёС€РёРї РєР°Р»РіР°РЅРґС‹РєС‚Р°РЅ, Р·Р°РєР°Р· Р¶Р°Р±С‹Р»РґС‹.", buttons=[])
+
+            send_telegram_private(user_id, "вќЊ Р—Р°РєР°Р·РґС‹РЅ СѓР±Р°РєС‹С‚С‹ С‚РёС€РёРї РєР°Р»РґС‹. РђР» СѓР¶Рµ Р¶Р°Р±С‹Р»РґС‹.")
+            _reply()
+            return jsonify({"status": "ok"}), 200
+
         commission = config.POPUTKA_COMMISSION
         balance = db.get_driver_balance(user_id)
         if balance < commission:
@@ -2690,11 +2727,15 @@ def _handle_reg_type(user_id: str, text: str, db) -> tuple:
         driver_type = 'ant'
     elif text_lower in ('4', 'скутер', 'scooter', '🛵'):
         driver_type = 'scooter'
+    elif text_lower in ('5', 'разнарабочий', 'raznarabochi', '👷'):
+        driver_type = 'raznarabochi'
+    elif text_lower in ('6', 'попутка', 'poputka', '🚘'):
+        driver_type = 'poputka'
 
     if not driver_type:
         send_telegram_private(
             user_id,
-            "⚠️ Выберите тип: *1* (Такси), *2* (Портер), *3* (Муравей) или *4* (Скутер)"
+            "⚠️ Выберите тип: *1* (Такси), *2* (Портер), *3* (Муравей), *4* (Скутер), *5* (Разнарабочий) или *6* (Попутка)"
         )
         return jsonify({"status": "ok"}), 200
     
@@ -2723,20 +2764,25 @@ def _handle_reg_name(user_id: str, text: str, db) -> tuple:
     
     db.set_telegram_session_data(user_id, 'name', text)
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_PHONE)
-    
+
     # DEBUG LOG
     session = db.get_telegram_session(user_id)
     temp_data_log = (session.get('temp_data') or {}) if session else 'NO_SESSION'
     logger.info(f"[DRIVER_REG_STEP2] tid={user_id} name='{text}' temp_data={temp_data_log}")
-    
-    send_telegram_private(user_id, config.DRIVER_REG_PHONE_PROMPT)
+
+    # Отправляем запрос телефона с кнопкой "Поделиться контактом"
+    send_telegram_contact_request(
+        user_id,
+        config.DRIVER_REG_PHONE_PROMPT + "\n\nИли нажмите кнопку ниже, чтобы поделиться контактом:",
+        "📱 Поделиться номером телефона"
+    )
     return jsonify({"status": "ok"}), 200
 
 
 def _handle_reg_phone(user_id: str, text: str, db) -> tuple:
     """Шаг 3: Ввод телефона"""
-    
-    # Очищаем номер
+
+    # Очищаем номер (работает и для номеров из контакта, и для ручного ввода)
     phone = text.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
     
     if len(phone) < 9 or not phone.isdigit():
@@ -2799,7 +2845,28 @@ def _handle_reg_phone(user_id: str, text: str, db) -> tuple:
         ]
         send_telegram_private(user_id, msg, buttons)
         return jsonify({"status": "ok"}), 200
-    
+
+    if driver_type == 'raznarabochi':
+        # Разнарабочие регистрируются БЕЗ марки авто и госномера
+        db.set_telegram_session_data(user_id, 'car_model', '—')
+        db.set_telegram_session_data(user_id, 'plate', '—')
+        db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_CONFIRM)
+
+        session = db.get_telegram_session(user_id)
+        temp_data = (session.get('temp_data') or {}) if session else {}
+        logger.info(f"[DRIVER_REG_STEP3_RAZNARABOCHI] tid={user_id} temp_data={temp_data}")
+
+        msg = config.DRIVER_REG_CONFIRM_TEMPLATE_RAZNARABOCHI.format(
+            name=temp_data.get('name', ''),
+            phone=phone
+        )
+        buttons = [
+            {"text": "✅ Да, всё верно", "callback": "dreg_confirm_yes"},
+            {"text": "❌ Нет, начать заново", "callback": "dreg_confirm_no"}
+        ]
+        send_telegram_private(user_id, msg, buttons)
+        return jsonify({"status": "ok"}), 200
+
     db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_CAR)
     
     if driver_type == 'porter':
@@ -2889,15 +2956,18 @@ def _handle_reg_confirm(user_id: str, text: str, db) -> tuple:
         # Начинаем заново
         db.create_telegram_session(user_id)
         db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_TYPE)
-        
+
         buttons = [
             {"text": "🚖 Такси", "callback": "dreg_type_taxi"},
             {"text": "🚛 Портер", "callback": "dreg_type_porter"},
-            {"text": "🐜 Муравей", "callback": "dreg_type_ant"}
+            {"text": "🐜 Муравей", "callback": "dreg_type_ant"},
+            {"text": "🛵 Скутер", "callback": "dreg_type_scooter"},
+            {"text": "👷 Разнарабочий", "callback": "dreg_type_raznarabochi"},
+            {"text": "🚘 Попутка", "callback": "dreg_type_poputka"},
         ]
-        
+
         send_telegram_private(
-            user_id, 
+            user_id,
             "🔄 Начинаем заново.\n\n" + config.DRIVER_REG_TYPE_PROMPT,
             buttons
         )
@@ -2976,6 +3046,10 @@ def _save_driver_registration(user_id: str, db) -> tuple:
         group_link = "https://t.me/+l88NvbDcTWg1MThi"  # ЗАМЕНИТЬ НА РЕАЛЬНУЮ ССЫЛКУ ПОРТЕР
     elif driver_type == 'ant':
         group_link = "https://t.me/+l88NvbDcTWg1MThi"  # ЗАМЕНИТЬ НА РЕАЛЬНУЮ ССЫЛКУ МУРАВЕЙ
+    elif driver_type == 'raznarabochi':
+        group_link = "https://t.me/jardamchy_go"  # ЗАМЕНИТЬ НА РЕАЛЬНУЮ ССЫЛКУ РАЗНАРАБОЧИЙ
+    elif driver_type == 'poputka':
+        group_link = "https://t.me/jardamchy_go"  # ЗАМЕНИТЬ НА РЕАЛЬНУЮ ССЫЛКУ ПОПУТКА
         
     msg = config.DRIVER_REG_SUCCESS.format(
         driver_type=config.DRIVER_TYPES.get(driver_type, driver_type),
@@ -3010,8 +3084,8 @@ def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> t
         # dreg_type_taxi, dreg_type_porter, dreg_type_ant
         if data.startswith("dreg_type_"):
             driver_type = data.replace("dreg_type_", "")
-            
-            if driver_type not in ('taxi', 'porter', 'ant', 'scooter'):
+
+            if driver_type not in ('taxi', 'porter', 'ant', 'scooter', 'raznarabochi', 'poputka'):
                 return jsonify({"status": "ok"}), 200
             
             db.set_telegram_session_data(user_id, 'driver_type', driver_type)
@@ -3042,12 +3116,14 @@ def handle_driver_reg_callback(data: str, user_id: str, user_name: str, db) -> t
         elif data == "dreg_confirm_no":
             db.create_telegram_session(user_id)
             db.set_telegram_session_state(user_id, config.STATE_DRIVER_REG_TYPE)
-            
+
             buttons = [
                 {"text": "🚖 Такси", "callback": "dreg_type_taxi"},
                 {"text": "🚛 Портер", "callback": "dreg_type_porter"},
                 {"text": "🐜 Муравей", "callback": "dreg_type_ant"},
                 {"text": "🛵 Скутер", "callback": "dreg_type_scooter"},
+                {"text": "👷 Разнарабочий", "callback": "dreg_type_raznarabochi"},
+                {"text": "🚘 Попутка", "callback": "dreg_type_poputka"},
             ]
 
             send_telegram_private(

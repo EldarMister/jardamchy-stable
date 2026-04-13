@@ -60,6 +60,7 @@ RAZNARABOCHI_COMMISSION = 10  # Комиссия 10 сом за одного р�
 CAFE_AUCTION_TIMEOUT = 120  # 2 минуты на аукцион кафе
 PHARMACY_RESPONSE_TIMEOUT = 300  # 5 минут на ответ аптеки
 TAXI_RESPONSE_TIMEOUT = 300  # 5 минут на ответ таксиста
+RAZNARABOCHI_RESPONSE_TIMEOUT = 1800  # 30 минут на ответ разнорабочих
 TAXI_ACCEPTED_TIMEOUT = 1800  # 30 минут — удалить сообщение забранного заказа
 PENDING_ORDER_AUTO_CANCEL_TIMEOUT = 1200  # 20 минут — автоотмена если никто не забрал
 IN_DELIVERY_AUTO_COMPLETE_TIMEOUT = 1800  # 30 минут — автозавершение после взятия водителем
@@ -221,6 +222,7 @@ STATE_POPUTKA_CLIENT_SEATS = "POPUTKA_CLIENT_SEATS"
 # Разнарабочий (WhatsApp)
 STATE_RAZNARABOCHI_DESC = "RAZNARABOCHI_DESC"
 STATE_RAZNARABOCHI_COUNT = "RAZNARABOCHI_COUNT"
+STATE_RAZNARABOCHI_REORDER_CHOICE = "RAZNARABOCHI_REORDER_CHOICE"
 
 # Веб-заказ
 STATE_WEB_ORDER_ADDRESS = "WEB_ORDER_ADDRESS"         # Ввод адреса для веб-заказа
@@ -805,7 +807,9 @@ DRIVER_TYPES = {
     "taxi": "🚖 Такси",
     "porter": "🚛 Портер (грузоперевозки)",
     "ant": "🐜 Муравей (мелкие грузы)",
-    "scooter": "🛵 Скутер (доставка)"
+    "scooter": "🛵 Скутер (доставка)",
+    "raznarabochi": "👷 Разнарабочий",
+    "poputka": "🚘 Попутка"
 }
 
 # Типы водителей, которым разрешено брать только заказы доставки (не такси)
@@ -835,6 +839,8 @@ DRIVER_REG_TYPE_PROMPT = """📝 *Регистрация водителя*
 🚛 *2.* Портер (грузоперевозки)
 🐜 *3.* Муравей (мелкие грузы)
 🛵 *4.* Скутер (доставка еды/товаров)
+👷 *5.* Разнарабочий (подработка)
+🚘 *6.* Попутка (межгород/попутчики)
 
 Напишите номер или нажмите кнопку."""
 
@@ -887,6 +893,14 @@ DRIVER_REG_CONFIRM_TEMPLATE_SCOOTER = """✅ *Проверьте данные:*
 📞 *Телефон:* {phone}
 
 ⚠️ Скутеры могут брать только заказы доставки еды и товаров из магазина.
+
+Всё верно? Напишите *Да* или *Нет*."""
+
+DRIVER_REG_CONFIRM_TEMPLATE_RAZNARABOCHI = """✅ *Проверьте данные:*
+
+👷 *Тип:* Разнарабочий
+👤 *ФИО:* {name}
+📞 *Телефон:* {phone}
 
 Всё верно? Напишите *Да* или *Нет*."""
 

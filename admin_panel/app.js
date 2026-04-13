@@ -34,6 +34,9 @@ const DRIVER_TYPE_LABELS = {
     taxi: { icon: '🚖', name: 'Такси' },
     porter: { icon: '🚛', name: 'Портер' },
     ant: { icon: '🐜', name: 'Муравей' },
+    scooter: { icon: '🛵', name: 'Скутер' },
+    raznarabochi: { icon: '👷', name: 'Разнарабочий' },
+    poputka: { icon: '🚘', name: 'Попутка' },
 };
 
 const SERVICE_COLORS = {
