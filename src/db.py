@@ -636,8 +636,8 @@ class Database:
                 """)
 
                 # Начальные данные: 15 мастеров (если таблица пустая)
-                cur.execute("SELECT COUNT(*) FROM masters")
-                if cur.fetchone()[0] == 0:
+                cur.execute("SELECT COUNT(*) as cnt FROM masters")
+                if (cur.fetchone() or {}).get('cnt', 0) == 0:
                     for i in range(1, 16):
                         cur.execute(
                             "INSERT INTO masters (name, phone, sort_order) VALUES (%s, %s, %s)",
@@ -645,9 +645,9 @@ class Database:
                         )
 
                 # Начальные данные: 2 контакта Мед Эже (если таблица пустая)
-                cur.execute("SELECT COUNT(*) FROM med_eje_contacts")
-                if cur.fetchone()[0] == 0:
-                    import os as _os
+                import os as _os
+                cur.execute("SELECT COUNT(*) as cnt FROM med_eje_contacts")
+                if (cur.fetchone() or {}).get('cnt', 0) == 0:
                     cur.execute(
                         "INSERT INTO med_eje_contacts (name, phone, sort_order) VALUES (%s, %s, %s)",
                         ("Мед Эже 1", _os.getenv("MED_EJE_PHONE", "0 224 223 623"), 1)
