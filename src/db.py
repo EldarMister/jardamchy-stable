@@ -657,6 +657,19 @@ class Database:
                         ("Мед Эже 2", _os.getenv("MED_EJE_PHONE_2", "0702 521 073"), 2)
                     )
 
+                # Таблица справочника (Маалымдама)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS directory_entries (
+                        id SERIAL PRIMARY KEY,
+                        emoji VARCHAR(10) DEFAULT '',
+                        name VARCHAR(200) NOT NULL,
+                        phone VARCHAR(50) NOT NULL,
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -1706,6 +1719,42 @@ class Database:
     def delete_med_eje_contact(self, contact_id: int) -> bool:
         with self.get_cursor(commit=True) as cur:
             cur.execute("DELETE FROM med_eje_contacts WHERE id = %s", (contact_id,))
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # DIRECTORY (МААЛЫМДАМА) METHODS
+    # ==========================================================================
+
+    def list_directory(self, active_only: bool = True) -> List[Dict]:
+        with self.get_cursor() as cur:
+            if active_only:
+                cur.execute("SELECT * FROM directory_entries WHERE is_active = TRUE ORDER BY sort_order, id LIMIT 20")
+            else:
+                cur.execute("SELECT * FROM directory_entries ORDER BY sort_order, id LIMIT 20")
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_directory_entry(self, name: str, phone: str, emoji: str = '') -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM directory_entries")
+            sort_order = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO directory_entries (emoji, name, phone, sort_order) VALUES (%s, %s, %s, %s) RETURNING *",
+                (emoji.strip(), name.strip(), phone.strip(), sort_order)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_directory_entry(self, entry_id: int, name: str, phone: str, emoji: str = '') -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE directory_entries SET name = %s, phone = %s, emoji = %s WHERE id = %s",
+                (name.strip(), phone.strip(), emoji.strip(), entry_id)
+            )
+            return cur.rowcount > 0
+
+    def delete_directory_entry(self, entry_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM directory_entries WHERE id = %s", (entry_id,))
             return cur.rowcount > 0
 
     # ==========================================================================

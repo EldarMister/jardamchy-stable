@@ -698,6 +698,70 @@ def delete_med_eje(contact_id):
 
 
 # =============================================================================
+# DIRECTORY (МААЛЫМДАМА) MANAGEMENT
+# =============================================================================
+
+@admin_bp.route('/directory', methods=['GET'])
+def list_directory():
+    try:
+        db = get_db()
+        entries = db.list_directory(active_only=False)
+        return jsonify({"entries": _clean_rows(entries)}), 200
+    except Exception as e:
+        logger.exception("Error listing directory")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/directory', methods=['POST'])
+def add_directory_entry():
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        phone = (data.get('phone') or '').strip()
+        emoji = (data.get('emoji') or '').strip()
+        if not name or not phone:
+            return jsonify({"error": "name and phone are required"}), 400
+        db = get_db()
+        entry = db.add_directory_entry(name, phone, emoji)
+        return jsonify({"ok": True, "entry": _clean_rows([entry])[0]}), 201
+    except Exception as e:
+        logger.exception("Error adding directory entry")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/directory/<int:entry_id>', methods=['PUT'])
+def update_directory_entry(entry_id):
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        phone = (data.get('phone') or '').strip()
+        emoji = (data.get('emoji') or '').strip()
+        if not name or not phone:
+            return jsonify({"error": "name and phone are required"}), 400
+        db = get_db()
+        ok = db.update_directory_entry(entry_id, name, phone, emoji)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error updating directory entry")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/directory/<int:entry_id>', methods=['DELETE'])
+def delete_directory_entry(entry_id):
+    try:
+        db = get_db()
+        ok = db.delete_directory_entry(entry_id)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error deleting directory entry")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
 # ORDERS MANAGEMENT
 # =============================================================================
 

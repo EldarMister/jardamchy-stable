@@ -1438,6 +1438,29 @@ def _show_master_contacts(user: User, db) -> tuple:
     return jsonify({"status": "ok"}), 200
 
 
+def _show_directory(user: User, db) -> tuple:
+    """Показать справочник уюмдар (маалымдама) из БД."""
+    _reset_unknown_fallback(user)
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    try:
+        entries = db.list_directory(active_only=True)
+    except Exception:
+        entries = []
+    if not entries:
+        send_whatsapp(user.phone, config.DIRECTORY_EMPTY_MSG)
+        return jsonify({"status": "ok"}), 200
+    lines = [config.DIRECTORY_HEADER]
+    for i, e in enumerate(entries, 1):
+        emoji = e.get('emoji', '').strip()
+        name = e.get('name', '').strip()
+        phone = e.get('phone', '').strip()
+        prefix = f"{emoji} " if emoji else ""
+        lines.append(f"*{i}.* {prefix}{name}: {phone}")
+    send_whatsapp(user.phone, "\n".join(lines))
+    return jsonify({"status": "ok"}), 200
+
+
 def _get_med_eje_phones_msg(db) -> str:
     """Получить сообщение с контактами Мед Эже из БД."""
     try:
@@ -2325,6 +2348,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "9": "poputka",
         "10": "master",
         "11": "raznarabochi",
+        "12": "directory",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -2348,6 +2372,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "разнарабочий": "raznarabochi", "разнорабочий": "raznarabochi",
         "рабочий": "raznarabochi", "рабочие": "raznarabochi",
         "жумушчу": "raznarabochi", "жумушчулар": "raznarabochi",
+        "маалымдама": "directory", "справочник": "directory",
+        "номерлер": "directory", "уюмдар": "directory",
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
@@ -2372,7 +2398,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -2542,6 +2568,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === РАЗНАРАБОЧИЙ ===
     elif intent == "raznarabochi":
         return _start_raznarabochi_flow(user)
+
+    # === МААЛЫМДАМА (СПРАВОЧНИК) ===
+    elif intent == "directory":
+        return _show_directory(user, db)
 
     # === САНТЕХНИКА ===
     elif intent == "plumbing":

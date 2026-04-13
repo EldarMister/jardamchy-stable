@@ -50,6 +50,9 @@
                 <div class="nav-item" data-section="contacts">
                     <span class="nav-item-icon">📋</span> Контакты
                 </div>
+                <div class="nav-item" data-section="directory">
+                    <span class="nav-item-icon">📖</span> Маалымдама
+                </div>
                 <!-- Закупщики отключены -->
                 <!-- <div class="nav-item" data-section="shoppers">
                     <span class="nav-item-icon">🛒</span> Закупщики
@@ -681,6 +684,32 @@
                     </div>
                 </div>
 
+                <!-- ====== DIRECTORY (МААЛЫМДАМА) ====== -->
+                <div class="section" id="sec-directory">
+                    <div class="filters-bar">
+                        <button class="btn btn-primary btn-sm" onclick="showAddDirectoryModal()">➕ Добавить запись</button>
+                    </div>
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">📖 Маалымдама — Справочник номеров</div>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Эмодзи</th>
+                                    <th>Название</th>
+                                    <th>Телефон</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="directory-body">
+                                <tr><td colspan="5" style="text-align:center;padding:20px;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div class="section" id="sec-order-mgmt">
                     <div class="table-container">
                         <div class="table-header">
@@ -1216,6 +1245,35 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="closeModal('modal-med-eje')">Отмена</button>
                 <button class="btn btn-primary" onclick="submitMedEje()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Directory Modal -->
+    <div class="modal-overlay" id="modal-directory">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="directory-modal-title">➕ Добавить запись</h3>
+                <button class="modal-close" onclick="closeModal('modal-directory')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="directory-id">
+                <div class="form-group">
+                    <label>Эмодзи</label>
+                    <input type="text" id="directory-emoji" placeholder="🚒" maxlength="4">
+                </div>
+                <div class="form-group">
+                    <label>Название организации *</label>
+                    <input type="text" id="directory-name" placeholder="Өрт өчүрүү кызматы (101)">
+                </div>
+                <div class="form-group">
+                    <label>Телефон *</label>
+                    <input type="text" id="directory-phone" placeholder="03744 XXXXX">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-directory')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitDirectory()">Сохранить</button>
             </div>
         </div>
     </div>

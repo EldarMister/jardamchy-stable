@@ -89,6 +89,7 @@ const sectionTitles = {
     cafes: '🍔 Кафе',
     pharmacies: '💊 Аптеки',
     contacts: '📋 Контакты',
+    directory: '📖 Маалымдама',
     shoppers: '🛒 Закупщики',
     stats: '📈 Статистика',
     transactions: '💰 Транзакции',
@@ -136,6 +137,7 @@ function loadSectionData(section) {
         case 'cafes': loadCafes(); break;
         case 'pharmacies': loadPharmacies(); break;
         case 'contacts': loadContacts(); break;
+        case 'directory': loadDirectory(); break;
         case 'shoppers': loadShoppers(); break;
         case 'stats': loadStats(); break;
         case 'transactions': loadTransactions(); break;
@@ -2258,6 +2260,85 @@ async function deleteMedEje(id) {
         await api(`/med-eje/${id}`, { method: 'DELETE' });
         toast('Контакт удалён', 'success');
         loadContacts();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+// ============================================================================
+// DIRECTORY (МААЛЫМДАМА) — CRUD
+// ============================================================================
+
+async function loadDirectory() {
+    const body = document.getElementById('directory-body');
+    try {
+        const data = await api('/directory');
+        const rows = data.entries || [];
+        body.innerHTML = rows.length === 0
+            ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">Записей нет. Добавьте первую запись.</td></tr>'
+            : rows.map((e, idx) => `
+            <tr>
+                <td>${idx + 1}</td>
+                <td style="font-size:1.4em;">${esc(e.emoji || '')}</td>
+                <td>${esc(e.name)}</td>
+                <td>${esc(e.phone)}</td>
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-ghost btn-sm" onclick="showEditDirectoryModal(${e.id},'${esc(e.emoji || '')}','${esc(e.name)}','${esc(e.phone)}')">✏️</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteDirectory(${e.id})">🗑️</button>
+                    </div>
+                </td>
+            </tr>`).join('');
+    } catch (err) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</td></tr>';
+    }
+}
+
+function showAddDirectoryModal() {
+    document.getElementById('directory-modal-title').textContent = '➕ Добавить запись';
+    document.getElementById('directory-id').value = '';
+    document.getElementById('directory-emoji').value = '';
+    document.getElementById('directory-name').value = '';
+    document.getElementById('directory-phone').value = '';
+    openModal('modal-directory');
+}
+
+function showEditDirectoryModal(id, emoji, name, phone) {
+    document.getElementById('directory-modal-title').textContent = '✏️ Редактировать запись';
+    document.getElementById('directory-id').value = id;
+    document.getElementById('directory-emoji').value = emoji;
+    document.getElementById('directory-name').value = name;
+    document.getElementById('directory-phone').value = phone;
+    openModal('modal-directory');
+}
+
+async function submitDirectory() {
+    const id = document.getElementById('directory-id').value;
+    const emoji = document.getElementById('directory-emoji').value.trim();
+    const name = document.getElementById('directory-name').value.trim();
+    const phone = document.getElementById('directory-phone').value.trim();
+    if (!name || !phone) { toast('Заполните название и телефон', 'error'); return; }
+    try {
+        if (id) {
+            await api(`/directory/${id}`, { method: 'PUT', body: JSON.stringify({ emoji, name, phone }) });
+            toast('Запись обновлена', 'success');
+        } else {
+            await api('/directory', { method: 'POST', body: JSON.stringify({ emoji, name, phone }) });
+            toast('Запись добавлена', 'success');
+        }
+        closeModal('modal-directory');
+        loadDirectory();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteDirectory(id) {
+    if (!confirm('Удалить запись?')) return;
+    try {
+        await api(`/directory/${id}`, { method: 'DELETE' });
+        toast('Запись удалена', 'success');
+        loadDirectory();
     } catch (err) {
         toast('Ошибка удаления', 'error');
     }
