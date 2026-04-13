@@ -37,7 +37,7 @@ UNKNOWN_FALLBACK_RESET_MINUTES = 15
 UNKNOWN_FALLBACK_COOLDOWN_MINUTES = 10
 
 UNKNOWN_FALLBACK_SERVICES_HINT = (
-    "такси / тамак / курьер / магазин / аптека / портер / желмаян"
+    "такси / тамак / курьер / магазин / портер / желмаян"
 )
 UNKNOWN_FALLBACK_FINAL_MESSAGE = (
     "Мен Жардамчы GO ботумун. Заказ берүү үчүн жазыңыз: "
@@ -67,7 +67,7 @@ _GREETING_TEXT_VARIANTS = {
 }
 _SERVICE_TEXT_HINTS = (
     "такси", "кафе", "еда", "доставка", "курьер", "груз", "портер", "муравей",
-    "аптека", "магазин", "меню", "order", "заказ"
+    "магазин", "меню", "order", "заказ"
 )
 _SHORT_VOICE_OK = {
     "да", "нет", "жок", "ок", "ok", "yes", "no", "1", "2"
@@ -149,7 +149,6 @@ FLOW_BY_STATE = {
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
-    config.STATE_PHARMACY_REORDER_CHOICE: "ожидаю ответ по повтору заказа аптеки",
     config.STATE_MED_EJE_MENU: "ожидаю выбор по медпомощи",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
@@ -164,6 +163,14 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_POPUTKA_CLIENT_SEATS: "ожидаю количество мест",
     config.STATE_RAZNARABOCHI_DESC: "ожидаю описание работы",
     config.STATE_RAZNARABOCHI_COUNT: "ожидаю количество рабочих",
+}
+
+DISABLED_PHARMACY_STATES = {
+    config.STATE_PHARMACY_WAIT_RX,
+    config.STATE_PHARMACY_WAIT_PRICE,
+    config.STATE_PHARMACY_CONFIRM,
+    config.STATE_PHARMACY_ADDRESS,
+    config.STATE_PHARMACY_REORDER_CHOICE,
 }
 
 FLOW_SWITCH_IGNORE_MESSAGES = {
@@ -1221,7 +1228,7 @@ def _handle_unknown_fallback(user: User, message: str, ai_reply: str = "") -> tu
     reply = (ai_reply or "").strip()
     if not reply:
         reply = (
-            "Мен Жардамчы GO ботумун. Такси, тамак, магазин, аптека, портер жана желмаян боюнча жардам берем.\n"
+            "Мен Жардамчы GO ботумун. Такси, тамак, магазин, портер жана желмаян боюнча жардам берем.\n"
             "Заказ берүү үчүн кызматты жана деталдарды жазыңыз: эмне керек, кайдан алуу жана кайда жеткирүү.\n"
             "Мисал: Такси, Базардан Мкр 3 чейин."
         )
@@ -1412,6 +1419,41 @@ def _is_med_eje_request(message: str) -> bool:
             "укол",
         )
     )
+
+
+_PHARMACY_REMOVED_KEYWORDS = frozenset({
+    "аптека",
+    "дарыкана",
+    "дары",
+    "дарылар",
+    "лекарство",
+    "лекарства",
+})
+
+
+def _looks_like_disabled_pharmacy_request(message: str) -> bool:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+
+    tokens = normalized.split()
+    if any(token in _PHARMACY_REMOVED_KEYWORDS for token in tokens):
+        return True
+
+    return any(token.startswith(("лекарств", "таблет")) for token in tokens)
+
+
+def _show_pharmacy_removed_notice(user: User, db=None) -> tuple:
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    _reset_unknown_fallback(user)
+    send_whatsapp(user.phone, f"{config.PHARMACY_DISABLED_MESSAGE}\n\n{config.WELCOME_MESSAGE}")
+    if db is not None:
+        try:
+            db.update_last_welcome(user.phone)
+        except Exception:
+            pass
+    return jsonify({"status": "ok"}), 200
 
 
 def _show_med_eje_menu(user: User, db=None):
@@ -2385,6 +2427,9 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         if _is_med_eje_request(incoming_msg):
             return _show_med_eje_menu(user)
 
+        if user.current_state in DISABLED_PHARMACY_STATES:
+            return _show_pharmacy_removed_notice(user, db)
+
         if user.current_state != config.STATE_IDLE:
             _reset_unknown_fallback(user)
             switch_prompt_result = _maybe_prompt_flow_switch(user, incoming_msg)
@@ -2393,9 +2438,6 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
 
         if user.current_state == config.STATE_TAXI_REORDER_CHOICE:
             return handle_taxi_reorder_choice(user, incoming_msg, db)
-
-        if user.current_state == config.STATE_PHARMACY_REORDER_CHOICE:
-            return handle_pharmacy_reorder_choice(user, incoming_msg, db)
 
         if user.current_state == config.STATE_IDLE:
             return handle_idle_state(user, incoming_msg, db)
@@ -2432,13 +2474,6 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         elif user.current_state == config.STATE_SHOP_ADDRESS:
             return handle_shop_address(user, incoming_msg, db)
         
-        # Аптека
-        elif user.current_state == config.STATE_PHARMACY_WAIT_RX:
-            return handle_pharmacy_request(user, incoming_msg, media_url, db)
-        elif user.current_state == config.STATE_PHARMACY_ADDRESS:
-            return handle_pharmacy_delivery_address(user, incoming_msg, db)
-        
-        # Такси
         elif user.current_state == config.STATE_TAXI_ROUTE:
             return handle_taxi_route(
                 user,
@@ -2527,16 +2562,15 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     service_intent_by_number = {
         "1": "cafe",
         "2": "shop",
-        "3": "pharmacy",
-        "4": "taxi",
-        "5": "porter",
-        "6": "ant",
-        "7": "med_eje",
-        "8": "computer",
-        "9": "poputka",
-        "10": "master",
-        "11": "raznarabochi",
-        "12": "directory",
+        "3": "taxi",
+        "4": "porter",
+        "5": "ant",
+        "6": "med_eje",
+        "7": "computer",
+        "8": "poputka",
+        "9": "master",
+        "10": "raznarabochi",
+        "11": "directory",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -2547,7 +2581,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "такси": "taxi", "taxi": "taxi", "машина": "taxi", "унаа": "taxi", "унаа керек": "taxi",
         "кафе": "cafe", "ашкана": "cafe", "тамак": "cafe", "еда": "cafe",
         "магазин": "shop", "дүкөн": "shop", "дукон": "shop", "продукты": "shop",
-        "аптека": "pharmacy", "дарыкана": "pharmacy",
         "портер": "porter", "жүк": "porter",
         "муравей": "ant", "желмаян": "ant",
         "мед эже": "med_eje", "медеже": "med_eje", "мед помощь": "med_eje", "доктор": "med_eje",
@@ -2576,6 +2609,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
     elif _is_med_eje_request(message):
         nlu_result = {"intent": "med_eje", **_EMPTY_NLU}
+    elif _looks_like_disabled_pharmacy_request(message):
+        return _show_pharmacy_removed_notice(user, db)
     elif any(k in msg_lower for k in menu_keywords):
         nlu_result = {"intent": "cafe", **_EMPTY_NLU}
     elif _looks_like_greeting(message):
@@ -2586,7 +2621,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "pharmacy", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -2656,24 +2691,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         
         return jsonify({"status": "ok"}), 200
     
-    # === АПТЕКА ===
-    elif intent == "pharmacy":
-        order_details = nlu_result.get("order_details")
-        user.set_temp_data('service_type', config.SERVICE_PHARMACY)
-
-        if order_details:
-            # ИИ извлёк название лекарства — сразу к подтверждению
-            user.set_temp_data('pharmacy_request', order_details)
-            user.set_state(config.STATE_CONFIRM_ORDER)
-            _send_confirm_with_buttons(user.phone, config.CONFIRM_PHARMACY.format(order_details=order_details))
-        else:
-            # Название неизвестно — попросить написать
-            user.set_state(config.STATE_PHARMACY_WAIT_RX)
-            send_whatsapp(user.phone, config.PHARMACY_PROMPT)
-
-        return jsonify({"status": "ok"}), 200
-    
-    # === ПОРТЕР ===
     elif intent == "porter":
         from_addr = _canonicalize_optional_address(nlu_result.get("from_address"))
         to_addr = _canonicalize_optional_address(nlu_result.get("to_address"))
@@ -2756,7 +2773,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === РАЗНАРАБОЧИЙ ===
     elif intent == "raznarabochi":
         normalized = _normalize_loose_text(message)
-        quick_only = {"11", "разнарабочий", "разнорабочий", "рабочий", "рабочие", "жумушчу", "жумушчулар"}
+        quick_only = {"10", "разнарабочий", "разнорабочий", "рабочий", "рабочие", "жумушчу", "жумушчулар"}
         if normalized in quick_only:
             return _start_raznarabochi_flow(user)
         _prime_raznarabochi_flow(user)
@@ -2819,7 +2836,7 @@ def _submit_confirmed_order(user: User, db, service_type: str) -> tuple:
     elif service_type == config.SERVICE_SHOP:
         return _submit_shop_order(user, db)
     elif service_type == config.SERVICE_PHARMACY:
-        return _submit_pharmacy_order(user, db)
+        return _show_pharmacy_removed_notice(user, db)
     elif service_type == config.SERVICE_PORTER:
         return _submit_porter_order(user, db)
     elif service_type == config.SERVICE_ANT:
@@ -2917,13 +2934,8 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         _send_confirm_with_buttons(user.phone, confirm_msg)
     
     elif service_type == config.SERVICE_PHARMACY:
-        if confirmation.get("corrected_details"):
-            user.set_temp_data('pharmacy_request', confirmation["corrected_details"])
-        
-        order_details = user.get_temp_data('pharmacy_request', '')
-        confirm_msg = config.CONFIRM_PHARMACY.format(order_details=order_details)
-        _send_confirm_with_buttons(user.phone, confirm_msg)
-    
+        return _show_pharmacy_removed_notice(user)
+
     elif service_type == config.SERVICE_PORTER:
         if confirmation.get("corrected_from"):
             user.set_temp_data('porter_from', _canonicalize_address_value(confirmation["corrected_from"]))
@@ -3841,7 +3853,6 @@ def handle_ant_route(user: User, message: str, db) -> tuple:
 
 def handle_button_response(user: User, button_response: str, db) -> tuple:
     """Обработка нажатия кнопок в WhatsApp"""
-    from client_confirm_handler import handle_pharmacy_client_confirm
 
     try:
         _reset_unknown_fallback(user)
@@ -3888,9 +3899,8 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
                 db.update_last_welcome(user.phone)
                 return jsonify({"status": "ok"}), 200
 
-        # Аптека: подтверждение
-        if user.current_state == config.STATE_PHARMACY_CONFIRM:
-            return handle_pharmacy_client_confirm(user, button_response, db)
+        if user.current_state in DISABLED_PHARMACY_STATES:
+            return _show_pharmacy_removed_notice(user, db)
 
         return jsonify({"status": "ok"}), 200
 

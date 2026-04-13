@@ -44,9 +44,6 @@
                 <div class="nav-item" data-section="menu">
                     <span class="nav-item-icon">🍽️</span> Меню
                 </div>
-                <div class="nav-item" data-section="pharmacies">
-                    <span class="nav-item-icon">💊</span> Аптеки
-                </div>
                 <div class="nav-item" data-section="contacts">
                     <span class="nav-item-icon">📋</span> Контакты
                 </div>
@@ -164,7 +161,6 @@
                                 <option value="cafe">🍔 Кафе</option>
                                 <option value="porter">🚛 Портер</option>
                                 <option value="ant">🐜 Муравей</option>
-                                <option value="pharmacy">💊 Аптека</option>
                                 <option value="shop">🛒 Магазин</option>
                             </select>
                         </div>
@@ -333,35 +329,6 @@
                     </div>
                 </div>
 
-                <!-- ====== PHARMACIES ====== -->
-                <div class="section" id="sec-pharmacies">
-                    <div class="filters-bar">
-                        <button class="btn btn-primary btn-sm" onclick="showAddPharmacyModal()">➕ Добавить
-                            аптеку</button>
-                    </div>
-                    <div class="table-container">
-                        <div class="table-header">
-                            <div class="table-title">💊 Аптеки</div>
-                        </div>
-                        <div class="table-wrapper">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Название</th>
-                                        <th>Telegram ID</th>
-                                        <th>Телефон</th>
-                                        <th>Адрес</th>
-                                        <th>Баланс</th>
-                                        <th>Статус</th>
-                                        <th>Действия</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pharmacies-body"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- ====== SHOPPERS (отключены) ====== -->
                 <div class="section" id="sec-shoppers" style="display:none !important;">
                     <div class="filters-bar">
@@ -486,9 +453,6 @@
                                     <label class="checkbox-label">
                                         <input type="checkbox" value="group_cafe"> 🍔 Кафе
                                     </label>
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" value="group_pharmacy"> 💊 Аптеки
-                                    </label>
                                     <!-- Магазины отключены -->
                                     <!-- <label class="checkbox-label">
                                         <input type="checkbox" value="group_shop"> 🛒 Магазины
@@ -502,9 +466,6 @@
                                     </label>
                                     <label class="checkbox-label">
                                         <input type="checkbox" value="cafes"> 🍔 Кафе
-                                    </label>
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" value="pharmacies"> 💊 Аптеки
                                     </label>
                                     <!-- Закупщики отключены -->
                                     <!-- <label class="checkbox-label">
@@ -588,7 +549,6 @@
                             <div class="kpi-card" style="padding:16px;">
                                 <div class="kpi-header"><span class="kpi-label">⏱️ Таймауты (секунды)</span></div>
                                 <div class="form-group"><label>Кафе: аукцион</label><input type="number" id="setting-input-cafe_auction_timeout" min="0" step="1"></div>
-                                <div class="form-group"><label>Аптека: ожидание ответа</label><input type="number" id="setting-input-pharmacy_response_timeout" min="0" step="1"></div>
                                 <div class="form-group"><label>Такси: ожидание водителя</label><input type="number" id="setting-input-taxi_response_timeout" min="0" step="1"></div>
                                 <div class="form-group"><label>Такси: очистка принятого</label><input type="number" id="setting-input-taxi_accepted_timeout" min="0" step="1"></div>
                                 <div class="form-group"><label>Автоотмена PENDING</label><input type="number" id="setting-input-pending_order_auto_cancel_timeout" min="0" step="1"></div>
@@ -1046,38 +1006,6 @@
         </div>
     </div>
 
-    <!-- Add Pharmacy Modal -->
-    <div class="modal-overlay" id="modal-add-pharmacy">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title">➕ Добавить аптеку</h3>
-                <button class="modal-close" onclick="closeModal('modal-add-pharmacy')">✕</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Telegram ID *</label>
-                    <input type="text" id="add-pharmacy-tg-id" placeholder="123456789">
-                </div>
-                <div class="form-group">
-                    <label>Название *</label>
-                    <input type="text" id="add-pharmacy-name" placeholder="Аптека Здоровье">
-                </div>
-                <div class="form-group">
-                    <label>Телефон</label>
-                    <input type="text" id="add-pharmacy-phone" placeholder="0555123456">
-                </div>
-                <div class="form-group">
-                    <label>Адрес</label>
-                    <input type="text" id="add-pharmacy-address" placeholder="ул. Манаса 10">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="closeModal('modal-add-pharmacy')">Отмена</button>
-                <button class="btn btn-primary" onclick="submitAddPharmacy()">Добавить</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Add Shopper Modal -->
     <div class="modal-overlay" id="modal-add-shopper">
         <div class="modal">
@@ -1132,7 +1060,6 @@
                     <select id="co-service" onchange="onCoServiceChange()">
                         <option value="taxi">🚖 Такси</option>
                         <option value="cafe">🍔 Кафе</option>
-                        <option value="pharmacy">💊 Аптека</option>
                     </select>
                 </div>
                 <div class="form-group">

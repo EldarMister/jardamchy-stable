@@ -69,6 +69,10 @@ def _clean_rows(rows):
     return [_clean_row(r) for r in rows]
 
 
+def _feature_removed_response(feature_name: str):
+    return jsonify({"error": f"{feature_name} feature removed"}), 410
+
+
 # =============================================================================
 # ADMIN PANEL STATIC FILES
 # =============================================================================
@@ -101,7 +105,6 @@ def get_dashboard():
         ant_commission = float(runtime["ant_commission"])
         taxi_commission = float(runtime["taxi_commission"])
         taxi_shop_commission = float(runtime["taxi_shop_commission"])
-        pharmacy_commission_percent = float(runtime["pharmacy_commission_percent"])
         taxi_turnover = 120  # Фиксированный оборот такси за заказ
 
         # --- Orders and earnings for selected periods ---
@@ -119,8 +122,8 @@ def get_dashboard():
                     COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
                         CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
                     ELSE 0 END), 0) as commission
-                FROM orders WHERE DATE(created_at) = CURRENT_DATE
-            """)
+                FROM orders WHERE service_type <> %s AND DATE(created_at) = CURRENT_DATE
+            """, (config.SERVICE_PHARMACY,))
             today = _clean_row(cur.fetchone())
 
             # Неделя
@@ -134,8 +137,8 @@ def get_dashboard():
                     COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
                         CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
                     ELSE 0 END), 0) as commission
-                FROM orders WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
-            """)
+                FROM orders WHERE service_type <> %s AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+            """, (config.SERVICE_PHARMACY,))
             week = _clean_row(cur.fetchone())
 
             # Месяц
@@ -149,8 +152,8 @@ def get_dashboard():
                     COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
                         CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
                     ELSE 0 END), 0) as commission
-                FROM orders WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
-            """)
+                FROM orders WHERE service_type <> %s AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+            """, (config.SERVICE_PHARMACY,))
             month = _clean_row(cur.fetchone())
 
             # Все время
@@ -164,8 +167,8 @@ def get_dashboard():
                     COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN
                         CASE WHEN service_type = 'taxi' THEN {taxi_commission} ELSE COALESCE(commission, 0) END
                     ELSE 0 END), 0) as commission
-                FROM orders
-            """)
+                FROM orders WHERE service_type <> %s
+            """, (config.SERVICE_PHARMACY,))
             all_time = _clean_row(cur.fetchone())
 
             # По типам услуг — за каждый период
@@ -174,7 +177,6 @@ def get_dashboard():
             #   porter: 20 сом фикс за заказ
             #   ant: 10 сом фикс за заказ
             #   taxi/shop: берём из колонки commission (или 10 сом фикс если 0)
-            #   pharmacy: 5% от price_total
             def _by_service_query(where_clause=""):
                 sql = f"""
                     SELECT
@@ -189,7 +191,6 @@ def get_dashboard():
                                     WHEN service_type = 'cafe' THEN price_total * ({cafe_commission_percent} / 100.0)
                                     WHEN service_type = 'porter' THEN {porter_commission}
                                     WHEN service_type = 'ant' THEN {ant_commission}
-                                    WHEN service_type = 'pharmacy' THEN price_total * ({pharmacy_commission_percent} / 100.0)
                                     WHEN service_type = 'taxi' THEN {taxi_commission}
                                     WHEN service_type = 'shop' THEN {taxi_shop_commission}
                                     ELSE COALESCE(commission, 0)
@@ -207,6 +208,10 @@ def get_dashboard():
             by_service_week = _by_service_query("WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'")
             by_service_month = _by_service_query("WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'")
             by_service_all = _by_service_query()
+            by_service_day = [row for row in by_service_day if row.get("service_type") != config.SERVICE_PHARMACY]
+            by_service_week = [row for row in by_service_week if row.get("service_type") != config.SERVICE_PHARMACY]
+            by_service_month = [row for row in by_service_month if row.get("service_type") != config.SERVICE_PHARMACY]
+            by_service_all = [row for row in by_service_all if row.get("service_type") != config.SERVICE_PHARMACY]
             by_service = by_service_all  # backward compat
 
             # Заказы по дням за последние 7 дней
@@ -234,8 +239,6 @@ def get_dashboard():
             cur.execute("SELECT COUNT(*) as count FROM users")
             users_count = cur.fetchone()['count']
 
-            cur.execute("SELECT COUNT(*) as count FROM pharmacies WHERE is_active = TRUE")
-            pharmacies_count = cur.fetchone()['count']
 
         return jsonify({
             "today": today,
@@ -252,7 +255,6 @@ def get_dashboard():
                 "drivers": drivers_count,
                 "cafes": cafes_count,
                 "users": users_count,
-                "pharmacies": pharmacies_count
             },
             "ramadan_mode": config.IS_RAMADAN
         }), 200
@@ -777,10 +779,10 @@ def list_orders():
         offset = request.args.get('offset', 0, type=int)
 
         with db.get_cursor() as cur:
-            query = "SELECT * FROM orders WHERE 1=1"
-            count_query = "SELECT COUNT(*) as total FROM orders WHERE 1=1"
-            params = []
-            count_params = []
+            query = "SELECT * FROM orders WHERE service_type <> %s"
+            count_query = "SELECT COUNT(*) as total FROM orders WHERE service_type <> %s"
+            params = [config.SERVICE_PHARMACY]
+            count_params = [config.SERVICE_PHARMACY]
 
             if status:
                 query += " AND status = %s"
@@ -867,6 +869,8 @@ def create_order_admin():
         details = body.get('details', '').strip()
         if not client_phone or not service_type or not details:
             return jsonify({"error": "client_phone, service_type, details обязательны"}), 400
+        if service_type == config.SERVICE_PHARMACY:
+            return _feature_removed_response("Pharmacy")
         order_id = db.create_order(
             client_phone=client_phone,
             service_type=service_type,
@@ -986,67 +990,19 @@ def admin_cafe_settings_put():
 @admin_bp.route('/pharmacies', methods=['GET'])
 def list_pharmacies():
     """Получить список аптек"""
-    try:
-        db = get_db()
-        with db.get_cursor() as cur:
-            cur.execute("SELECT * FROM pharmacies ORDER BY name")
-            pharmacies = _clean_rows([dict(row) for row in cur.fetchall()])
-
-        return jsonify({
-            "count": len(pharmacies),
-            "pharmacies": pharmacies
-        }), 200
-
-    except Exception as e:
-        logger.exception("Error listing pharmacies")
-        return jsonify({"error": str(e)}), 500
+    return _feature_removed_response("Pharmacy")
 
 
 @admin_bp.route('/pharmacies', methods=['POST'])
 def add_pharmacy():
     """Добавить новую аптеку"""
-    try:
-        data = request.get_json()
-        telegram_id = data.get('telegram_id')
-        name = data.get('name')
-        phone = data.get('phone', '')
-        address = data.get('address', '')
-
-        if not telegram_id or not name:
-            return jsonify({"error": "telegram_id and name are required"}), 400
-
-        db = get_db()
-        with db.get_cursor() as cur:
-            cur.execute("""
-                INSERT INTO pharmacies (telegram_id, name, phone, address, is_active, created_at)
-                VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP)
-                ON CONFLICT (telegram_id) DO UPDATE SET name = %s, phone = %s, address = %s, is_active = TRUE
-            """, (telegram_id, name, phone, address, name, phone, address))
-
-        send_telegram_private(telegram_id, f"✅ *{name}* добавлена в систему Жардамчы ГО!")
-
-        return jsonify({"success": True, "message": "Pharmacy added"}), 201
-
-    except Exception as e:
-        logger.exception("Error adding pharmacy")
-        return jsonify({"error": str(e)}), 500
+    return _feature_removed_response("Pharmacy")
 
 
 @admin_bp.route('/pharmacies/<telegram_id>', methods=['DELETE'])
 def remove_pharmacy(telegram_id):
     """Удалить аптеку"""
-    try:
-        db = get_db()
-        with db.get_cursor() as cur:
-            cur.execute("UPDATE pharmacies SET is_active = FALSE WHERE telegram_id = %s", (telegram_id,))
-            if cur.rowcount == 0:
-                return jsonify({"error": "Pharmacy not found"}), 404
-
-        return jsonify({"success": True, "message": "Pharmacy removed"}), 200
-
-    except Exception as e:
-        logger.exception("Error removing pharmacy")
-        return jsonify({"error": str(e)}), 500
+    return _feature_removed_response("Pharmacy")
 
 
 # =============================================================================
@@ -1182,9 +1138,6 @@ def broadcast_message():
         if 'cafes' in targets:
             recipient_ids.update(get_ids('cafes'))
             
-        if 'pharmacies' in targets:
-            recipient_ids.update(get_ids('pharmacies'))
-            
         if 'shoppers' in targets:
             recipient_ids.update(get_ids('shoppers'))
             
@@ -1203,9 +1156,6 @@ def broadcast_message():
             if config.GROUP_ANT_ID != config.GROUP_PORTER_ID or 'group_porter' not in targets:
                 group_ids.append(config.GROUP_ANT_ID)
                 
-        if 'group_pharmacy' in targets:
-            group_ids.append(config.GROUP_PHARMACY_ID)
-            
         if 'group_shop' in targets:
             group_ids.append(config.GROUP_SHOP_ID)
 
@@ -1259,7 +1209,7 @@ def get_statistics():
         db = get_db()
 
         daily_stats = db.get_daily_stats()
-        service_stats = db.get_service_stats(days=7)
+        service_stats = [row for row in db.get_service_stats(days=7) if row.get("service_type") != config.SERVICE_PHARMACY]
 
         return jsonify({
             "today": _clean_row(daily_stats),
@@ -1303,15 +1253,23 @@ def get_settings():
         db = get_db()
         runtime = db.get_runtime_settings()
 
+        public_runtime = {
+            key: value for key, value in runtime.items()
+            if key not in {
+                "pharmacy_commission_percent",
+                "pharmacy_delivery_fee",
+                "pharmacy_response_timeout",
+                "taxi_pharmacy_commission",
+            }
+        }
         response = {
             "is_ramadan": config.IS_RAMADAN,
-            **runtime,
+            **public_runtime,
             # Legacy aliases for gradual UI rollout
             "cafe_commission": runtime["cafe_commission_percent"],
             "taxi_commission": runtime["taxi_commission"],
             "porter_commission": runtime["porter_commission"],
             "shopper_fee": runtime["shopper_service_fee"],
-            "pharmacy_delivery_fee": runtime["pharmacy_delivery_fee"],
         }
         return jsonify(response), 200
 

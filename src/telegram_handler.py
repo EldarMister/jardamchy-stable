@@ -222,13 +222,10 @@ def handle_callback_query(callback_query: dict) -> tuple:
         elif data.startswith("razna_accept_"):
             return handle_raznarabochi_accept(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
 
-        # === АПТЕКА ===
-        elif data.startswith("pharm_bid_"):
-            return handle_pharmacy_bid(data, user_id, user_name, chat_id, message_id, db)
-        elif data.startswith("pharm_price_"):
-            return handle_pharmacy_price_submit(data, user_id, user_name, db)
-        
-        # === ТАКСИ ===
+        # Pharmacy disabled
+        elif data.startswith("pharm_bid_") or data.startswith("pharm_price_"):
+            return _handle_removed_pharmacy_callback(user_id, callback_query_id)
+
         elif data.startswith("taxi_take_"):
             return handle_taxi_take(data, user_id, user_name, chat_id, message_id, db, callback_query_id)
         elif data.startswith("taxi_arrived_"):
@@ -765,6 +762,12 @@ def _handle_cafe_decline_reason(user_id: str, user_name: str, reason: str, db) -
 
 
 # =============================================================================
+def _handle_removed_pharmacy_callback(user_id: str, callback_query_id: str = None) -> tuple:
+    send_telegram_private(user_id, config.PHARMACY_DISABLED_MESSAGE)
+    _answer_callback(callback_query_id, "Аптека өчүрүлдү")
+    return jsonify({"status": "ok"}), 200
+
+
 # PHARMACY HANDLERS
 # =============================================================================
 
@@ -1662,15 +1665,16 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
             send_telegram_private(user_id, "❌ Этот заказ кафе доставляет своим курьером.")
             return jsonify({"status": "ok"}), 200
         service_type = order.get('service_type')
+        if service_type == config.SERVICE_PHARMACY:
+            send_telegram_private(user_id, config.PHARMACY_DISABLED_MESSAGE)
+            return jsonify({"status": "ok"}), 200
+
         commission = 0
         commission_msg = ""
         
         if service_type == config.SERVICE_SHOP:
             # Доставка из магазина - 10 сом с таксиста
             commission = _runtime_setting("taxi_shop_commission", config.TAXI_SHOP_COMMISSION)
-        elif service_type == config.SERVICE_PHARMACY:
-            # Доставка аптеки - 10 сом с таксиста
-            commission = _runtime_setting("taxi_pharmacy_commission", config.TAXI_PHARMACY_COMMISSION)
         
         # Получаем информацию о водителе
         driver = db.get_driver(user_id)
@@ -1776,12 +1780,6 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                         provider_name = shop.get('name', 'Магазин')
                         provider_address = shop.get('address', 'Адрес не указан')
 
-            elif service_type == config.SERVICE_PHARMACY:
-                pharmacy = db.get_pharmacy(provider_id)
-                if pharmacy:
-                    provider_name = pharmacy.get('name', 'Аптека')
-                    provider_address = pharmacy.get('address', 'Адрес не указан')
-                    provider_phone = pharmacy.get('phone', '')
 
         # Оплата и цена
         payment_method = config.PAYMENT_METHODS.get(order.get('payment_method'), 'Наличные')
@@ -2194,12 +2192,13 @@ def handle_telegram_message(message: dict) -> tuple:
                     pending_order_id = m.group(1).upper()
 
             if pending_order_id:
-                return _submit_pharmacy_price(pending_order_id, user_id, user_name, price, db)
+                db.set_telegram_session_data(user_id, "pending_pharmacy_order", None)
+                send_telegram_private(user_id, config.PHARMACY_DISABLED_MESSAGE)
+                return jsonify({"status": "ok"}), 200
 
             send_telegram_private(
                 user_id,
-                "❌ Не найден ожидающий заказ аптеки.\n"
-                "Нажмите кнопку «У нас есть (указать цену)» в группе и повторите."
+                config.PHARMACY_DISABLED_MESSAGE
             )
             return jsonify({"status": "ok"}), 200
         

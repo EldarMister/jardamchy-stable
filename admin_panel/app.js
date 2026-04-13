@@ -16,7 +16,6 @@ const SERVICE_LABELS = {
     cafe: { icon: '🍔', name: 'Кафе', cls: 'cafe' },
     porter: { icon: '🚛', name: 'Портер', cls: 'porter' },
     ant: { icon: '🐜', name: 'Муравей', cls: 'ant' },
-    pharmacy: { icon: '💊', name: 'Аптека', cls: 'pharmacy' },
     shop: { icon: '🛒', name: 'Магазин', cls: 'shop' },
 };
 
@@ -42,7 +41,6 @@ const SERVICE_COLORS = {
     cafe: '#ff7675',
     porter: '#e17055',
     ant: '#00cec9',
-    pharmacy: '#74b9ff',
     shop: '#00b894',
 };
 
@@ -87,7 +85,6 @@ const sectionTitles = {
     orders: '📋 Заказы',
     drivers: '🚖 Водители',
     cafes: '🍔 Кафе',
-    pharmacies: '💊 Аптеки',
     contacts: '📋 Контакты',
     directory: '📖 Маалымдама',
     shoppers: '🛒 Закупщики',
@@ -135,7 +132,6 @@ function loadSectionData(section) {
         case 'orders': loadOrders(); break;
         case 'drivers': loadDrivers(); break;
         case 'cafes': loadCafes(); break;
-        case 'pharmacies': loadPharmacies(); break;
         case 'contacts': loadContacts(); break;
         case 'directory': loadDirectory(); break;
         case 'shoppers': loadShoppers(); break;
@@ -198,7 +194,7 @@ function renderDashboard(data) {
                 <span class="kpi-icon">🚖</span>
             </div>
             <div class="kpi-value">${counts.drivers || 0}</div>
-            <div class="kpi-sub">Кафе: ${counts.cafes || 0} · Аптек: ${counts.pharmacies || 0} · Клиентов: ${counts.users || 0}</div>
+            <div class="kpi-sub">Кафе: ${counts.cafes || 0} · Клиентов: ${counts.users || 0}</div>
         </div>
     `;
 
@@ -515,150 +511,6 @@ async function submitEditCafe() {
     }
 }
 
-// ============================================================================
-// PHARMACIES
-// ============================================================================
-
-async function loadPharmacies() {
-    try {
-        const data = await api('/pharmacies');
-        const body = document.getElementById('pharmacies-body');
-
-        if (!data.pharmacies || data.pharmacies.length === 0) {
-            body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">Нет аптек</td></tr>';
-            return;
-        }
-
-        body.innerHTML = data.pharmacies.map((p) => {
-            const bal = parseFloat(p.balance) || 0;
-            return `
-            <tr>
-                <td>${p.name || '—'}</td>
-                <td style="font-family:monospace;font-size:12px;">${p.telegram_id}</td>
-                <td>${p.phone || '—'}</td>
-                <td>${p.address || '—'}</td>
-                <td>
-                    <div class="balance-display">
-                        <span class="balance-amount ${bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'zero'}">${formatMoney(bal)}</span>
-                        <span class="balance-currency">сом</span>
-                    </div>
-                </td>
-                <td>${p.is_active ? '<span class="badge success">Активна</span>' : '<span class="badge danger">Неакт.</span>'}</td>
-                <td>
-                    <div style="display:flex;gap:6px;">
-                        <button class="btn btn-success btn-sm" onclick="showBalanceModal('pharmacy', '${p.telegram_id}', '${esc(p.name)}', ${bal})" title="Пополнить баланс">💰</button>
-                        <button class="btn btn-danger btn-sm" onclick="removeEntity('pharmacies', '${p.telegram_id}')" title="Удалить">🗑️</button>
-                    </div>
-                </td>
-            </tr>
-        `}).join('');
-    } catch (err) {
-        toast('Ошибка загрузки аптек', 'error');
-    }
-}
-
-function showAddPharmacyModal() {
-    document.getElementById('add-pharmacy-tg-id').value = '';
-    document.getElementById('add-pharmacy-name').value = '';
-    document.getElementById('add-pharmacy-phone').value = '';
-    document.getElementById('add-pharmacy-address').value = '';
-    openModal('modal-add-pharmacy');
-}
-
-async function submitAddPharmacy() {
-    const data = {
-        telegram_id: val('add-pharmacy-tg-id'),
-        name: val('add-pharmacy-name'),
-        phone: val('add-pharmacy-phone'),
-        address: val('add-pharmacy-address'),
-    };
-
-    if (!data.telegram_id || !data.name) {
-        toast('Telegram ID и Название обязательны', 'error');
-        return;
-    }
-
-    try {
-        await api('/pharmacies', { method: 'POST', body: JSON.stringify(data) });
-        toast('✅ Аптека добавлена!', 'success');
-        closeModal('modal-add-pharmacy');
-        loadPharmacies();
-    } catch (err) {
-        toast('Ошибка: ' + err.message, 'error');
-    }
-}
-
-// ============================================================================
-// SHOPPERS
-// ============================================================================
-
-async function loadShoppers() {
-    try {
-        const data = await api('/shoppers');
-        const body = document.getElementById('shoppers-body');
-
-        if (!data.shoppers || data.shoppers.length === 0) {
-            body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">Нет закупщиков</td></tr>';
-            return;
-        }
-
-        body.innerHTML = data.shoppers.map((s) => {
-            const bal = parseFloat(s.balance) || 0;
-            return `
-            <tr>
-                <td>${s.name || '—'}</td>
-                <td style="font-family:monospace;font-size:12px;">${s.telegram_id}</td>
-                <td>${s.phone || '—'}</td>
-                <td>
-                    <div class="balance-display">
-                        <span class="balance-amount ${bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'zero'}">${formatMoney(bal)}</span>
-                        <span class="balance-currency">сом</span>
-                    </div>
-                </td>
-                <td>${s.is_active ? '<span class="badge success">Активен</span>' : '<span class="badge danger">Неакт.</span>'}</td>
-                <td>
-                    <div style="display:flex;gap:6px;">
-                        <button class="btn btn-success btn-sm" onclick="showBalanceModal('shopper', '${s.telegram_id}', '${esc(s.name)}', ${bal})" title="Пополнить баланс">💰</button>
-                        <button class="btn btn-danger btn-sm" onclick="removeEntity('shoppers', '${s.telegram_id}')" title="Удалить">🗑️</button>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
-    } catch (err) {
-        toast('Ошибка загрузки закупщиков', 'error');
-    }
-}
-
-function showAddShopperModal() {
-    document.getElementById('add-shopper-tg-id').value = '';
-    document.getElementById('add-shopper-name').value = '';
-    document.getElementById('add-shopper-phone').value = '';
-    openModal('modal-add-shopper');
-}
-
-async function submitAddShopper() {
-    const data = {
-        telegram_id: val('add-shopper-tg-id'),
-        name: val('add-shopper-name'),
-        phone: val('add-shopper-phone'),
-    };
-
-    if (!data.telegram_id || !data.name) {
-        toast('Telegram ID и ФИО обязательны', 'error');
-        return;
-    }
-
-    try {
-        await api('/shoppers', { method: 'POST', body: JSON.stringify(data) });
-        toast('✅ Закупщик добавлен!', 'success');
-        closeModal('modal-add-shopper');
-        loadShoppers();
-    } catch (err) {
-        toast('Ошибка: ' + err.message, 'error');
-    }
-}
-
-// ============================================================================
 // UNIVERSAL BALANCE TOP-UP / WRITE-OFF
 // ============================================================================
 
@@ -666,7 +518,6 @@ function showBalanceModal(entityType, telegramId, name, currentBalance) {
     const typeNames = {
         driver: 'Водитель',
         cafe: 'Кафе',
-        pharmacy: 'Аптека',
         shopper: 'Закупщик'
     };
 
@@ -698,14 +549,12 @@ async function submitBalanceWithSign(sign) {
     const pathMap = {
         driver: `/drivers/${telegramId}/balance`,
         cafe: `/cafes/${telegramId}/balance`,
-        pharmacy: `/drivers/${telegramId}/balance`,
         shopper: `/drivers/${telegramId}/balance`,
     };
 
     const reloadMap = {
         driver: loadDrivers,
         cafe: loadCafes,
-        pharmacy: loadPharmacies,
         shopper: loadShoppers,
     };
 
@@ -729,7 +578,7 @@ async function submitBalanceWithSign(sign) {
 // ============================================================================
 
 async function removeEntity(type, telegramId) {
-    const names = { drivers: 'водителя', pharmacies: 'аптеку', shoppers: 'закупщика', cafes: 'кафе' };
+    const names = { drivers: 'водителя', shoppers: 'закупщика', cafes: 'кафе' };
     if (!confirm(`Вы уверены, что хотите удалить ${names[type] || 'запись'}?`)) return;
 
     try {
@@ -810,7 +659,6 @@ function renderServiceBars(containerId, services, field) {
     if (!services || services.length === 0) {
         container.innerHTML = '<div class="empty-state" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;"><div class="empty-state-icon">📊</div><div class="empty-state-text">Нет данных</div></div>';
         return;
-    }
 
     const maxVal = Math.max(...services.map((s) => parseFloat(s[field]) || 0), 1);
 
@@ -842,14 +690,12 @@ async function loadTransactions() {
             body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">Нет транзакций</td></tr>';
             return;
         }
-
         body.innerHTML = data.transactions.map((t) => `
             <tr>
                 <td><span class="badge neutral">${t.action}</span></td>
                 <td>${t.user_id || '—'}</td>
                 <td>${t.order_id || '—'}</td>
                 <td>${t.amount != null ? formatMoney(t.amount) + ' сом' : '—'}</td>
-                <td>${truncate(t.details, 40)}</td>
                 <td>${formatDate(t.created_at)}</td>
             </tr>
         `).join('');
@@ -1384,12 +1230,10 @@ async function sendBroadcast() {
     const targetNames = {
         drivers: '👤 Водители',
         cafes: '👤 Кафе',
-        pharmacies: '👤 Аптеки',
         shoppers: '👤 Закупщики',
         group_taxi: '📢 Группа Такси',
         group_porter: '📢 Группа Портер',
         group_cafe: '📢 Группа Кафе',
-        group_pharmacy: '📢 Группа Аптеки',
         group_shop: '📢 Группа Магазины'
     };
     const targetList = targets.map(t => targetNames[t] || t).join(', ');
@@ -1420,7 +1264,6 @@ const SETTINGS_FIELDS = [
     { key: 'taxi_custom_price_min', id: 'setting-input-taxi_custom_price_min', isInt: true },
     { key: 'taxi_custom_price_threshold', id: 'setting-input-taxi_custom_price_threshold', isInt: true },
     { key: 'cafe_auction_timeout', id: 'setting-input-cafe_auction_timeout', isInt: true },
-    { key: 'pharmacy_response_timeout', id: 'setting-input-pharmacy_response_timeout', isInt: true },
     { key: 'taxi_response_timeout', id: 'setting-input-taxi_response_timeout', isInt: true },
     { key: 'taxi_accepted_timeout', id: 'setting-input-taxi_accepted_timeout', isInt: true },
     { key: 'pending_order_auto_cancel_timeout', id: 'setting-input-pending_order_auto_cancel_timeout', isInt: true },
@@ -1528,12 +1371,10 @@ function renderBarChart(containerId, data, valueField, labelField) {
         const pct = Math.max((v / maxVal) * 100, 4);
         const label = typeof d[labelField] === 'string'
             ? (d[labelField].length > 10 ? d[labelField].slice(5) : d[labelField])
-            : d[labelField];
         return `
             <div class="bar-item">
                 <div class="bar-value">${v}</div>
                 <div class="bar" style="height:${pct}%;" title="${label}: ${v}"></div>
-                <div class="bar-label">${label}</div>
             </div>
         `;
     }).join('');
@@ -1564,7 +1405,6 @@ function renderServiceChart(containerId, services) {
         <circle cx="70" cy="70" r="56" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="20"/>
         ${segments.join('')}
         <text x="70" y="66" text-anchor="middle" fill="var(--text-primary)" font-size="22" font-weight="800">${total}</text>
-        <text x="70" y="82" text-anchor="middle" fill="var(--text-muted)" font-size="10">заказов</text>
     </svg>`;
 
     const legend = services.map((s) => {
