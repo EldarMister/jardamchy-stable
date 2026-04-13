@@ -128,6 +128,81 @@ def check_taxi_timeouts():
 
 
 # =============================================================================
+# RAZNARABOCHI TIMEOUT
+# =============================================================================
+
+def check_raznarabochi_timeouts():
+    """Автоотмена заказов разнорабочих через 30 минут без отклика."""
+    try:
+        db = get_db()
+        expired_auctions = db.get_expired_auctions()
+
+        for auction in expired_auctions:
+            if auction['service_type'] != config.SERVICE_RAZNARABOCHI:
+                continue
+
+            if not db.mark_auction_processed(auction['id']):
+                continue
+
+            order_id = auction['order_id']
+            message_id = auction.get('telegram_message_id')
+            chat_id = auction.get('chat_id')
+            order = db.get_order(order_id)
+
+            if not order:
+                continue
+
+            if not db.cancel_order_if_status(
+                order_id,
+                [
+                    config.ORDER_STATUS_PENDING,
+                    config.ORDER_STATUS_AUCTION,
+                    config.ORDER_STATUS_URGENT,
+                ],
+            ):
+                continue
+
+            if message_id and chat_id:
+                try:
+                    delete_telegram_message(chat_id, int(message_id))
+                except Exception:
+                    logger.exception("Failed to delete raznarabochi group message for %s", order_id)
+
+            client_phone = order.get('client_phone')
+            if client_phone:
+                prompt = (
+                    f"❌ Заказ #{order_id} боюнча 30 мүнөт ичинде эч ким жооп берген жок.\n\n"
+                    "Кайра жиберебизби же жокко чыгарабызбы?"
+                )
+                buttons = [
+                    {"id": "razna_reorder_yes", "text": "🔁 Кайталоо"},
+                    {"id": "razna_reorder_no", "text": "❌ Жокко чыгаруу"},
+                ]
+                if not send_whatsapp_buttons(client_phone, prompt, buttons, include_cancel=False):
+                    send_whatsapp(client_phone, prompt + "\n1. Кайталоо\n2. Жокко чыгаруу")
+
+                client_user = db.get_user(client_phone)
+                if client_user:
+                    client_user.set_state(config.STATE_RAZNARABOCHI_REORDER_CHOICE)
+                    client_user.set_temp_data('service_type', config.SERVICE_RAZNARABOCHI)
+                    client_user.set_temp_data('razna_reorder_desc', order.get('details', '') or '')
+                    client_user.set_temp_data('razna_reorder_workers_count', order.get('cargo_type', '') or '')
+
+            db.log_transaction(
+                "RAZNARABOCHI_TIMEOUT_CANCELLED",
+                order_id=order_id,
+                details="Raznarabochi order auto-cancelled after 30 min without response"
+            )
+            logger.info("Raznarabochi order %s auto-cancelled after 30 min", order_id)
+
+        return True
+
+    except Exception:
+        logger.exception("Error checking raznarabochi timeouts")
+        return False
+
+
+# =============================================================================
 # ACCEPTED ORDER CLEANUP (30 min)
 # =============================================================================
 
@@ -174,6 +249,56 @@ def check_pharmacy_timeouts():
     """Pharmacy disabled; keep cron path as a no-op for safety."""
     return True
 
+
+# =============================================================================
+# POPUTKA CLIENT DEADLINE
+# =============================================================================
+
+def check_poputka_timeouts():
+    """Убирать попутки, когда наступило дата/время, указанное клиентом."""
+    try:
+        db = get_db()
+        expired_orders = db.get_expired_poputka_orders()
+
+        for order in expired_orders:
+            order_id = order['order_id']
+
+            if not db.cancel_order_if_status(
+                order_id,
+                [
+                    config.ORDER_STATUS_PENDING,
+                    config.ORDER_STATUS_AUCTION,
+                    config.ORDER_STATUS_URGENT,
+                ],
+            ):
+                continue
+
+            msg_id = order.get('telegram_message_id')
+            chat_id = order.get('chat_id')
+            if msg_id and chat_id:
+                try:
+                    delete_telegram_message(chat_id, int(msg_id))
+                except Exception:
+                    logger.exception("Failed to delete expired poputka message for %s", order_id)
+
+            timer_id = order.get('timer_id')
+            if timer_id:
+                db.mark_auction_processed(int(timer_id))
+
+            db.log_transaction(
+                "POPUTKA_CLIENT_DEADLINE_EXPIRED",
+                order_id=order_id,
+                details="Poputka order hidden after client datetime was reached"
+            )
+            logger.info("Poputka order %s expired at client deadline", order_id)
+
+        return True
+
+    except Exception:
+        logger.exception("Error checking poputka timeouts")
+        return False
+
+
 # =============================================================================
 # AUTO-CANCEL PENDING ORDERS (20 minutes)
 # =============================================================================
@@ -187,6 +312,8 @@ def check_pending_order_timeouts():
 
         for order in stale_orders:
             order_id = order['order_id']
+            if order.get('service_type') == config.SERVICE_RAZNARABOCHI:
+                continue
 
             # Atomic cancel: if another worker already changed status, skip.
             if not db.cancel_order_if_status(
@@ -285,7 +412,9 @@ def run_all_cron_jobs():
 
     check_cafe_timeouts()
     check_taxi_timeouts()
+    check_raznarabochi_timeouts()
     check_accepted_order_timeouts()
+    check_poputka_timeouts()
     check_pending_order_timeouts()
     check_in_delivery_auto_complete()
 
@@ -306,6 +435,10 @@ if __name__ == "__main__":
             check_cafe_timeouts()
         elif command == "taxi":
             check_taxi_timeouts()
+        elif command == "razna":
+            check_raznarabochi_timeouts()
+        elif command == "poputka":
+            check_poputka_timeouts()
         elif command == "pending":
             check_pending_order_timeouts()
         elif command == "in_delivery":
@@ -313,6 +446,6 @@ if __name__ == "__main__":
         elif command == "all":
             run_all_cron_jobs()
         else:
-            print("Unknown command. Use: cafe, taxi, pending, in_delivery, or all")
+            print("Unknown command. Use: cafe, taxi, razna, poputka, pending, in_delivery, or all")
     else:
         run_all_cron_jobs()

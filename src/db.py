@@ -166,10 +166,22 @@ class Database:
                         delivery_mode VARCHAR(30),
                         external_courier_phone VARCHAR(20),
                         is_urgent BOOLEAN DEFAULT FALSE,
+                        expires_at TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         completed_at TIMESTAMP
                     )
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'orders' AND column_name = 'expires_at'
+                        ) THEN
+                            ALTER TABLE orders ADD COLUMN expires_at TIMESTAMP;
+                        END IF;
+                    END $$;
                 """)
             
                 # Таблица водителей (такси, портер)
@@ -904,7 +916,8 @@ class Database:
     
     def create_order(self, client_phone: str, service_type: str, details: str,
                      address: str = None, payment_method: str = None,
-                     cargo_type: str = None, price: float = 0) -> str:
+                     cargo_type: str = None, price: float = 0,
+                     expires_at: datetime = None) -> str:
         """Создать новый заказ"""
         order_id = f"GO{datetime.now().strftime('%y%m%d%H%M%S')}"
         
@@ -912,10 +925,10 @@ class Database:
             cur.execute(
                 """INSERT INTO orders 
                    (order_id, service_type, client_phone, details, address, 
-                    payment_method, cargo_type, price_total, status)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    payment_method, cargo_type, price_total, status, expires_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (order_id, service_type, client_phone, details, address,
-                 payment_method, cargo_type, price, config.ORDER_STATUS_PENDING)
+                 payment_method, cargo_type, price, config.ORDER_STATUS_PENDING, expires_at)
             )
             
             self.log_transaction(
@@ -998,9 +1011,44 @@ class Database:
                        LIMIT 1
                    ) at ON TRUE
                    WHERE o.status IN ('PENDING', 'AUCTION', 'URGENT')
+                     AND NOT (o.service_type = %s AND o.expires_at IS NOT NULL)
                      AND o.created_at <= CURRENT_TIMESTAMP - INTERVAL '%s minutes'
                    ORDER BY o.created_at ASC""",
-                (minutes,)
+                (config.SERVICE_POPUTKA, minutes)
+            )
+            rows = cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
+
+    def get_expired_poputka_orders(self, now_local: datetime = None) -> List[Dict]:
+        """РџРѕРїСѓС‚РєРё, Сѓ РєРѕС‚РѕСЂС‹С… РЅР°СЃС‚СѓРїРёР»Рѕ РІСЂРµРјСЏ, СѓРєР°Р·Р°РЅРЅРѕРµ РєР»РёРµРЅС‚РѕРј."""
+        now_local = now_local or _bishkek_now_naive()
+        active_statuses = [
+            config.ORDER_STATUS_PENDING,
+            config.ORDER_STATUS_AUCTION,
+            config.ORDER_STATUS_URGENT,
+        ]
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT
+                       o.*,
+                       at.id AS timer_id,
+                       at.telegram_message_id,
+                       at.chat_id
+                   FROM orders o
+                   LEFT JOIN LATERAL (
+                       SELECT id, telegram_message_id, chat_id
+                       FROM auction_timers
+                       WHERE order_id = o.order_id
+                         AND service_type = %s
+                       ORDER BY id DESC
+                       LIMIT 1
+                   ) at ON TRUE
+                   WHERE o.service_type = %s
+                     AND o.expires_at IS NOT NULL
+                     AND o.expires_at <= %s
+                     AND o.status = ANY(%s)
+                   ORDER BY o.expires_at ASC, o.created_at ASC""",
+                (config.SERVICE_POPUTKA, config.SERVICE_POPUTKA, now_local, active_statuses)
             )
             rows = cur.fetchall()
             return [dict(r) for r in rows] if rows else []

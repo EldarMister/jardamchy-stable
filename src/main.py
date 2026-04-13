@@ -149,6 +149,7 @@ FLOW_BY_STATE = {
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
+    config.STATE_RAZNARABOCHI_REORDER_CHOICE: "ожидаю ответ по повтору заказа разнорабочих",
     config.STATE_MED_EJE_MENU: "ожидаю выбор по медпомощи",
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
@@ -1034,6 +1035,19 @@ def _resend_current_step_prompt(user: User) -> None:
             "2. Жаңы маршрут",
         )
         return
+    if state == config.STATE_RAZNARABOCHI_REORDER_CHOICE:
+        prompt = (
+            "👷 Разнорабочий заказы боюнча эч ким жооп берген жок.\n"
+            "1. Заказды кайтала\n"
+            "2. Заказды жокко чыгар"
+        )
+        buttons = [
+            {"id": "razna_reorder_yes", "text": "🔁 Кайталоо"},
+            {"id": "razna_reorder_no", "text": "❌ Жокко чыгаруу"},
+        ]
+        if not send_whatsapp_buttons(user.phone, prompt, buttons, include_cancel=False):
+            send_whatsapp(user.phone, prompt)
+        return
     if state == config.STATE_CAFE_ORDER:
         send_whatsapp(user.phone, config.CAFE_PROMPT)
         return
@@ -1604,6 +1618,75 @@ def _parse_poputka_client_date(raw: str) -> str | None:
     return None
 
 
+def _parse_poputka_client_deadline(raw: str) -> tuple[str | None, datetime | None]:
+    import re as _re
+
+    date_text = _parse_poputka_client_date(raw)
+    if not date_text:
+        return None, None
+
+    now_local = _bishkek_now_naive()
+    text = raw.lower().strip()
+    time_match = _re.search(r'(\d{1,2}):(\d{2})', text)
+    explicit_time = time_match is not None
+    deadline_hour = 23
+    deadline_minute = 59
+
+    if time_match:
+        deadline_hour = int(time_match.group(1))
+        deadline_minute = int(time_match.group(2))
+        if not (0 <= deadline_hour <= 23 and 0 <= deadline_minute <= 59):
+            return None, None
+
+    text_no_time = _re.sub(r'\d{1,2}:\d{2}', '', text).strip()
+    today_words = {"Р±ТЇРіТЇРЅ", "bugГјn", "СЃРµРіРѕРґРЅСЏ", "today"}
+    tomorrow_words = {"СЌСЂС‚РµТЈ", "erten", "Р·Р°РІС‚СЂР°", "tomorrow"}
+
+    if any(w in text_no_time for w in today_words) or (time_match and not _re.search(r'(\d{1,2})[./](\d{1,2})', text_no_time)):
+        deadline = now_local.replace(
+            hour=deadline_hour,
+            minute=deadline_minute,
+            second=0,
+            microsecond=0,
+        )
+        if explicit_time and deadline <= now_local:
+            return None, None
+        return date_text, deadline
+
+    if any(w in text_no_time for w in tomorrow_words):
+        deadline = (now_local + timedelta(days=1)).replace(
+            hour=deadline_hour,
+            minute=deadline_minute,
+            second=0,
+            microsecond=0,
+        )
+        return date_text, deadline
+
+    date_match = _re.search(r'(\d{1,2})[./](\d{1,2})', text_no_time)
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        try:
+            deadline = datetime(
+                now_local.year,
+                month,
+                day,
+                deadline_hour,
+                deadline_minute,
+            )
+        except ValueError:
+            return None, None
+
+        if deadline <= now_local:
+            try:
+                deadline = deadline.replace(year=deadline.year + 1)
+            except ValueError:
+                return None, None
+        return date_text, deadline
+
+    return date_text, None
+
+
 def handle_poputka_client_dest(user: User, message: str) -> tuple:
     """Клиент указал направление — спросить дату."""
     dest = message.strip()
@@ -1618,11 +1701,12 @@ def handle_poputka_client_dest(user: User, message: str) -> tuple:
 
 def handle_poputka_client_date(user: User, message: str) -> tuple:
     """Клиент указал дату — спросить количество мест."""
-    date_text = _parse_poputka_client_date(message)
+    date_text, expires_at = _parse_poputka_client_deadline(message)
     if not date_text:
         send_whatsapp(user.phone, config.POPUTKA_CLIENT_DATE_PROMPT)
         return jsonify({"status": "ok"}), 200
     user.set_temp_data('poputka_date', date_text)
+    user.set_temp_data('poputka_expires_at', expires_at.isoformat() if expires_at else None)
     user.set_state(config.STATE_POPUTKA_CLIENT_SEATS)
     send_whatsapp(user.phone, config.POPUTKA_CLIENT_SEATS_PROMPT)
     return jsonify({"status": "ok"}), 200
@@ -1655,6 +1739,13 @@ def _dispatch_poputka_to_group(user: User, db) -> None:
     dest = user.get_temp_data('poputka_dest', '')
     date_text = user.get_temp_data('poputka_date', '')
     seats = user.get_temp_data('poputka_seats', 1)
+    expires_at_raw = user.get_temp_data('poputka_expires_at')
+    expires_at = None
+    if isinstance(expires_at_raw, str) and expires_at_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw)
+        except ValueError:
+            expires_at = None
 
     details = f"Багыт: {dest}\nКачан: {date_text}\nКиши: {seats}"
     order_id = db.create_order(
@@ -1662,10 +1753,16 @@ def _dispatch_poputka_to_group(user: User, db) -> None:
         service_type=config.SERVICE_POPUTKA,
         address=dest,
         details=details,
+        expires_at=expires_at,
     )
     if not order_id:
         send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
         return
+
+    timeout_seconds = FLOW_STALE_TTL_MINUTES.get(config.SERVICE_POPUTKA, 240) * 60
+    if expires_at is not None:
+        now_local = _bishkek_now_naive()
+        timeout_seconds = max(1, int((expires_at - now_local).total_seconds()))
 
     group_msg = config.POPUTKA_GROUP_MSG.format(
         order_id=order_id,
@@ -1680,7 +1777,7 @@ def _dispatch_poputka_to_group(user: User, db) -> None:
         buttons,
         order_id=order_id,
         service_type=config.SERVICE_POPUTKA,
-        timeout_seconds=FLOW_STALE_TTL_MINUTES.get(config.SERVICE_POPUTKA, 240) * 60,
+        timeout_seconds=timeout_seconds,
     )
     send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)
 
@@ -1910,7 +2007,7 @@ def _dispatch_raznarabochi_to_group(user: User, db) -> None:
         buttons,
         order_id=order_id,
         service_type=config.SERVICE_RAZNARABOCHI,
-        timeout_seconds=FLOW_STALE_TTL_MINUTES.get(config.SERVICE_RAZNARABOCHI, 240) * 60,
+        timeout_seconds=config.RAZNARABOCHI_RESPONSE_TIMEOUT,
     )
     send_whatsapp(user.phone, config.RAZNARABOCHI_SENT)
 
@@ -2438,6 +2535,8 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
 
         if user.current_state == config.STATE_TAXI_REORDER_CHOICE:
             return handle_taxi_reorder_choice(user, incoming_msg, db)
+        if user.current_state == config.STATE_RAZNARABOCHI_REORDER_CHOICE:
+            return handle_raznarabochi_reorder_choice(user, incoming_msg, db)
 
         if user.current_state == config.STATE_IDLE:
             return handle_idle_state(user, incoming_msg, db)
@@ -3554,6 +3653,46 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
     return jsonify({"status": "ok"}), 200
 
 
+def handle_raznarabochi_reorder_choice(user: User, message: str, db) -> tuple:
+    """Обработка ответа клиента после автоотмены заказа разнорабочих."""
+    msg_lower = (message or "").lower().strip()
+
+    yes_words = {"да", "оа", "ооба", "yes", "1", "razna_reorder_yes"}
+    no_words = {"нет", "жок", "no", "2", "razna_reorder_no"}
+
+    if msg_lower in yes_words:
+        desc = (user.get_temp_data('razna_reorder_desc') or '').strip()
+        workers_count = _extract_price(str(user.get_temp_data('razna_reorder_workers_count') or '').strip())
+
+        user.clear_temp_data()
+
+        if not desc or not _is_valid_raznarabochi_workers_count(workers_count):
+            return _start_raznarabochi_flow(user)
+
+        user.set_temp_data('service_type', config.SERVICE_RAZNARABOCHI)
+        user.set_temp_data('raznarabochi_desc', desc)
+        user.set_temp_data('raznarabochi_workers_count', workers_count)
+        _dispatch_raznarabochi_to_group(user, db)
+        user.set_state(config.STATE_IDLE)
+        user.clear_temp_data()
+        return jsonify({"status": "ok"}), 200
+
+    if msg_lower in no_words:
+        user.clear_temp_data()
+        user.set_state(config.STATE_IDLE)
+        send_order_cancelled_with_main_menu(user.phone)
+        return jsonify({"status": "ok"}), 200
+
+    if _extract_flow_keyword_intent(message) == config.SERVICE_RAZNARABOCHI:
+        user.clear_temp_data()
+        return _start_raznarabochi_flow(user)
+
+    user.clear_temp_data()
+    user.set_state(config.STATE_IDLE)
+    send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+    return jsonify({"status": "ok"}), 200
+
+
 def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False) -> tuple:
     """Обработка маршрута такси: собираем откуда/куда до полной информации."""
     msg = message.strip()
@@ -3885,6 +4024,12 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             _reset_unknown_fallback(user)
             send_whatsapp(user.phone, config.WELCOME_MESSAGE)
             return jsonify({"status": "ok"}), 200
+
+        if user.current_state == config.STATE_RAZNARABOCHI_REORDER_CHOICE and button_response in {
+            "razna_reorder_yes",
+            "razna_reorder_no",
+        }:
+            return handle_raznarabochi_reorder_choice(user, button_response, db)
 
         # Универсальное подтверждение заказа (Cloud API кнопки Да/Нет)
         if user.current_state == config.STATE_CONFIRM_ORDER:

@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import re
+from datetime import datetime, timedelta
 import requests
 from typing import List, Dict, Optional, Tuple
 from requests.adapters import HTTPAdapter
@@ -17,6 +18,10 @@ from urllib.parse import urlencode
 import config
 
 logger = logging.getLogger(__name__)
+
+
+def _bishkek_now_naive() -> datetime:
+    return datetime.utcnow() + timedelta(hours=6)
 
 WHATSAPP_CANCEL_BUTTON_ID = "btn_cancel_global"
 WHATSAPP_CANCEL_BUTTON_TEXT = "❌ Отмена"
@@ -870,7 +875,44 @@ def process_telegram_group_outbox(limit: int = 20, stale_after_seconds: int = 30
 
         try:
             existing_timer = None
+            current_order = None
             if order_id and service_type:
+                current_order = db.get_order(order_id)
+                if not current_order:
+                    db.mark_telegram_group_outbox_sent(entry_id, None)
+                    logger.info(
+                        "Telegram outbox id=%s skipped because order_id=%s no longer exists",
+                        entry_id,
+                        order_id,
+                    )
+                    continue
+
+                if current_order.get("status") in (
+                    config.ORDER_STATUS_CANCELLED,
+                    config.ORDER_STATUS_COMPLETED,
+                ):
+                    db.mark_telegram_group_outbox_sent(entry_id, None)
+                    logger.info(
+                        "Telegram outbox id=%s skipped because order_id=%s already closed with status=%s",
+                        entry_id,
+                        order_id,
+                        current_order.get("status"),
+                    )
+                    continue
+
+                if (
+                    service_type == config.SERVICE_POPUTKA
+                    and current_order.get("expires_at")
+                    and current_order["expires_at"] <= _bishkek_now_naive()
+                ):
+                    db.mark_telegram_group_outbox_sent(entry_id, None)
+                    logger.info(
+                        "Telegram outbox id=%s skipped because poputka order_id=%s already expired",
+                        entry_id,
+                        order_id,
+                    )
+                    continue
+
                 existing_timer = db.get_latest_auction_timer(order_id, service_type)
             if existing_timer:
                 db.mark_telegram_group_outbox_sent(entry_id, existing_timer.get("telegram_message_id"))
@@ -1341,4 +1383,3 @@ def detect_language(text: str) -> str:
             return 'kg'
     
     return 'ru'
-
