@@ -598,6 +598,18 @@ class Database:
                         END IF;
                     END $$;
                 """)
+
+                # Миграция: добавить баланс кафе (препейд вместо долга)
+                cur.execute("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='cafes' AND column_name='balance'
+                        ) THEN
+                            ALTER TABLE cafes ADD COLUMN balance DECIMAL(10, 2) DEFAULT 0;
+                        END IF;
+                    END $$;
+                """)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
 
@@ -1493,72 +1505,77 @@ class Database:
                 return True
             return False
     
-    def update_cafe_debt(self, telegram_id: str, order_amount: float) -> Tuple[bool, float]:
-        """Обновить долг кафе (добавить комиссию)"""
-        cafe_commission_percent = self.get_runtime_setting(
-            "cafe_commission_percent",
-            config.CAFE_COMMISSION_PERCENT
-        )
-        commission = order_amount * (cafe_commission_percent / 100)
-        
-        with self.get_cursor(commit=True) as cur:
-            cur.execute(
-                """UPDATE cafes 
-                   SET debt = debt + %s
-                   WHERE telegram_id = %s
-                   RETURNING debt""",
-                (commission, telegram_id)
-            )
-            row = cur.fetchone()
-            
-            if row:
-                self.log_transaction(
-                    action="CAFE_DEBT_ADDED",
-                    user_id=telegram_id,
-                    amount=commission,
-                    details=f"Order amount: {order_amount}, Commission: {commission}"
-                )
-                return True, float(row['debt'])
-            
-            return False, 0
-    
-    def get_cafe_debt(self, telegram_id: str) -> float:
-        """Получить долг кафе"""
+    def get_cafe_balance(self, telegram_id: str) -> float:
+        """Получить баланс кафе"""
         with self.get_cursor() as cur:
             cur.execute(
-                "SELECT debt FROM cafes WHERE telegram_id = %s",
+                "SELECT balance FROM cafes WHERE telegram_id = %s",
                 (telegram_id,)
             )
             row = cur.fetchone()
-            return float(row['debt']) if row else 0
+            return float(row['balance']) if row else 0
 
-    def adjust_cafe_debt(self, telegram_id: str, amount: float, reason: str = "") -> Tuple[bool, float]:
+    def check_cafe_balance(self, telegram_id: str, order_amount: float) -> Tuple[bool, float, float]:
         """
-        Ручная корректировка долга кафе.
-        amount > 0: погашение долга (debt уменьшается)
-        amount < 0: увеличение долга (debt увеличивается)
+        Проверить, хватает ли баланса для покрытия комиссии.
+        Возвращает (достаточно, баланс, комиссия).
         """
+        commission_pct = self.get_runtime_setting(
+            "cafe_commission_percent",
+            config.CAFE_COMMISSION_PERCENT
+        )
+        commission = round(order_amount * commission_pct / 100, 2)
+        balance = self.get_cafe_balance(telegram_id)
+        return balance >= commission, balance, commission
+
+    def deduct_cafe_balance(self, telegram_id: str, order_amount: float) -> Tuple[bool, float]:
+        """Списать комиссию с баланса кафе при подтверждении заказа."""
+        commission_pct = self.get_runtime_setting(
+            "cafe_commission_percent",
+            config.CAFE_COMMISSION_PERCENT
+        )
+        commission = round(order_amount * commission_pct / 100, 2)
+
         with self.get_cursor(commit=True) as cur:
             cur.execute(
                 """UPDATE cafes
-                   SET debt = GREATEST(debt - %s, 0)
+                   SET balance = balance - %s
                    WHERE telegram_id = %s
-                   RETURNING debt""",
+                   RETURNING balance""",
+                (commission, telegram_id)
+            )
+            row = cur.fetchone()
+            if row:
+                self.log_transaction(
+                    action="CAFE_BALANCE_DEDUCTED",
+                    user_id=telegram_id,
+                    amount=commission,
+                    details=f"Order amount: {order_amount}, Commission ({commission_pct}%): {commission}"
+                )
+                return True, float(row['balance'])
+            return False, 0
+
+    def add_cafe_balance(self, telegram_id: str, amount: float, reason: str = "") -> Tuple[bool, float]:
+        """Пополнить баланс кафе (через админку)."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE cafes
+                   SET balance = balance + %s
+                   WHERE telegram_id = %s
+                   RETURNING balance""",
                 (amount, telegram_id)
             )
             row = cur.fetchone()
             if not row:
                 return False, 0
-
-            new_debt = float(row['debt'])
-            action = "CAFE_DEBT_REDUCED" if amount > 0 else "CAFE_DEBT_INCREASED"
+            new_balance = float(row['balance'])
             self.log_transaction(
-                action=action,
+                action="CAFE_BALANCE_ADDED",
                 user_id=telegram_id,
-                amount=abs(float(amount)),
+                amount=float(amount),
                 details=f"Reason: {reason}"
             )
-            return True, new_debt
+            return True, new_balance
     
     def list_cafes(self, active_only: bool = True) -> List[Dict]:
         """Получить список кафе"""

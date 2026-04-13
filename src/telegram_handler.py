@@ -295,7 +295,22 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
             send_telegram_private(user_id, "❌ Заказ уже закрыт.")
             _reply()
             return jsonify({"status": "ok"}), 200
-        
+
+        # Проверяем баланс кафе
+        order_amount = order.get('price_total', 0) or 1000
+        enough, balance, commission = db.check_cafe_balance(user_id, order_amount)
+        if not enough:
+            commission_pct = _runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)
+            send_telegram_private(
+                user_id,
+                f"❌ *Недостаточно баланса для принятия заказа #{order_id}*\n\n"
+                f"💰 Комиссия ({commission_pct}%): *{commission:.0f} сом*\n"
+                f"💳 Ваш баланс: *{balance:.0f} сом*\n\n"
+                f"Пополните баланс у администратора и попробуйте снова."
+            )
+            _reply()
+            return jsonify({"status": "ok"}), 200
+
         # Обновляем статус
         db.update_order_status(order_id, config.ORDER_STATUS_ACCEPTED, provider_id=user_id)
         
@@ -323,12 +338,8 @@ def handle_cafe_accept(data: str, user_id: str, user_name: str,
         
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
-        # Уведомляем клиента
-        client_msg = f"""✅ *Заказ #{order_id}*
-
-🏠 *Кафе:* {user_name}
-⏱ Ожидаем подтверждение времени готовности..."""
-        
+        # Уведомляем клиента — кратко, полные данные придут после выбора времени готовности
+        client_msg = f"✅ *Заказ #{order_id}* принят кафе *{user_name}*. Ожидайте время готовности..."
         send_whatsapp(order.get('client_phone', ''), client_msg)
         
         db.log_transaction("CAFE_ORDER_ACCEPTED", user_id, order_id)
@@ -416,28 +427,43 @@ def handle_cafe_ready_time(data: str, user_id: str, user_name: str, db) -> tuple
 
         # Обновляем заказ
         db.update_order_status(order_id, config.ORDER_STATUS_READY, ready_time=ready_time)
-        
-        # Рассчитываем комиссию (5% всегда, без скидок)
-        order_amount = order.get('price_total', 0) or 1000  # Если цена не указана, берем минимум
-        db.update_cafe_debt(user_id, order_amount)
-        commission_info = f"💰 Комиссия ({_runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)}%) добавлена в долг"
-        buttons = [
-            {"text": "🚶 Своим курьером", "callback": f"cafe_delivery_self_{order_id}"},
-            {"text": "🚖 Курьером Жардамчы GO", "callback": f"cafe_delivery_go_{order_id}"}
-        ]
 
+        # Списываем комиссию с баланса
+        order_amount = order.get('price_total', 0) or 1000
+        commission_pct = _runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT)
+        commission_amount = round(order_amount * commission_pct / 100)
+        _, new_balance = db.deduct_cafe_balance(user_id, order_amount)
+
+        client_phone = order.get('client_phone', 'N/A')
+        cafe_name, cafe_phone = _get_cafe_identity(db, user_id, user_name)
+
+        # Уведомление кафе: номер заказа, комиссия, остаток баланса, данные клиента
         send_telegram_private(
             user_id,
-            f"⏱ Заказ #{order_id} будет готов через *{ready_time}* минут.\n\n"
-            f"Выберите способ доставки.\n{commission_info}",
-            buttons
+            f"✅ *Заказ #{order_id}* — время готовности *{ready_time} мин* сохранено.\n\n"
+            f"💰 Списано ({commission_pct}%): *{commission_amount} сом*\n"
+            f"💳 Остаток баланса: *{new_balance:.0f} сом*\n\n"
+            f"👤 *Данные клиента:*\n"
+            f"📞 Телефон: {_format_phone_for_whatsapp(client_phone)}\n"
+            f"📍 Адрес: {order.get('address', '—')}"
         )
-        
+
+        # Уведомление клиента: данные кафе + время готовности
+        cafe_phone_line = f"📞 *Телефон кафе:* {_format_phone_for_whatsapp(cafe_phone)}\n" if cafe_phone else ""
+        client_msg = (
+            f"✅ *Заказ #{order_id} подтверждён!*\n\n"
+            f"🏠 *Кафе:* {cafe_name}\n"
+            f"{cafe_phone_line}"
+            f"⏱ *Время готовности:* {ready_time} минут\n"
+            f"📍 *Адрес доставки:* {order.get('address', '—')}"
+        )
+        send_whatsapp(client_phone, client_msg)
+
         db.log_transaction(
             "CAFE_READY_TIME_SET",
             user_id,
             order_id,
-            details=f"Ready in {ready_time} min; awaiting delivery mode"
+            details=f"Ready in {ready_time} min"
         )
 
         return jsonify({"status": "ok"}), 200

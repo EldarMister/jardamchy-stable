@@ -522,23 +522,21 @@ def remove_cafe(telegram_id):
         return jsonify({"error": str(e)}), 500
 
 
-@admin_bp.route('/cafes/<telegram_id>/debt', methods=['GET'])
-def get_cafe_debt(telegram_id):
-    """Получить долг кафе"""
+@admin_bp.route('/cafes/<telegram_id>/balance', methods=['GET'])
+def get_cafe_balance(telegram_id):
+    """Получить баланс кафе"""
     try:
         db = get_db()
-        debt = db.get_cafe_debt(telegram_id)
-
-        return jsonify({"debt": float(debt)}), 200
-
+        balance = db.get_cafe_balance(telegram_id)
+        return jsonify({"balance": float(balance)}), 200
     except Exception as e:
-        logger.exception("Error getting cafe debt")
+        logger.exception("Error getting cafe balance")
         return jsonify({"error": str(e)}), 500
 
 
-@admin_bp.route('/cafes/<telegram_id>/debt', methods=['POST'])
-def update_cafe_debt(telegram_id):
-    """Ручная корректировка долга кафе через админку."""
+@admin_bp.route('/cafes/<telegram_id>/balance', methods=['POST'])
+def update_cafe_balance(telegram_id):
+    """Пополнение баланса кафе через админку."""
     try:
         data = request.get_json() or {}
         amount = data.get('amount')
@@ -546,19 +544,20 @@ def update_cafe_debt(telegram_id):
 
         if amount is None:
             return jsonify({"error": "amount is required"}), 400
+        if float(amount) <= 0:
+            return jsonify({"error": "amount must be positive"}), 400
 
         db = get_db()
-        success, new_debt = db.adjust_cafe_debt(telegram_id, float(amount), reason)
+        success, new_balance = db.add_cafe_balance(telegram_id, float(amount), reason)
         if not success:
             return jsonify({"error": "Cafe not found"}), 404
 
         return jsonify({
             "success": True,
-            "new_debt": float(new_debt),
-            "new_balance": float(-new_debt)
+            "new_balance": float(new_balance)
         }), 200
     except Exception as e:
-        logger.exception("Error updating cafe debt")
+        logger.exception("Error updating cafe balance")
         return jsonify({"error": str(e)}), 500
 
 

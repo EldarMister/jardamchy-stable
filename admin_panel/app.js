@@ -409,7 +409,7 @@ async function loadCafes() {
         }
 
         body.innerHTML = data.cafes.map((c) => {
-            const debt = parseFloat(c.debt) || 0;
+            const balance = parseFloat(c.balance) || 0;
             return `
             <tr>
                 <td>${c.name || '—'}</td>
@@ -418,7 +418,7 @@ async function loadCafes() {
                 <td>${c.address || '—'}</td>
                 <td>
                     <div class="balance-display">
-                        <span class="balance-amount ${debt > 0 ? 'negative' : 'zero'}">${formatMoney(debt)}</span>
+                        <span class="balance-amount ${balance < 0 ? 'negative' : balance === 0 ? 'zero' : 'positive'}">${formatMoney(balance)}</span>
                         <span class="balance-currency">сом</span>
                     </div>
                 </td>
@@ -427,7 +427,7 @@ async function loadCafes() {
                 <td>
                     <div style="display:flex;gap:6px;">
                         <button class="btn btn-ghost btn-sm" onclick="showEditCafeModal('${c.telegram_id}', '${esc(c.name)}', '${esc(c.phone || '')}', '${esc(c.address || '')}', ${c.commission_percent || 5}, ${c.is_active ? 'true' : 'false'})" title="Редактировать">✏️</button>
-                        <button class="btn btn-success btn-sm" onclick="showBalanceModal('cafe', '${c.telegram_id}', '${esc(c.name)}', ${-debt})" title="Оплата долга">💰</button>
+                        <button class="btn btn-success btn-sm" onclick="showBalanceModal('cafe', '${c.telegram_id}', '${esc(c.name)}', ${balance})" title="Пополнить баланс">💰</button>
                         <button class="btn btn-danger btn-sm" onclick="removeEntity('cafes', '${c.telegram_id}')" title="Удалить">🗑️</button>
                     </div>
                 </td>
@@ -693,7 +693,7 @@ async function submitBalanceWithSign(sign) {
     // Determine API path based on entity type
     const pathMap = {
         driver: `/drivers/${telegramId}/balance`,
-        cafe: `/cafes/${telegramId}/debt`,
+        cafe: `/cafes/${telegramId}/balance`,
         pharmacy: `/drivers/${telegramId}/balance`,
         shopper: `/drivers/${telegramId}/balance`,
     };
