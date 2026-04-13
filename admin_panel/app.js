@@ -659,6 +659,7 @@ function renderServiceBars(containerId, services, field) {
     if (!services || services.length === 0) {
         container.innerHTML = '<div class="empty-state" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;"><div class="empty-state-icon">📊</div><div class="empty-state-text">Нет данных</div></div>';
         return;
+    }
 
     const maxVal = Math.max(...services.map((s) => parseFloat(s[field]) || 0), 1);
 
@@ -1234,7 +1235,9 @@ async function sendBroadcast() {
         group_taxi: '📢 Группа Такси',
         group_porter: '📢 Группа Портер',
         group_cafe: '📢 Группа Кафе',
-        group_shop: '📢 Группа Магазины'
+        group_shop: '📢 Группа Магазины',
+        group_poputka: '📢 Группа Попутка',
+        group_raznarabochi: '📢 Группа Разнарабочий'
     };
     const targetList = targets.map(t => targetNames[t] || t).join(', ');
 
@@ -1371,6 +1374,7 @@ function renderBarChart(containerId, data, valueField, labelField) {
         const pct = Math.max((v / maxVal) * 100, 4);
         const label = typeof d[labelField] === 'string'
             ? (d[labelField].length > 10 ? d[labelField].slice(5) : d[labelField])
+            : String(d[labelField]);
         return `
             <div class="bar-item">
                 <div class="bar-value">${v}</div>

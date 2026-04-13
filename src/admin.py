@@ -1159,6 +1159,14 @@ def broadcast_message():
         if 'group_shop' in targets:
             group_ids.append(config.GROUP_SHOP_ID)
 
+        if 'group_poputka' in targets:
+            if config.GROUP_POPUTKA_ID not in group_ids:
+                group_ids.append(config.GROUP_POPUTKA_ID)
+
+        if 'group_raznarabochi' in targets:
+            if config.GROUP_RAZNARABOCHI_ID not in group_ids:
+                group_ids.append(config.GROUP_RAZNARABOCHI_ID)
+
         # Send broadcast to private users
         results = send_telegram_broadcast(list(recipient_ids), message)
         
