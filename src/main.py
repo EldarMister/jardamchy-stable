@@ -1384,9 +1384,6 @@ def _is_computer_service_request(message: str) -> bool:
     if _looks_like_web_order_message(message):
         return False
 
-    if normalized in {"8", "8."}:
-        return True
-
     compact = normalized.replace(" ", "")
     if any(keyword in normalized for keyword in INTENT_KEYWORDS_COMPUTER if len(keyword) > 2):
         return True
