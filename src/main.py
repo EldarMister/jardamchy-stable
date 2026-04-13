@@ -2618,6 +2618,35 @@ _FAST_CONFIRM_NO = frozenset({
 })
 
 
+def _submit_confirmed_order(user: User, db, service_type: str) -> tuple:
+    if service_type == config.SERVICE_TAXI:
+        return _submit_taxi_order(user, db)
+    elif service_type == config.SERVICE_CAFE:
+        return _submit_cafe_order(user, db)
+    elif service_type == config.SERVICE_SHOP:
+        return _submit_shop_order(user, db)
+    elif service_type == config.SERVICE_PHARMACY:
+        return _submit_pharmacy_order(user, db)
+    elif service_type == config.SERVICE_PORTER:
+        return _submit_porter_order(user, db)
+    elif service_type == config.SERVICE_ANT:
+        return _submit_ant_order(user, db)
+    elif service_type == config.SERVICE_POPUTKA:
+        _dispatch_poputka_to_group(user, db)
+        user.set_state(config.STATE_IDLE)
+        user.clear_temp_data()
+        return jsonify({"status": "ok"}), 200
+    elif service_type == config.SERVICE_RAZNARABOCHI:
+        _dispatch_raznarabochi_to_group(user, db)
+        user.set_state(config.STATE_IDLE)
+        user.clear_temp_data()
+        return jsonify({"status": "ok"}), 200
+
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+    return jsonify({"status": "ok"}), 200
+
 def handle_confirm_order(user: User, message: str, db) -> tuple:
     """Универсальная обработка подтверждения заказа (с ИИ)"""
     msg_lower = message.lower().strip()
@@ -2641,36 +2670,7 @@ def handle_confirm_order(user: User, message: str, db) -> tuple:
     
     # Если подтвердил
     if confirmation.get("confirmed"):
-        if service_type == config.SERVICE_TAXI:
-            return _submit_taxi_order(user, db)
-        elif service_type == config.SERVICE_CAFE:
-            return _submit_cafe_order(user, db)
-        elif service_type == config.SERVICE_SHOP:
-            return _submit_shop_order(user, db)
-        elif service_type == config.SERVICE_PHARMACY:
-            return _submit_pharmacy_order(user, db)
-        elif service_type == config.SERVICE_PORTER:
-            return _submit_porter_order(user, db)
-        elif service_type == config.SERVICE_ANT:
-            return _submit_ant_order(user, db)
-        elif service_type == config.SERVICE_POPUTKA:
-            _dispatch_poputka_to_group(user, db)
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            return jsonify({"status": "ok"}), 200
-        elif service_type == config.SERVICE_RAZNARABOCHI:
-            _dispatch_raznarabochi_to_group(user, db)
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            return jsonify({"status": "ok"}), 200
-        else:
-            # Неизвестный тип — сбрасываем
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
-            return jsonify({"status": "ok"}), 200
-    
-    # Если отменил
+        return _submit_confirmed_order(user, db, service_type)
     else:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
@@ -3686,18 +3686,7 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
         if user.current_state == config.STATE_CONFIRM_ORDER:
             if button_response == "confirm_yes":
                 service_type = user.get_temp_data('service_type', '')
-                if service_type == config.SERVICE_TAXI:
-                    return _submit_taxi_order(user, db)
-                elif service_type == config.SERVICE_CAFE:
-                    return _submit_cafe_order(user, db)
-                elif service_type == config.SERVICE_SHOP:
-                    return _submit_shop_order(user, db)
-                elif service_type == config.SERVICE_PHARMACY:
-                    return _submit_pharmacy_order(user, db)
-                elif service_type == config.SERVICE_PORTER:
-                    return _submit_porter_order(user, db)
-                elif service_type == config.SERVICE_ANT:
-                    return _submit_ant_order(user, db)
+                return _submit_confirmed_order(user, db, service_type)
             elif button_response == "confirm_no":
                 user.set_state(config.STATE_IDLE)
                 user.clear_temp_data()
