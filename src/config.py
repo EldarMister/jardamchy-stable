@@ -753,7 +753,6 @@ DRIVER_WELCOME_BUTTONS = [
     {"text": "💰 Баланс", "callback": "cmd_balance"},
     {"text": "👤 Профиль", "callback": "cmd_profile"},
     {"text": "📊 Статистика", "callback": "cmd_stats"},
-    {"text": "🚘 Попутка", "callback": "cmd_poputka"},
     {"text": "❓ Помощь", "callback": "cmd_help"},
 ]
 
