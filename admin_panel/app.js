@@ -556,9 +556,15 @@ async function submitBalanceWithSign(sign) {
     };
 
     const reloadMap = {
-        driver: loadDrivers,
-        cafe: loadCafes,
-        shopper: loadShoppers,
+        driver: () => loadDrivers(),
+        cafe: () => loadCafes(),
+        shopper: () => {
+            if (typeof loadShoppers === 'function') {
+                loadShoppers();
+                return;
+            }
+            loadSectionData('shoppers');
+        },
     };
 
     try {
@@ -590,6 +596,74 @@ async function removeEntity(type, telegramId) {
         loadSectionData(currentSection);
     } catch (err) {
         toast('Ошибка удаления: ' + err.message, 'error');
+    }
+}
+
+// ============================================================================
+// SHOPPERS
+// ============================================================================
+
+async function loadShoppers() {
+    const body = document.getElementById('shoppers-body');
+    if (!body) return;
+    try {
+        const data = await api('/shoppers');
+        if (!data.shoppers || data.shoppers.length === 0) {
+            body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">Нет закупщиков</td></tr>';
+            return;
+        }
+        body.innerHTML = data.shoppers.map((s) => {
+            const bal = parseFloat(s.balance) || 0;
+            const balClass = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'zero';
+            return `
+            <tr>
+                <td>${s.name || '—'}</td>
+                <td style="font-family:monospace;font-size:12px;">${s.telegram_id}</td>
+                <td>${s.phone || '—'}</td>
+                <td>
+                    <div class="balance-display">
+                        <span class="balance-amount ${balClass}">${formatMoney(bal)}</span>
+                        <span class="balance-currency">сом</span>
+                    </div>
+                </td>
+                <td>${s.is_active ? '<span class="badge success">Активен</span>' : '<span class="badge danger">Неактивен</span>'}</td>
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-success btn-sm" onclick="showBalanceModal('shopper', '${s.telegram_id}', '${esc(s.name)}', ${bal})" title="Пополнить баланс">💰</button>
+                        <button class="btn btn-danger btn-sm" onclick="removeEntity('shoppers', '${s.telegram_id}')" title="Удалить">🗑️</button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        toast('Ошибка загрузки закупщиков', 'error');
+    }
+}
+
+function showAddShopperModal() {
+    document.getElementById('add-shopper-tg-id').value = '';
+    document.getElementById('add-shopper-name').value = '';
+    document.getElementById('add-shopper-phone').value = '';
+    openModal('modal-add-shopper');
+}
+
+async function submitAddShopper() {
+    const data = {
+        telegram_id: val('add-shopper-tg-id'),
+        name: val('add-shopper-name'),
+        phone: val('add-shopper-phone'),
+    };
+    if (!data.telegram_id || !data.name) {
+        toast('Telegram ID и ФИО обязательны', 'error');
+        return;
+    }
+    try {
+        await api('/shoppers', { method: 'POST', body: JSON.stringify(data) });
+        toast('✅ Закупщик добавлен!', 'success');
+        closeModal('modal-add-shopper');
+        loadShoppers();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
     }
 }
 
