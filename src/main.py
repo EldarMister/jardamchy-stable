@@ -1681,6 +1681,22 @@ def handle_client_cancel(user: User, db) -> bool:
     # Для остальных сервисов — просто отмена и редактирование сообщения в группе
     db.update_order_status(order_id, config.ORDER_STATUS_CANCELLED)
     _cancel_order_in_group(order_id, service_type, db, cancel_text)
+
+    # Для кафе — уведомить принявшее кафе в Telegram + вернуть баланс если уже списали
+    if service_type == config.SERVICE_CAFE:
+        provider_id = order.get('provider_id')
+        if provider_id:
+            refund_msg = ""
+            if status == config.ORDER_STATUS_READY:
+                order_amount = order.get('price_total', 0) or 1000
+                _, new_balance = db.add_cafe_balance(
+                    provider_id,
+                    round(order_amount * _runtime_setting('cafe_commission_percent', config.CAFE_COMMISSION_PERCENT) / 100, 2),
+                    f"Возврат комиссии: клиент отменил заказ #{order_id}"
+                )
+                refund_msg = f"\n💳 Комиссия возвращена. Баланс: *{new_balance:.0f} сом*"
+            send_telegram_private(provider_id, f"❌ *Заказ #{order_id} отменён клиентом.*{refund_msg}")
+
     send_whatsapp(user.phone, "❌ Заказ отменён.")
     db.log_transaction("CLIENT_CANCEL_ORDER", user.phone, order_id)
     return True

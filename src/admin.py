@@ -552,6 +552,18 @@ def update_cafe_balance(telegram_id):
         if not success:
             return jsonify({"error": "Cafe not found"}), 404
 
+        # Уведомляем кафе в Telegram
+        try:
+            send_telegram_private(
+                telegram_id,
+                f"💰 *Баланс пополнен*\n\n"
+                f"Сумма: *+{float(amount):.0f} сом*\n"
+                f"💳 Текущий баланс: *{new_balance:.0f} сом*\n"
+                f"📝 Причина: {reason}"
+            )
+        except Exception:
+            logger.warning("Failed to notify cafe %s about balance top-up", telegram_id)
+
         return jsonify({
             "success": True,
             "new_balance": float(new_balance)
@@ -695,8 +707,9 @@ def patch_order_admin(order_id):
         if not ok:
             return jsonify({"error": "Заказ не найден"}), 404
 
-        # При отмене — редактируем сообщение в Telegram-группе
+        # При отмене — редактируем сообщение в Telegram-группе и уведомляем кафе
         if status == 'CANCELLED':
+            order = db.get_order(order_id)
             try:
                 timer = db.get_latest_auction_timer(order_id)
                 if timer:
@@ -711,6 +724,29 @@ def patch_order_admin(order_id):
                     db.mark_auction_processed(timer['id'])
             except Exception:
                 logger.exception("Failed to edit group message on admin cancel order_id=%s", order_id)
+
+            # Уведомляем кафе если заказ был принят
+            if order and order.get('service_type') == config.SERVICE_CAFE:
+                provider_id = order.get('provider_id')
+                if provider_id:
+                    try:
+                        prev_status = order.get('status')
+                        refund_msg = ""
+                        # Если комиссия уже была списана (статус READY), возвращаем баланс
+                        if prev_status == config.ORDER_STATUS_READY:
+                            order_amount = order.get('price_total', 0) or 1000
+                            _, new_balance = db.add_cafe_balance(
+                                provider_id,
+                                round(order_amount * config.CAFE_COMMISSION_PERCENT / 100, 2),
+                                f"Возврат комиссии: отмена заказа #{order_id} администратором"
+                            )
+                            refund_msg = f"\n💳 Комиссия возвращена. Баланс: *{new_balance:.0f} сом*"
+                        send_telegram_private(
+                            provider_id,
+                            f"❌ *Заказ #{order_id} отменён администратором.*{refund_msg}"
+                        )
+                    except Exception:
+                        logger.exception("Failed to notify cafe on admin cancel order_id=%s", order_id)
 
         return jsonify({"ok": True}), 200
     except Exception as e:
