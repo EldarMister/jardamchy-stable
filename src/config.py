@@ -220,6 +220,7 @@ STATE_POPUTKA_CLIENT_SEATS = "POPUTKA_CLIENT_SEATS"
 
 # Разнарабочий (WhatsApp)
 STATE_RAZNARABOCHI_DESC = "RAZNARABOCHI_DESC"
+STATE_RAZNARABOCHI_COUNT = "RAZNARABOCHI_COUNT"
 
 # Веб-заказ
 STATE_WEB_ORDER_ADDRESS = "WEB_ORDER_ADDRESS"         # Ввод адреса для веб-заказа
@@ -618,23 +619,36 @@ RAZNARABOCHI_DESC_PROMPT = """👷 *Разнарабочий*
 
 Мисалы: *2 адам, уголь түшүрүш керек* же *3 киши, жер казуу*"""
 
+RAZNARABOCHI_JOB_PROMPT = """👷 *Разнарабочий*
+
+Кандай иш экенин жазыңыз.
+
+Мисалы: *1 фура ун түшүрүш керек*"""
+
+RAZNARABOCHI_COUNT_PROMPT = """👷 *Разнарабочий*
+
+Канча адам керек?
+
+Мисалы: *5 адам*"""
+
 RAZNARABOCHI_CONFIRM = """👷 *Разнарабочий — суроо*
 
 📋 Иш: {desc}
-💰 Комиссия: {commission} сом (ар бир рабочийден)
+👥 Керек адам: {workers_count}
 
-Топко жиберейинби?"""
+Заказды жиберейинби?"""
 
 RAZNARABOCHI_SENT = """✅ *Суроо жиберилди!*
 
-Рабочий табылганда сизге кабарлайбыз."""
+Жумушчу табылганда сизге кабарлайбыз."""
 
 RAZNARABOCHI_GROUP_MSG = """👷 *РАЗНАРАБОЧИЙ #{order_id}*
 
 📋 Иш: {desc}
+👥 Керек адам: {workers_count}
 💰 Комиссия: {commission} сом"""
 
-RAZNARABOCHI_WORKER_FOUND = """✅ *Рабочий табылды!*
+RAZNARABOCHI_WORKER_FOUND = """✅ *Жумушчу табылды!*
 
 👤 Аты: {worker_name}
 📞 Телефон: {worker_phone}

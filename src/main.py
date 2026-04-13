@@ -102,6 +102,7 @@ FLOW_SWITCH_SCOPE = {
     config.SERVICE_SHOP,
     config.SERVICE_PORTER,
     config.SERVICE_ANT,
+    config.SERVICE_RAZNARABOCHI,
 }
 FLOW_STALE_TTL_MINUTES = {
     config.SERVICE_TAXI: 45,
@@ -118,6 +119,7 @@ FLOW_LABELS = {
     config.SERVICE_SHOP: "Жеткирүү",
     config.SERVICE_PORTER: "Груз",
     config.SERVICE_ANT: "Муравей",
+    config.SERVICE_RAZNARABOCHI: "Разнарабочий",
 }
 FLOW_LABELS_LOWER = {
     config.SERVICE_TAXI: "такси",
@@ -125,6 +127,7 @@ FLOW_LABELS_LOWER = {
     config.SERVICE_SHOP: "жеткирүү",
     config.SERVICE_PORTER: "груз",
     config.SERVICE_ANT: "муравей",
+    config.SERVICE_RAZNARABOCHI: "разнарабочий",
 }
 FLOW_BY_STATE = {
     config.STATE_TAXI_ROUTE: config.SERVICE_TAXI,
@@ -141,6 +144,7 @@ FLOW_BY_STATE = {
     config.STATE_POPUTKA_CLIENT_DATE: config.SERVICE_POPUTKA,
     config.STATE_POPUTKA_CLIENT_SEATS: config.SERVICE_POPUTKA,
     config.STATE_RAZNARABOCHI_DESC: config.SERVICE_RAZNARABOCHI,
+    config.STATE_RAZNARABOCHI_COUNT: config.SERVICE_RAZNARABOCHI,
 }
 EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
@@ -159,6 +163,7 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_POPUTKA_CLIENT_DATE: "ожидаю дату попутки",
     config.STATE_POPUTKA_CLIENT_SEATS: "ожидаю количество мест",
     config.STATE_RAZNARABOCHI_DESC: "ожидаю описание работы",
+    config.STATE_RAZNARABOCHI_COUNT: "ожидаю количество рабочих",
 }
 
 FLOW_SWITCH_IGNORE_MESSAGES = {
@@ -1002,6 +1007,10 @@ def _resend_confirm_step(user: User) -> bool:
         )
         return True
 
+    if service_type == config.SERVICE_RAZNARABOCHI:
+        _send_confirm_with_buttons(user.phone, _build_raznarabochi_confirm_msg(user))
+        return True
+
     return False
 
 
@@ -1032,6 +1041,9 @@ def _resend_current_step_prompt(user: User) -> None:
         return
     if state == config.STATE_ANT_ROUTE:
         send_whatsapp(user.phone, config.ANT_PROMPT)
+        return
+    if state in {config.STATE_RAZNARABOCHI_DESC, config.STATE_RAZNARABOCHI_COUNT}:
+        _send_raznarabochi_next_prompt(user)
         return
     if state == config.STATE_CONFIRM_ORDER and _resend_confirm_step(user):
         return
@@ -1631,40 +1643,213 @@ def _dispatch_poputka_to_group(user: User, db) -> None:
     send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)
 
 
-def _start_raznarabochi_flow(user: User) -> tuple:
-    """Начать поток разнарабочего — спросить описание работы."""
+RAZNARABOCHI_PERSON_PATTERN = r"(?:адам(?:дар)?|киши(?:лер)?|бала(?:лар)?|человек(?:а|ов)?|рабоч(?:ий|их|ие)?|жумушчу(?:лар)?)"
+RAZNARABOCHI_DESC_FILLERS = frozenset({
+    "мага", "мне", "керек", "нужно", "надо", "нужен", "нужны",
+    "разнарабочий", "разнорабочий", "рабочий", "рабочие", "жумушчу", "жумушчулар",
+    "адам", "адамдар", "киши", "кишилер", "бала", "балдар", "человек", "люди",
+})
+RAZNARABOCHI_RU_NUMBER_WORDS = frozenset({
+    "ноль", "один", "одна", "два", "две", "три", "четыре", "пять", "шесть", "семь",
+    "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать",
+    "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать", "двадцать",
+    "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто",
+    "сто",
+})
+RAZNARABOCHI_COUNT_ONLY_TOKENS = frozenset(
+    {
+        "мага", "мне", "керек", "нужно", "надо", "нужен", "нужны",
+        "адам", "адамдар", "киши", "кишилер", "бала", "балдар",
+        "человек", "человека", "человеков", "рабочий", "рабочих", "рабочие",
+        "жумушчу", "жумушчулар",
+    }
+    | set(KY_NUM_UNITS)
+    | set(KY_NUM_TENS)
+    | set(KY_NUM_SCALE)
+    | set(RAZNARABOCHI_RU_NUMBER_WORDS)
+    | {token for alias in KY_NUM_TOKEN_ALIASES for token in alias.split()}
+)
+
+
+def _normalize_raznarabochi_text(text: str) -> str:
+    normalized = _normalize_loose_text(text)
+    return _normalize_kyrgyz_number_aliases(normalized)
+
+
+def _is_valid_raznarabochi_workers_count(value: int | None) -> bool:
+    return value is not None and 1 <= value <= 100
+
+
+def _extract_raznarabochi_count_match(normalized: str) -> tuple[int | None, tuple[int, int] | None]:
+    number_chunk = r"(?:\d+|[a-zа-яёүөңқһ]+(?:\s+[a-zа-яёүөңқһ]+){0,2})"
+    patterns = (
+        re.compile(
+            rf"(?:(?:мага|мне)\s+)?(?P<count>{number_chunk})\s+(?P<person>{RAZNARABOCHI_PERSON_PATTERN})(?:\s+(?:керек|нужно|надо|нужен|нужны))?\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"(?:керек|нужно|надо|нужен|нужны)\s+(?P<count>{number_chunk})\s+(?P<person>{RAZNARABOCHI_PERSON_PATTERN})\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"(?P<person>{RAZNARABOCHI_PERSON_PATTERN})\s+(?P<count>{number_chunk})(?:\s+(?:керек|нужно|надо|нужен|нужны))?\b",
+            flags=re.IGNORECASE,
+        ),
+    )
+
+    for pattern in patterns:
+        for match in pattern.finditer(normalized):
+            count = _extract_price(match.group("count"))
+            if _is_valid_raznarabochi_workers_count(count):
+                return count, match.span()
+    return None, None
+
+
+def _cleanup_raznarabochi_desc(text: str) -> str | None:
+    desc = re.sub(r"\s+", " ", (text or "")).strip(" ,.-")
+    if not desc:
+        return None
+
+    leading_patterns = (
+        r"^(?:мага|мне)\b",
+        r"^(?:разнарабочий|разнорабочий|рабочий|рабочие|жумушчу|жумушчулар)\b",
+        r"^(?:керек|нужно|надо|нужен|нужны)\b",
+    )
+    changed = True
+    while desc and changed:
+        changed = False
+        for pattern in leading_patterns:
+            updated = re.sub(pattern, "", desc, flags=re.IGNORECASE).strip(" ,.-")
+            if updated != desc:
+                desc = updated
+                changed = True
+
+    if not desc or desc.isdigit():
+        return None
+    if desc in RAZNARABOCHI_DESC_FILLERS:
+        return None
+    return desc
+
+
+def _is_simple_raznarabochi_count_answer(normalized: str) -> bool:
+    tokens = [t for t in normalized.split() if t]
+    if not tokens or len(tokens) > 6:
+        return False
+
+    for token in tokens:
+        base = _strip_address_case_suffix(token)
+        if base.isdigit() or base in RAZNARABOCHI_COUNT_ONLY_TOKENS:
+            continue
+        return False
+    return True
+
+
+def _extract_raznarabochi_request(message: str, allow_bare_count: bool = False) -> tuple[int | None, str | None]:
+    normalized = _normalize_raznarabochi_text(message)
+    if not normalized:
+        return None, None
+
+    workers_count, span = _extract_raznarabochi_count_match(normalized)
+    desc_source = normalized
+    if span:
+        start, end = span
+        desc_source = f"{normalized[:start]} {normalized[end:]}".strip()
+    elif allow_bare_count and _is_simple_raznarabochi_count_answer(normalized):
+        bare_count = _extract_price(normalized)
+        if _is_valid_raznarabochi_workers_count(bare_count):
+            workers_count = bare_count
+            desc_source = ""
+
+    desc = _cleanup_raznarabochi_desc(desc_source)
+    return workers_count, desc
+
+
+def _prime_raznarabochi_flow(user: User) -> None:
     _reset_unknown_fallback(user)
     user.clear_temp_data()
     user.set_temp_data('service_type', config.SERVICE_RAZNARABOCHI)
     user.set_state(config.STATE_RAZNARABOCHI_DESC)
-    send_whatsapp(user.phone, config.RAZNARABOCHI_DESC_PROMPT)
+
+
+def _get_raznarabochi_workers_count(user: User) -> int:
+    try:
+        return int(user.get_temp_data('raznarabochi_workers_count') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_raznarabochi_confirm_msg(user: User) -> str:
+    return config.RAZNARABOCHI_CONFIRM.format(
+        desc=user.get_temp_data('raznarabochi_desc', ''),
+        workers_count=_get_raznarabochi_workers_count(user),
+    )
+
+
+def _send_raznarabochi_next_prompt(user: User) -> None:
+    desc = (user.get_temp_data('raznarabochi_desc') or '').strip()
+    workers_count = _get_raznarabochi_workers_count(user)
+
+    if not desc and not workers_count:
+        user.set_state(config.STATE_RAZNARABOCHI_DESC)
+        send_whatsapp(user.phone, config.RAZNARABOCHI_DESC_PROMPT)
+        return
+    if not desc:
+        user.set_state(config.STATE_RAZNARABOCHI_DESC)
+        send_whatsapp(user.phone, config.RAZNARABOCHI_JOB_PROMPT)
+        return
+    if not workers_count:
+        user.set_state(config.STATE_RAZNARABOCHI_COUNT)
+        send_whatsapp(user.phone, config.RAZNARABOCHI_COUNT_PROMPT)
+        return
+
+
+def _handle_raznarabochi_input(user: User, message: str, db, allow_bare_count: bool = False) -> tuple:
+    workers_count, desc = _extract_raznarabochi_request(message, allow_bare_count=allow_bare_count)
+    if _is_valid_raznarabochi_workers_count(workers_count):
+        user.set_temp_data('raznarabochi_workers_count', workers_count)
+    if desc:
+        user.set_temp_data('raznarabochi_desc', desc)
+
+    saved_desc = (user.get_temp_data('raznarabochi_desc') or '').strip()
+    saved_count = _get_raznarabochi_workers_count(user)
+    if not saved_desc or not saved_count:
+        _send_raznarabochi_next_prompt(user)
+        return jsonify({"status": "ok"}), 200
+
+    user.set_state(config.STATE_CONFIRM_ORDER)
+    _send_confirm_with_buttons(user.phone, _build_raznarabochi_confirm_msg(user))
+    return jsonify({"status": "ok"}), 200
+
+
+def _start_raznarabochi_flow(user: User) -> tuple:
+    _prime_raznarabochi_flow(user)
+    _send_raznarabochi_next_prompt(user)
     return jsonify({"status": "ok"}), 200
 
 
 def handle_raznarabochi_desc(user: User, message: str, db) -> tuple:
-    """Клиент описал работу — показать подтверждение."""
-    desc = message.strip()
-    if len(desc) < 5:
-        send_whatsapp(user.phone, "⚠️ Ишти кененирээк жазыңыз.")
-        return jsonify({"status": "ok"}), 200
-    user.set_temp_data('raznarabochi_desc', desc)
-    user.set_state(config.STATE_CONFIRM_ORDER)
-    confirm_msg = config.RAZNARABOCHI_CONFIRM.format(
-        desc=desc,
-        commission=config.RAZNARABOCHI_COMMISSION,
-    )
-    _send_confirm_with_buttons(user.phone, confirm_msg)
-    return jsonify({"status": "ok"}), 200
+    return _handle_raznarabochi_input(user, message, db, allow_bare_count=False)
+
+
+def handle_raznarabochi_count(user: User, message: str, db) -> tuple:
+    return _handle_raznarabochi_input(user, message, db, allow_bare_count=True)
 
 
 def _dispatch_raznarabochi_to_group(user: User, db) -> None:
-    """Создать заказ разнарабочего и отправить в Telegram-группу."""
-    desc = user.get_temp_data('raznarabochi_desc', '')
+    desc = (user.get_temp_data('raznarabochi_desc') or '').strip()
+    workers_count = _get_raznarabochi_workers_count(user)
+    if not desc or not workers_count:
+        _send_raznarabochi_next_prompt(user)
+        return
+
+    commission_total = workers_count * int(config.RAZNARABOCHI_COMMISSION)
     order_id = db.create_order(
         client_phone=user.phone,
         service_type=config.SERVICE_RAZNARABOCHI,
         address='',
         details=desc,
+        cargo_type=str(workers_count),
+        price=commission_total,
     )
     if not order_id:
         send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
@@ -1673,9 +1858,10 @@ def _dispatch_raznarabochi_to_group(user: User, db) -> None:
     group_msg = config.RAZNARABOCHI_GROUP_MSG.format(
         order_id=order_id,
         desc=desc,
-        commission=config.RAZNARABOCHI_COMMISSION,
+        workers_count=workers_count,
+        commission=commission_total,
     )
-    buttons = [{"text": f"👷 Заказды алуу ({config.RAZNARABOCHI_COMMISSION} сом)", "callback": f"razna_accept_{order_id}"}]
+    buttons = [{"text": f"👷 Заказды алуу ({commission_total} сом)", "callback": f"razna_accept_{order_id}"}]
     dispatch_telegram_group_notification(
         config.GROUP_RAZNARABOCHI_ID,
         group_msg,
@@ -2231,6 +2417,8 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         # Разнарабочий (клиент)
         elif user.current_state == config.STATE_RAZNARABOCHI_DESC:
             return handle_raznarabochi_desc(user, incoming_msg, db)
+        elif user.current_state == config.STATE_RAZNARABOCHI_COUNT:
+            return handle_raznarabochi_count(user, incoming_msg, db)
 
         # Кафе
         elif user.current_state == config.STATE_CAFE_ORDER:
@@ -2567,7 +2755,12 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 
     # === РАЗНАРАБОЧИЙ ===
     elif intent == "raznarabochi":
-        return _start_raznarabochi_flow(user)
+        normalized = _normalize_loose_text(message)
+        quick_only = {"11", "разнарабочий", "разнорабочий", "рабочий", "рабочие", "жумушчу", "жумушчулар"}
+        if normalized in quick_only:
+            return _start_raznarabochi_flow(user)
+        _prime_raznarabochi_flow(user)
+        return handle_raznarabochi_desc(user, message, db)
 
     # === МААЛЫМДАМА (СПРАВОЧНИК) ===
     elif intent == "directory":

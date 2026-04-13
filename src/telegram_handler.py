@@ -2606,13 +2606,20 @@ def handle_raznarabochi_accept(data: str, user_id: str, user_name: str,
             _reply()
             return jsonify({"status": "ok"}), 200
 
-        # Проверка баланса
-        commission = config.RAZNARABOCHI_COMMISSION
+        try:
+            workers_count = int(order.get('cargo_type') or 0)
+        except (TypeError, ValueError):
+            workers_count = 0
+        if workers_count <= 0:
+            workers_count = 1
+
+        commission = int(order.get('price_total') or 0) or (workers_count * int(config.RAZNARABOCHI_COMMISSION))
         balance = db.get_driver_balance(user_id)
         if balance < commission:
             send_telegram_private(
                 user_id,
                 f"❌ *Балансыңыз жетишсиз.*\n\n"
+                f"👥 Керек адам: *{workers_count}*\n"
                 f"💰 Комиссия: *{commission} сом*\n"
                 f"💳 Сиздин баланс: *{balance:.0f} сом*\n\n"
                 f"Балансты толтуруп, кайра аракет кылыңыз."
@@ -2620,43 +2627,38 @@ def handle_raznarabochi_accept(data: str, user_id: str, user_name: str,
             _reply()
             return jsonify({"status": "ok"}), 200
 
-        # Списываем комиссию
         db.update_driver_balance(user_id, -commission, reason=f"Raznarabochi order {order_id} commission")
-
-        # Обновляем заказ
         db.update_order_status(order_id, config.ORDER_STATUS_ACCEPTED, provider_id=user_id)
 
-        # Получаем профиль рабочего
         driver = db.get_driver(user_id)
-        worker_name = (driver.get('name') or user_name or "Рабочий").strip() if driver else user_name
+        worker_name = (driver.get('name') or user_name or "Жумушчу").strip() if driver else user_name
         worker_phone = (driver.get('phone') or "—").strip() if driver else "—"
         new_balance = balance - commission
 
-        # Уведомляем рабочего
         send_telegram_private(
             user_id,
             f"✅ *Заказ #{order_id} алынды!*\n\n"
             f"📋 Иш: {order.get('details', '—')}\n"
+            f"👥 Керек адам: {workers_count}\n"
             f"📞 Кардар номери: {_format_phone_for_whatsapp(order.get('client_phone', '—'))}\n\n"
             f"💰 Балансыңыздан {commission} сом алынды. Учурдагы баланс: *{new_balance:.0f} сом*"
         )
 
-        # Обновляем сообщение в группе
         edit_telegram_message(
             chat_id, message_id,
             f"👷 *РАЗНАРАБОЧИЙ #{order_id} — АЛЫНДЫ* ✅\n\n"
-            f"👤 Рабочий: {worker_name}",
+            f"👤 Жумушчу: {worker_name}\n"
+            f"👥 Керек адам: {workers_count}\n"
+            f"💰 Комиссия: {commission} сом",
             buttons=[]
         )
 
-        # Уведомляем клиента через WhatsApp
         client_msg = config.RAZNARABOCHI_WORKER_FOUND.format(
             worker_name=worker_name,
             worker_phone=_format_phone_for_whatsapp(worker_phone),
         )
         send_whatsapp(order.get('client_phone', ''), client_msg)
 
-        # Закрываем таймер аукциона
         timer = db.get_latest_auction_timer(order_id, config.SERVICE_RAZNARABOCHI)
         if timer:
             db.mark_auction_processed(timer['id'])
