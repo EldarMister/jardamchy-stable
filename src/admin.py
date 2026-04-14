@@ -256,7 +256,6 @@ def get_dashboard():
                 "cafes": cafes_count,
                 "users": users_count,
             },
-            "ramadan_mode": config.IS_RAMADAN
         }), 200
 
     except Exception as e:
@@ -1286,7 +1285,6 @@ def get_statistics():
         return jsonify({
             "today": _clean_row(daily_stats),
             "weekly_by_service": _clean_rows(service_stats),
-            "ramadan_mode": config.IS_RAMADAN
         }), 200
 
     except Exception as e:
@@ -1335,7 +1333,6 @@ def get_settings():
             }
         }
         response = {
-            "is_ramadan": config.IS_RAMADAN,
             **public_runtime,
             # Legacy aliases for gradual UI rollout
             "cafe_commission": runtime["cafe_commission_percent"],
@@ -1476,31 +1473,6 @@ def send_chat_message(phone):
         logger.exception("Error sending chat message from admin panel")
         return jsonify({"error": str(e)}), 500
 
-
-@admin_bp.route('/settings/ramadan', methods=['POST'])
-def toggle_ramadan_mode():
-    """Переключить режим Рамазан"""
-    try:
-        data = request.get_json()
-        enabled = data.get('enabled', False)
-
-        mode_str = "включен" if enabled else "выключен"
-
-        db = get_db()
-        db.log_transaction(
-            "RAMADAN_MODE_CHANGED",
-            details=f"Ramadan mode {mode_str}"
-        )
-
-        return jsonify({
-            "success": True,
-            "message": f"Ramadan mode {mode_str}",
-            "enabled": enabled
-        }), 200
-
-    except Exception as e:
-        logger.exception("Error toggling ramadan mode")
-        return jsonify({"error": str(e)}), 500
 
 
 @admin_bp.route('/media/proxy')

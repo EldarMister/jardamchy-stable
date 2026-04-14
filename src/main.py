@@ -4569,7 +4569,6 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "version": "3.0.0",
-        "ramadan_mode": config.IS_RAMADAN,
         "ai_enabled": True
     }), 200
 

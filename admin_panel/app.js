@@ -1370,7 +1370,6 @@ async function loadSettings() {
         const data = await api('/settings');
         runtimeSettingsSnapshot = { ...data };
 
-        document.getElementById('setting-ramadan').textContent = data.is_ramadan ? '✅ Включён' : '❌ Выключен';
         document.getElementById('setting-cafe-comm').textContent = `${data.cafe_commission}%`;
         document.getElementById('setting-taxi-comm').textContent = `${data.taxi_commission} сом`;
         document.getElementById('setting-porter-comm').textContent = `${data.porter_commission} сом`;
@@ -1416,20 +1415,6 @@ async function saveSettings() {
         await loadSettings();
     } catch (err) {
         toast('Ошибка сохранения: ' + err.message, 'error');
-    }
-}
-
-async function toggleRamadan() {
-    const current = document.getElementById('setting-ramadan').textContent.includes('Включён');
-    try {
-        await api('/settings/ramadan', {
-            method: 'POST',
-            body: JSON.stringify({ enabled: !current }),
-        });
-        toast(`Режим Рамазан ${!current ? 'включён' : 'выключен'}`, 'success');
-        loadSettings();
-    } catch (err) {
-        toast('Ошибка: ' + err.message, 'error');
     }
 }
 

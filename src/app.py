@@ -175,7 +175,6 @@ app = create_app()
 
 if __name__ == '__main__':
     logger.info("Starting Business Assistant GO server...")
-    logger.info(f"Ramadan mode: {config.IS_RAMADAN}")
     app.run(host='0.0.0.0', port=config.PORT, debug=config.FLASK_DEBUG)
 
 # Production запуск (Railway):
