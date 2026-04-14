@@ -102,6 +102,7 @@ FLOW_SWITCH_SCOPE = {
     config.SERVICE_SHOP,
     config.SERVICE_PORTER,
     config.SERVICE_ANT,
+    config.SERVICE_POPUTKA,
     config.SERVICE_RAZNARABOCHI,
 }
 FLOW_STALE_TTL_MINUTES = {
@@ -119,6 +120,7 @@ FLOW_LABELS = {
     config.SERVICE_SHOP: "Жеткирүү",
     config.SERVICE_PORTER: "Груз",
     config.SERVICE_ANT: "Муравей",
+    config.SERVICE_POPUTKA: "7 область такси",
     config.SERVICE_RAZNARABOCHI: "Разнарабочий",
 }
 FLOW_LABELS_LOWER = {
@@ -127,6 +129,7 @@ FLOW_LABELS_LOWER = {
     config.SERVICE_SHOP: "жеткирүү",
     config.SERVICE_PORTER: "груз",
     config.SERVICE_ANT: "муравей",
+    config.SERVICE_POPUTKA: "7 область такси",
     config.SERVICE_RAZNARABOCHI: "разнарабочий",
 }
 FLOW_BY_STATE = {
@@ -140,9 +143,11 @@ FLOW_BY_STATE = {
     config.STATE_PORTER_CARGO_TYPE: config.SERVICE_PORTER,
     config.STATE_PORTER_ROUTE: config.SERVICE_PORTER,
     config.STATE_ANT_ROUTE: config.SERVICE_ANT,
-    config.STATE_POPUTKA_CLIENT_DEST: config.SERVICE_POPUTKA,
-    config.STATE_POPUTKA_CLIENT_DATE: config.SERVICE_POPUTKA,
-    config.STATE_POPUTKA_CLIENT_SEATS: config.SERVICE_POPUTKA,
+    config.STATE_OBLAST_TYPE: config.SERVICE_POPUTKA,
+    config.STATE_OBLAST_FROM: config.SERVICE_POPUTKA,
+    config.STATE_OBLAST_TO: config.SERVICE_POPUTKA,
+    config.STATE_OBLAST_PERSONS: config.SERVICE_POPUTKA,
+    config.STATE_OBLAST_CARGO: config.SERVICE_POPUTKA,
     config.STATE_RAZNARABOCHI_DESC: config.SERVICE_RAZNARABOCHI,
     config.STATE_RAZNARABOCHI_COUNT: config.SERVICE_RAZNARABOCHI,
 }
@@ -159,9 +164,11 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_PORTER_ROUTE: "ожидаю маршрут груза",
     config.STATE_ANT_ROUTE: "ожидаю маршрут",
     config.STATE_CONFIRM_ORDER: "ожидаю подтверждение заказа",
-    config.STATE_POPUTKA_CLIENT_DEST: "ожидаю направление попутки",
-    config.STATE_POPUTKA_CLIENT_DATE: "ожидаю дату попутки",
-    config.STATE_POPUTKA_CLIENT_SEATS: "ожидаю количество мест",
+    config.STATE_OBLAST_TYPE: "ожидаю выбор адам/жүк",
+    config.STATE_OBLAST_FROM: "ожидаю откуда",
+    config.STATE_OBLAST_TO: "ожидаю куда",
+    config.STATE_OBLAST_PERSONS: "ожидаю кол-во человек",
+    config.STATE_OBLAST_CARGO: "ожидаю описание груза",
     config.STATE_RAZNARABOCHI_DESC: "ожидаю описание работы",
     config.STATE_RAZNARABOCHI_COUNT: "ожидаю количество рабочих",
 }
@@ -1015,6 +1022,9 @@ def _resend_confirm_step(user: User) -> bool:
         )
         return True
 
+    if service_type == config.SERVICE_POPUTKA:
+        return bool(_send_oblast_confirm(user))
+
     if service_type == config.SERVICE_RAZNARABOCHI:
         _send_confirm_with_buttons(user.phone, _build_raznarabochi_confirm_msg(user))
         return True
@@ -1072,6 +1082,36 @@ def _resend_current_step_prompt(user: User) -> None:
         return
     if state == config.STATE_ANT_ROUTE:
         _send_back_prompt(user.phone, config.ANT_PROMPT)
+        return
+    if state == config.STATE_OBLAST_TYPE:
+        kind = (user.get_temp_data("oblast_kind") or "").strip()
+        if kind in {OBLAST_KIND_PERSON, OBLAST_KIND_CARGO}:
+            _send_oblast_route_prompt(user, kind)
+        else:
+            _send_oblast_type_prompt(user)
+        return
+    if state == config.STATE_OBLAST_FROM:
+        send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+        return
+    if state == config.STATE_OBLAST_TO:
+        send_whatsapp(user.phone, config.OBLAST_TAXI_TO_PROMPT)
+        return
+    if state == config.STATE_OBLAST_PERSONS:
+        send_whatsapp(user.phone, config.OBLAST_TAXI_PERSONS_PROMPT)
+        return
+    if state == config.STATE_OBLAST_CARGO:
+        send_whatsapp(user.phone, config.OBLAST_TAXI_CARGO_PROMPT)
+        return
+    if state in {
+        config.STATE_POPUTKA_CLIENT_DEST,
+        config.STATE_POPUTKA_CLIENT_DATE,
+        config.STATE_POPUTKA_CLIENT_SEATS,
+    }:
+        kind = (user.get_temp_data("oblast_kind") or "").strip()
+        if kind in {OBLAST_KIND_PERSON, OBLAST_KIND_CARGO}:
+            _send_oblast_route_prompt(user, kind)
+        else:
+            _send_oblast_type_prompt(user)
         return
     if state in {config.STATE_RAZNARABOCHI_DESC, config.STATE_RAZNARABOCHI_COUNT}:
         _send_raznarabochi_next_prompt(user)
@@ -1628,13 +1668,394 @@ def _send_specialist_request(user: User, client_message: str, service_name: str)
     return jsonify({"status": "ok"}), 200
 
 
+OBLAST_KIND_PERSON = "person"
+OBLAST_KIND_CARGO = "cargo"
+OBLAST_PERSON_MARKERS = frozenset({
+    "адам", "адамдар", "киши", "кишилер", "человек", "человека", "человеков", "пассажир", "пассажира",
+})
+OBLAST_CARGO_MARKERS = (
+    "жүк", "жук", "груз", "жеткир", "достав", "алып берүү", "алып бер", "алып кел", "алып бар",
+    "салып", "берип", "посыл", "пакет", "буюм", "документ", "телефон", "товар", "вещ",
+)
+OBLAST_CARGO_FILLERS = frozenset({
+    "жүк", "жук", "груз", "жеткир", "жеткирүү", "жеткируу", "доставка", "доставить",
+    "алып", "ал", "бер", "берүү", "беруу", "берип", "бериш", "кел", "келүү", "келуу",
+    "бар", "баруу", "салып", "салыш", "керек", "нужно", "надо", "please",
+    "кайдан", "кайда", "из", "в", "на", "от", "до", "же", "менен",
+})
+
+
+def _clear_oblast_temp_data(user: User) -> None:
+    for key in (
+        "oblast_kind", "oblast_from", "oblast_to", "oblast_persons", "oblast_cargo", "oblast_from_partial",
+        "poputka_dest", "poputka_date", "poputka_seats", "poputka_expires_at",
+    ):
+        user.set_temp_data(key, None)
+
+
+def _send_oblast_type_prompt(user: User) -> None:
+    user.set_temp_data("service_type", config.SERVICE_POPUTKA)
+    buttons = [
+        {"id": config.OBLAST_TYPE_PERSON_BUTTON_ID, "text": "👤 Адам"},
+        {"id": config.OBLAST_TYPE_CARGO_BUTTON_ID, "text": "📦 Жүк"},
+        {"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"},
+    ]
+    if not send_whatsapp_buttons(user.phone, config.OBLAST_TAXI_FIRST_MSG, buttons, include_cancel=False):
+        send_whatsapp(user.phone, config.OBLAST_TAXI_FIRST_MSG)
+
+
+def _send_oblast_route_prompt(user: User, kind: str) -> None:
+    prompt = (
+        config.OBLAST_TAXI_PERSON_ROUTE_PROMPT
+        if kind == OBLAST_KIND_PERSON else
+        config.OBLAST_TAXI_CARGO_ROUTE_PROMPT
+    )
+    _send_back_prompt(user.phone, prompt)
+
+
+def _get_oblast_commission(kind: str, persons: int | None = None) -> int:
+    base = int(config.POPUTKA_COMMISSION)
+    if kind == OBLAST_KIND_PERSON:
+        return base * max(1, int(persons or 1))
+    return base
+
+
+def _extract_oblast_persons_count(message: str) -> int | None:
+    prepared = _convert_kyrgyz_numbers_to_digits(_normalize_loose_text(message or ""))
+    if not prepared:
+        return None
+
+    match = re.search(
+        r"\b(\d{1,2})\s*(?:адам(?:дар)?|киши(?:лер)?|человек(?:а|ов)?|пассажир(?:а|ов)?)\b",
+        prepared,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            r"\b(?:адам(?:дар)?|киши(?:лер)?|человек(?:а|ов)?|пассажир(?:а|ов)?)\s*(\d{1,2})\b",
+            prepared,
+            flags=re.IGNORECASE,
+        )
+
+    value = None
+    if match:
+        value = int(match.group(1))
+    else:
+        numbers = [int(item) for item in re.findall(r"\b(\d{1,2})\b", prepared)]
+        if len(numbers) == 1 and not any(marker in prepared.lower() for marker in OBLAST_CARGO_MARKERS):
+            value = numbers[0]
+
+    if value is None or not (1 <= value <= 20):
+        return None
+    return value
+
+
+def _extract_oblast_route(message: str) -> tuple[str, str, dict]:
+    msg = (message or "").strip()
+    nlu_result = parse_user_message(msg)
+    from_addr = (_canonicalize_optional_address(nlu_result.get("from_address")) or "").strip()
+    to_addr = (_canonicalize_optional_address(nlu_result.get("to_address")) or "").strip()
+
+    if not from_addr and not to_addr:
+        dash_split = re.split(r"\s*[—-]\s*", msg, maxsplit=1)
+        if len(dash_split) == 2 and dash_split[0].strip() and dash_split[1].strip():
+            from_addr = _canonicalize_address_value(dash_split[0].strip())
+            to_addr = _canonicalize_address_value(dash_split[1].strip())
+
+    return from_addr, to_addr, nlu_result
+
+
+def _detect_oblast_kind(message: str) -> str | None:
+    prepared = _normalize_loose_text(_convert_kyrgyz_numbers_to_digits(message or "")).lower()
+    if not prepared:
+        return None
+
+    if any(marker in prepared for marker in OBLAST_CARGO_MARKERS):
+        return OBLAST_KIND_CARGO
+
+    if any(marker in prepared for marker in OBLAST_PERSON_MARKERS):
+        return OBLAST_KIND_PERSON
+
+    if _extract_oblast_persons_count(prepared) is not None:
+        return OBLAST_KIND_PERSON
+
+    return None
+
+
+def _extract_oblast_cargo_desc(
+    message: str,
+    from_addr: str = "",
+    to_addr: str = "",
+    nlu_result: dict | None = None,
+) -> str:
+    direct = ((nlu_result or {}).get("cargo_type") or "").strip()
+    if direct:
+        return direct
+
+    prepared = _normalize_loose_text(_convert_kyrgyz_numbers_to_digits(message or "")).lower()
+    if not prepared:
+        return ""
+
+    address_tokens: set[str] = set()
+    for address in (from_addr, to_addr):
+        for token in re.findall(r"[\w-]+", _normalize_loose_text(address).lower(), flags=re.UNICODE):
+            address_tokens.add(token)
+            address_tokens.add(_strip_address_case_suffix(token))
+
+    tokens = re.findall(r"[\w-]+", prepared, flags=re.UNICODE)
+    kept: list[str] = []
+    for token in tokens:
+        stripped = _strip_address_case_suffix(token)
+        if token in address_tokens or stripped in address_tokens:
+            continue
+        if token in OBLAST_CARGO_FILLERS or stripped in OBLAST_CARGO_FILLERS:
+            continue
+        if token in OBLAST_PERSON_MARKERS or stripped in OBLAST_PERSON_MARKERS:
+            continue
+        kept.append(token)
+
+    return " ".join(kept).strip()
+
+
+def _send_oblast_confirm(user: User) -> tuple:
+    kind = (user.get_temp_data("oblast_kind") or "").strip()
+    from_addr = _canonicalize_address_value(user.get_temp_data("oblast_from", "") or "")
+    to_addr = _canonicalize_address_value(user.get_temp_data("oblast_to", "") or "")
+
+    if not from_addr:
+        user.set_state(config.STATE_OBLAST_FROM)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+        return jsonify({"status": "ok"}), 200
+    if not to_addr:
+        user.set_state(config.STATE_OBLAST_TO)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_TO_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if _is_vague_address(from_addr) or _is_vague_address(to_addr):
+        send_whatsapp(user.phone, config.VAGUE_ADDRESS_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if _addresses_equal(from_addr, to_addr):
+        user.set_temp_data("oblast_to", None)
+        user.set_state(config.STATE_OBLAST_TO)
+        send_whatsapp(user.phone, "⚠️ Кайдан менен кайда бирдей болуп калды.\n\n" + config.OBLAST_TAXI_TO_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    user.set_temp_data("service_type", config.SERVICE_POPUTKA)
+    user.set_temp_data("oblast_from", from_addr)
+    user.set_temp_data("oblast_to", to_addr)
+    user.set_temp_data("oblast_from_partial", None)
+    user.set_state(config.STATE_CONFIRM_ORDER)
+
+    if kind == OBLAST_KIND_PERSON:
+        persons = int(user.get_temp_data("oblast_persons") or 0)
+        if persons <= 0:
+            user.set_state(config.STATE_OBLAST_PERSONS)
+            send_whatsapp(user.phone, config.OBLAST_TAXI_PERSONS_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        confirm_msg = config.OBLAST_TAXI_CONFIRM_PERSON.format(
+            from_addr=from_addr,
+            to_addr=to_addr,
+            persons=persons,
+            commission=_get_oblast_commission(kind, persons),
+        )
+    else:
+        cargo_desc = (user.get_temp_data("oblast_cargo") or "").strip()
+        if not cargo_desc:
+            user.set_state(config.STATE_OBLAST_CARGO)
+            send_whatsapp(user.phone, config.OBLAST_TAXI_CARGO_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        confirm_msg = config.OBLAST_TAXI_CONFIRM_CARGO.format(
+            from_addr=from_addr,
+            to_addr=to_addr,
+            cargo_desc=cargo_desc,
+            commission=_get_oblast_commission(kind),
+        )
+
+    _send_confirm_with_buttons(user.phone, confirm_msg)
+    return jsonify({"status": "ok"}), 200
+
+
+def _prompt_oblast_for_missing_data(user: User, kind: str) -> tuple:
+    user.set_temp_data("service_type", config.SERVICE_POPUTKA)
+    from_addr = _canonicalize_address_value(user.get_temp_data("oblast_from", "") or "")
+    to_addr = _canonicalize_address_value(user.get_temp_data("oblast_to", "") or "")
+
+    if not from_addr:
+        user.set_state(config.STATE_OBLAST_FROM)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if not to_addr:
+        user.set_state(config.STATE_OBLAST_TO)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_TO_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if kind == OBLAST_KIND_PERSON and not int(user.get_temp_data("oblast_persons") or 0):
+        user.set_state(config.STATE_OBLAST_PERSONS)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_PERSONS_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    if kind == OBLAST_KIND_CARGO and not (user.get_temp_data("oblast_cargo") or "").strip():
+        user.set_state(config.STATE_OBLAST_CARGO)
+        send_whatsapp(user.phone, config.OBLAST_TAXI_CARGO_PROMPT)
+        return jsonify({"status": "ok"}), 200
+
+    return _send_oblast_confirm(user)
+
+
+def handle_oblast_taxi_request(
+    user: User,
+    message: str,
+    db,
+    selected_kind: str | None = None,
+) -> tuple:
+    msg = (message or "").strip()
+    user.set_temp_data("service_type", config.SERVICE_POPUTKA)
+    current_state = user.current_state
+
+    if selected_kind in {OBLAST_KIND_PERSON, OBLAST_KIND_CARGO}:
+        user.set_temp_data("oblast_kind", selected_kind)
+        user.set_state(config.STATE_OBLAST_TYPE)
+        _send_oblast_route_prompt(user, selected_kind)
+        return jsonify({"status": "ok"}), 200
+
+    kind = (user.get_temp_data("oblast_kind") or "").strip()
+    if not kind and current_state == config.STATE_OBLAST_TYPE:
+        kind = _detect_oblast_kind(msg)
+        if not kind:
+            _send_oblast_type_prompt(user)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data("oblast_kind", kind)
+    elif not kind and current_state in {
+        config.STATE_OBLAST_FROM,
+        config.STATE_OBLAST_TO,
+        config.STATE_OBLAST_PERSONS,
+        config.STATE_OBLAST_CARGO,
+        config.STATE_POPUTKA_CLIENT_DEST,
+        config.STATE_POPUTKA_CLIENT_DATE,
+        config.STATE_POPUTKA_CLIENT_SEATS,
+    }:
+        kind = _detect_oblast_kind(msg) or OBLAST_KIND_PERSON
+        user.set_temp_data("oblast_kind", kind)
+
+    if kind not in {"person", "cargo"}:
+        _send_oblast_type_prompt(user)
+        return jsonify({"status": "ok"}), 200
+
+    if not msg:
+        if current_state in {
+            config.STATE_OBLAST_FROM,
+            config.STATE_OBLAST_TO,
+            config.STATE_OBLAST_PERSONS,
+            config.STATE_OBLAST_CARGO,
+        }:
+            return _prompt_oblast_for_missing_data(user, kind)
+        _send_oblast_route_prompt(user, kind)
+        return jsonify({"status": "ok"}), 200
+
+    if current_state == config.STATE_OBLAST_FROM:
+        from_addr = _canonicalize_address_value(msg)
+        if not from_addr or _is_vague_address(from_addr):
+            send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data("oblast_from", from_addr)
+        user.set_temp_data("oblast_from_partial", from_addr)
+        return _prompt_oblast_for_missing_data(user, kind)
+
+    if current_state == config.STATE_OBLAST_TO:
+        to_addr = _canonicalize_address_value(msg)
+        if not to_addr or _is_vague_address(to_addr):
+            send_whatsapp(user.phone, config.OBLAST_TAXI_TO_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data("oblast_to", to_addr)
+        user.set_temp_data("oblast_from_partial", None)
+        return _prompt_oblast_for_missing_data(user, kind)
+
+    if kind == OBLAST_KIND_PERSON and current_state == config.STATE_OBLAST_PERSONS:
+        persons = _extract_oblast_persons_count(msg)
+        if persons is None:
+            send_whatsapp(user.phone, config.OBLAST_TAXI_PERSONS_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data("oblast_persons", persons)
+        return _prompt_oblast_for_missing_data(user, kind)
+
+    if kind == OBLAST_KIND_CARGO and current_state == config.STATE_OBLAST_CARGO:
+        cargo_desc = _extract_oblast_cargo_desc(
+            msg,
+            user.get_temp_data("oblast_from", "") or "",
+            user.get_temp_data("oblast_to", "") or "",
+        )
+        if not cargo_desc:
+            send_whatsapp(user.phone, config.OBLAST_TAXI_CARGO_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        user.set_temp_data("oblast_cargo", cargo_desc)
+        return _prompt_oblast_for_missing_data(user, kind)
+
+    parsed_from, parsed_to, nlu_result = _extract_oblast_route(msg)
+    if parsed_from:
+        user.set_temp_data("oblast_from", parsed_from)
+        user.set_temp_data("oblast_from_partial", parsed_from)
+    if parsed_to:
+        user.set_temp_data("oblast_to", parsed_to)
+        if parsed_from:
+            user.set_temp_data("oblast_from_partial", None)
+
+    if kind == OBLAST_KIND_PERSON:
+        persons = _extract_oblast_persons_count(msg)
+        if persons is not None:
+            user.set_temp_data("oblast_persons", persons)
+
+        current_from = _canonicalize_address_value(user.get_temp_data("oblast_from", "") or "")
+        current_to = _canonicalize_address_value(user.get_temp_data("oblast_to", "") or "")
+        if not current_from and not current_to:
+            if persons is not None:
+                user.set_state(config.STATE_OBLAST_FROM)
+                send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+                return jsonify({"status": "ok"}), 200
+
+            single_addr = _canonicalize_address_value(msg)
+            if single_addr and not _is_vague_address(single_addr):
+                user.set_temp_data("oblast_from", single_addr)
+                user.set_temp_data("oblast_from_partial", single_addr)
+            else:
+                _send_oblast_route_prompt(user, kind)
+                return jsonify({"status": "ok"}), 200
+
+        return _prompt_oblast_for_missing_data(user, kind)
+
+    cargo_desc = _extract_oblast_cargo_desc(
+        msg,
+        user.get_temp_data("oblast_from", "") or "",
+        user.get_temp_data("oblast_to", "") or "",
+        nlu_result=nlu_result,
+    )
+    if cargo_desc:
+        user.set_temp_data("oblast_cargo", cargo_desc)
+
+    current_from = _canonicalize_address_value(user.get_temp_data("oblast_from", "") or "")
+    current_to = _canonicalize_address_value(user.get_temp_data("oblast_to", "") or "")
+    current_cargo = (user.get_temp_data("oblast_cargo") or "").strip()
+
+    if not current_from and not current_to:
+        if current_cargo:
+            user.set_state(config.STATE_OBLAST_FROM)
+            send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
+            return jsonify({"status": "ok"}), 200
+        _send_oblast_route_prompt(user, kind)
+        return jsonify({"status": "ok"}), 200
+
+    return _prompt_oblast_for_missing_data(user, kind)
+
+
 def _start_poputka_client_flow(user: User) -> tuple:
     """Начать клиентский запрос попутки — спросить направление."""
     _reset_unknown_fallback(user)
     user.clear_temp_data()
+    _clear_oblast_temp_data(user)
     user.set_temp_data('service_type', config.SERVICE_POPUTKA)
-    user.set_state(config.STATE_POPUTKA_CLIENT_DEST)
-    _send_back_prompt(user.phone, config.POPUTKA_CLIENT_DEST_PROMPT)
+    user.set_state(config.STATE_OBLAST_TYPE)
+    _send_oblast_type_prompt(user)
     return jsonify({"status": "ok"}), 200
 
 
@@ -2607,6 +3028,16 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
             return handle_confirm_order(user, incoming_msg, db)
         
         # Попутка (клиент)
+        elif user.current_state == config.STATE_OBLAST_TYPE:
+            return handle_oblast_taxi_request(user, incoming_msg, db)
+        elif user.current_state == config.STATE_OBLAST_FROM:
+            return handle_oblast_taxi_request(user, incoming_msg, db)
+        elif user.current_state == config.STATE_OBLAST_TO:
+            return handle_oblast_taxi_request(user, incoming_msg, db)
+        elif user.current_state == config.STATE_OBLAST_PERSONS:
+            return handle_oblast_taxi_request(user, incoming_msg, db)
+        elif user.current_state == config.STATE_OBLAST_CARGO:
+            return handle_oblast_taxi_request(user, incoming_msg, db)
         elif user.current_state == config.STATE_POPUTKA_CLIENT_DEST:
             return handle_poputka_client_dest(user, incoming_msg)
         elif user.current_state == config.STATE_POPUTKA_CLIENT_DATE:
@@ -3091,6 +3522,21 @@ def _handle_correction(user: User, confirmation: dict, service_type: str) -> tup
         confirm_msg = config.CONFIRM_SHOP.format(order_details=order_details, address=address)
         _send_confirm_with_buttons(user.phone, confirm_msg)
     
+    elif service_type == config.SERVICE_POPUTKA:
+        kind = (user.get_temp_data("oblast_kind") or OBLAST_KIND_PERSON).strip()
+        if confirmation.get("corrected_from"):
+            user.set_temp_data("oblast_from", _canonicalize_address_value(confirmation["corrected_from"]))
+        if confirmation.get("corrected_to"):
+            user.set_temp_data("oblast_to", _canonicalize_address_value(confirmation["corrected_to"]))
+        if confirmation.get("corrected_details"):
+            if kind == OBLAST_KIND_PERSON:
+                persons = _extract_oblast_persons_count(confirmation["corrected_details"])
+                if persons is not None:
+                    user.set_temp_data("oblast_persons", persons)
+            else:
+                user.set_temp_data("oblast_cargo", confirmation["corrected_details"].strip())
+        return _send_oblast_confirm(user)
+
     elif service_type == config.SERVICE_PHARMACY:
         return _show_pharmacy_removed_notice(user)
 
@@ -4084,6 +4530,12 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
         }:
             return handle_raznarabochi_reorder_choice(user, button_response, db)
 
+        if button_response == config.OBLAST_TYPE_PERSON_BUTTON_ID:
+            return handle_oblast_taxi_request(user, "", db, selected_kind=OBLAST_KIND_PERSON)
+
+        if button_response == config.OBLAST_TYPE_CARGO_BUTTON_ID:
+            return handle_oblast_taxi_request(user, "", db, selected_kind=OBLAST_KIND_CARGO)
+
         # Универсальное подтверждение заказа (Cloud API кнопки Да/Нет)
         if user.current_state == config.STATE_CONFIRM_ORDER:
             if button_response == "confirm_yes":
@@ -4120,3 +4572,144 @@ def health_check():
         "ramadan_mode": config.IS_RAMADAN,
         "ai_enabled": True
     }), 200
+
+
+def _start_poputka_client_flow(user: User) -> tuple:
+    """Начать клиентский flow 7 область такси."""
+    _reset_unknown_fallback(user)
+    user.clear_temp_data()
+    _clear_oblast_temp_data(user)
+    user.set_temp_data("service_type", config.SERVICE_POPUTKA)
+    user.set_state(config.STATE_OBLAST_TYPE)
+    _send_oblast_type_prompt(user)
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_poputka_client_dest(user: User, message: str) -> tuple:
+    """Legacy wrapper: переводим старый state попутки в новый oblast-flow."""
+    if user.current_state == config.STATE_POPUTKA_CLIENT_DEST:
+        user.set_state(config.STATE_OBLAST_TYPE)
+    return handle_oblast_taxi_request(user, message, None)
+
+
+def handle_poputka_client_date(user: User, message: str) -> tuple:
+    """Legacy wrapper: переводим старый state попутки в новый oblast-flow."""
+    user.set_state(config.STATE_OBLAST_TYPE)
+    return handle_oblast_taxi_request(user, message, None)
+
+
+def handle_poputka_client_seats(user: User, message: str, db) -> tuple:
+    """Legacy wrapper: переводим старый state попутки в новый oblast-flow."""
+    user.set_state(config.STATE_OBLAST_TYPE)
+    return handle_oblast_taxi_request(user, message, db)
+
+
+def _dispatch_poputka_to_group(user: User, db) -> None:
+    """Создать заказ 7 область такси и отправить в Telegram-группу."""
+    kind = (user.get_temp_data("oblast_kind") or "").strip()
+
+    if kind not in {"person", "cargo"}:
+        dest = user.get_temp_data("poputka_dest", "")
+        date_text = user.get_temp_data("poputka_date", "")
+        seats = user.get_temp_data("poputka_seats", 1)
+        expires_at_raw = user.get_temp_data("poputka_expires_at")
+        expires_at = None
+        if isinstance(expires_at_raw, str) and expires_at_raw:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_raw)
+            except ValueError:
+                expires_at = None
+
+        details = f"Багыт: {dest}\nКачан: {date_text}\nКиши: {seats}"
+        order_id = db.create_order(
+            client_phone=user.phone,
+            service_type=config.SERVICE_POPUTKA,
+            address=dest,
+            details=details,
+            expires_at=expires_at,
+        )
+        if not order_id:
+            send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
+            return
+
+        timeout_seconds = FLOW_STALE_TTL_MINUTES.get(config.SERVICE_POPUTKA, 240) * 60
+        if expires_at is not None:
+            now_local = _bishkek_now_naive()
+            timeout_seconds = max(1, int((expires_at - now_local).total_seconds()))
+
+        group_msg = config.POPUTKA_GROUP_MSG.format(
+            order_id=order_id,
+            destination=dest,
+            date_text=date_text,
+            seats=seats,
+            from_addr=dest,
+            to_addr=date_text,
+            persons=seats,
+            commission=config.POPUTKA_COMMISSION,
+            client_phone=user.phone,
+            cargo_desc="",
+        )
+        buttons = [{"text": f"🚘 Заказды алуу ({config.POPUTKA_COMMISSION} сом)", "callback": f"poputka_accept_{order_id}"}]
+        dispatch_telegram_group_notification(
+            config.GROUP_POPUTKA_ID,
+            group_msg,
+            buttons,
+            order_id=order_id,
+            service_type=config.SERVICE_POPUTKA,
+            timeout_seconds=timeout_seconds,
+        )
+        send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)
+        return
+
+    from_addr = _canonicalize_address_value(user.get_temp_data("oblast_from", "") or "")
+    to_addr = _canonicalize_address_value(user.get_temp_data("oblast_to", "") or "")
+    persons = int(user.get_temp_data("oblast_persons") or 0)
+    cargo_desc = (user.get_temp_data("oblast_cargo") or "").strip()
+    commission = _get_oblast_commission(kind, persons if kind == "person" else None)
+    address = f"{from_addr} — {to_addr}"
+    details = (
+        f"Түрү: адам\nКиши: {persons}"
+        if kind == "person" else
+        f"Түрү: жүк\nЖүк: {cargo_desc}"
+    )
+
+    order_id = db.create_order(
+        client_phone=user.phone,
+        service_type=config.SERVICE_POPUTKA,
+        address=address,
+        details=details,
+        price=commission,
+    )
+    if not order_id:
+        send_whatsapp(user.phone, "❌ Ката кетти. Кайра баштаңыз.")
+        return
+
+    if kind == "person":
+        group_msg = config.OBLAST_TAXI_GROUP_PERSON.format(
+            order_id=order_id,
+            from_addr=from_addr,
+            to_addr=to_addr,
+            persons=persons,
+            commission=commission,
+            client_phone=user.phone,
+        )
+    else:
+        group_msg = config.OBLAST_TAXI_GROUP_CARGO.format(
+            order_id=order_id,
+            from_addr=from_addr,
+            to_addr=to_addr,
+            cargo_desc=cargo_desc,
+            commission=commission,
+            client_phone=user.phone,
+        )
+
+    buttons = [{"text": f"🚘 Заказды алуу ({commission} сом)", "callback": f"poputka_accept_{order_id}"}]
+    dispatch_telegram_group_notification(
+        config.GROUP_POPUTKA_ID,
+        group_msg,
+        buttons,
+        order_id=order_id,
+        service_type=config.SERVICE_POPUTKA,
+        timeout_seconds=FLOW_STALE_TTL_MINUTES.get(config.SERVICE_POPUTKA, 240) * 60,
+    )
+    send_whatsapp(user.phone, config.POPUTKA_CLIENT_SENT)

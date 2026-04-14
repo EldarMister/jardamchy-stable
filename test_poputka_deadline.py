@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import sys
+import types
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -12,6 +14,7 @@ SRC_DIR = ROOT / "src"
 
 
 def _load_module(path: Path, name: str):
+    sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -113,6 +116,48 @@ class FakeAcceptDB:
         self.processed_timers.append(timer_id)
 
 
+class FakeAcceptSuccessDB:
+    def __init__(self, order: dict, balance: int = 500):
+        self.order = order
+        self.balance = balance
+        self.balance_updates: list[tuple[str, int, str]] = []
+        self.status_updates: list[tuple[str, str, dict]] = []
+        self.processed_timers: list[int] = []
+        self.logs: list[tuple[str, str, str]] = []
+
+    def get_order(self, order_id):
+        if order_id == self.order["order_id"]:
+            return self.order
+        return None
+
+    def get_driver_balance(self, user_id):
+        return self.balance
+
+    def update_driver_balance(self, user_id, amount, reason=""):
+        self.balance_updates.append((user_id, amount, reason))
+        self.balance += amount
+
+    def update_order_status(self, order_id, status, **kwargs):
+        self.status_updates.append((order_id, status, kwargs))
+
+    def get_driver(self, user_id):
+        return {
+            "name": "Ali",
+            "phone": "996700111222",
+            "car_model": "Honda Fit",
+            "plate": "01KG123ABC",
+        }
+
+    def get_latest_auction_timer(self, order_id, service_type=None):
+        return {"id": 91}
+
+    def mark_auction_processed(self, timer_id):
+        self.processed_timers.append(timer_id)
+
+    def log_transaction(self, action, user_id, order_id):
+        self.logs.append((action, user_id, order_id))
+
+
 def _build_main_namespace(now_local: datetime):
     config = _load_config()
     sent_messages: list[tuple[str, str]] = []
@@ -168,6 +213,7 @@ def _build_telegram_namespace(now_local: datetime):
     deleted_messages: list[tuple[str, int]] = []
     edited_messages: list[tuple[str, int, str, list]] = []
     callbacks: list[tuple[str | None, str | None]] = []
+    client_messages: list[tuple[str, str]] = []
 
     class Logger:
         @staticmethod
@@ -178,9 +224,11 @@ def _build_telegram_namespace(now_local: datetime):
         "config": config,
         "_bishkek_now_naive": lambda: now_local,
         "send_telegram_private": lambda user_id, text: private_messages.append((user_id, text)),
+        "send_whatsapp": lambda phone, text: client_messages.append((phone, text)),
         "delete_telegram_message": lambda chat_id, message_id: deleted_messages.append((chat_id, message_id)),
         "edit_telegram_message": lambda chat_id, message_id, text, buttons=None: edited_messages.append((chat_id, message_id, text, buttons or [])),
         "_answer_callback": lambda callback_id, text=None: callbacks.append((callback_id, text)),
+        "_format_phone_for_whatsapp": lambda phone: phone,
         "jsonify": lambda payload: payload,
         "logger": Logger(),
     }
@@ -190,7 +238,7 @@ def _build_telegram_namespace(now_local: datetime):
         func_names={"handle_poputka_accept"},
         namespace=namespace,
     )
-    return namespace, private_messages, deleted_messages, edited_messages, callbacks
+    return namespace, private_messages, deleted_messages, edited_messages, callbacks, client_messages
 
 
 def test_poputka_deadline_parser_builds_exact_local_datetime_for_today():
@@ -246,7 +294,7 @@ def test_poputka_cron_cancels_order_and_deletes_group_message():
 
 def test_poputka_accept_rejects_expired_order():
     now_local = datetime(2026, 4, 13, 10, 0, 0)
-    ns, private_messages, deleted_messages, edited_messages, callbacks = _build_telegram_namespace(now_local)
+    ns, private_messages, deleted_messages, edited_messages, callbacks, _ = _build_telegram_namespace(now_local)
     db = FakeAcceptDB(
         order={
             "order_id": "GOPOP1",
@@ -273,3 +321,45 @@ def test_poputka_accept_rejects_expired_order():
     assert edited_messages == []
     assert private_messages
     assert callbacks == [("cb-1", None)]
+
+
+def test_poputka_accept_uses_order_price_total_for_commission():
+    now_local = datetime(2026, 4, 13, 10, 0, 0)
+    ns, private_messages, _, edited_messages, callbacks, client_messages = _build_telegram_namespace(now_local)
+    db = FakeAcceptSuccessDB(
+        order={
+            "order_id": "GOPOP2",
+            "status": "PENDING",
+            "expires_at": datetime(2026, 4, 13, 10, 30, 0),
+            "client_phone": "996555000111",
+            "address": "Шамалды-Сай — Ош",
+            "details": "Түрү: адам\nКиши: 2",
+            "price_total": 40,
+        },
+        balance=100,
+    )
+
+    response, status = ns["handle_poputka_accept"](
+        "poputka_accept_GOPOP2",
+        "driver-1",
+        "Ali",
+        "group-chat",
+        77,
+        db,
+        "cb-2",
+    )
+
+    assert status == 200
+    assert response["status"] == "ok"
+    assert db.balance_updates == [("driver-1", -40, "Поputka order GOPOP2 commission")]
+    assert db.status_updates == [("GOPOP2", _load_config().ORDER_STATUS_ACCEPTED, {"provider_id": "driver-1", "driver_commission": 40})]
+    assert db.processed_timers == [91]
+    assert db.logs == [("POPUTKA_ACCEPTED", "driver-1", "GOPOP2")]
+    assert callbacks == [("cb-2", None)]
+    assert edited_messages
+    assert client_messages == [("996555000111", _load_config().POPUTKA_CLIENT_DRIVER_FOUND.format(
+        driver_name="Ali",
+        driver_phone="996700111222",
+        car_info="Honda Fit 01KG123ABC",
+    ))]
+    assert any("40" in text for _, text in private_messages)

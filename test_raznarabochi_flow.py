@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import sys
+import types
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,6 +13,7 @@ SRC_DIR = ROOT / "src"
 
 
 def _load_module(path: Path, name: str):
+    sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

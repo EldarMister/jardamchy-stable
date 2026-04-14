@@ -214,10 +214,19 @@ STATE_POPUTKA_TO = "POPUTKA_TO"
 STATE_POPUTKA_SEATS = "POPUTKA_SEATS"
 STATE_POPUTKA_TIME = "POPUTKA_TIME"
 
-# Клиентский запрос попутки (WhatsApp)
+# Клиентский запрос попутки (WhatsApp) — legacy, kept for backward compat
 STATE_POPUTKA_CLIENT_DEST = "POPUTKA_CLIENT_DEST"
 STATE_POPUTKA_CLIENT_DATE = "POPUTKA_CLIENT_DATE"
 STATE_POPUTKA_CLIENT_SEATS = "POPUTKA_CLIENT_SEATS"
+
+# 7 Область Такси (WhatsApp)
+STATE_OBLAST_TYPE = "OBLAST_TYPE"       # Адам же жүк?
+STATE_OBLAST_FROM = "OBLAST_FROM"       # Кайдан?
+STATE_OBLAST_TO = "OBLAST_TO"           # Кайда?
+STATE_OBLAST_PERSONS = "OBLAST_PERSONS" # Канча адам?
+STATE_OBLAST_CARGO = "OBLAST_CARGO"     # Эмне жүк?
+OBLAST_TYPE_PERSON_BUTTON_ID = "oblast_type_person"
+OBLAST_TYPE_CARGO_BUTTON_ID = "oblast_type_cargo"
 
 # Разнарабочий (WhatsApp)
 STATE_RAZNARABOCHI_DESC = "RAZNARABOCHI_DESC"
@@ -324,7 +333,7 @@ WELCOME_MESSAGE = """👋 Салам! Мен *Жардамчы GO* - кызма�
 🐜 *5. Желмаян* - майда жүк
 👩‍⚕️ *6. Мед эже* - медициналык жардам
 💻 *7. Компьютердик жардам*
-🚘 *8. Попутка 7 область*
+🚐 *8. 7 область такси*
 🔧 *9. Мастер кызматы*
 👷 *10. Разнарабочий*
 📖 *11. Маалымдама* - Шамалдуу-Сай дагы эң керектүү номерлер
@@ -524,38 +533,94 @@ COMPUTER_SERVICES_MESSAGE = """💻 *Компьютердик кызматтар
 
 📞 *Байланыш:* 220 122 232"""
 
-POPUTKA_COMMISSION = 20  # сом, комиссия с водителя за принятие запроса
+POPUTKA_COMMISSION = 20  # сом, комиссия за 1 человека / за груз
 
-POPUTKA_CLIENT_DEST_PROMPT = """🚘 *Попутка*
+# =============================================================================
+# 7 ОБЛАСТЬ ТАКСИ
+# =============================================================================
 
-Кайда барасыз?
+OBLAST_TAXI_FIRST_MSG = """🚐 *7 область такси*
 
-Мисалы: *Ош*, *Бишкек*, *Жалал-Абад* же башка жер."""
+Адам же жүк?
 
-POPUTKA_CLIENT_DATE_PROMPT = """🗓 Качан?
+👤 *Адам:* 20 сом / адам
+📦 *Жүк:* 20 сом
 
-Мисалы:
-• *Бүгүн* же *бүгүн 15:00*
-• *Эртең* же *эртең 08:00*
-• *15.06* же *15.06 09:30*"""
+Мисалы: *Шамалды-Сайдан Ошко 2 адам* же *Ошто телефон алып берүү*"""
 
-POPUTKA_CLIENT_SEATS_PROMPT = """👥 Канча киши барасыз?
+OBLAST_TAXI_PERSON_ROUTE_PROMPT = """🚐 *7 область такси*
 
-Сан менен жазыңыз. Мисалы: *2*"""
+Кайдан кайда барасыз?
 
-POPUTKA_CLIENT_CONFIRM = """🚘 *Попутка суроо*
+Мисалы: *Шамалды-Сайдан Ошко 2 адам*"""
 
-📍 Багыт: {destination}
-🗓 Качан: {date_text}
-👥 Киши: {seats}
+OBLAST_TAXI_CARGO_ROUTE_PROMPT = """📦 *7 область такси — жүк*
 
-Топко жиберейинби?"""
+Кайдан кайда жана эмне жеткирүү керек?
 
-POPUTKA_CLIENT_SENT = """✅ *Суроо жиберилди!*
+Мисалы: *Шамалды-Сайдан Ошко телефон алып баруу*"""
+
+OBLAST_TAXI_FROM_PROMPT = """📍 Кайдан чыгасыз?
+
+Мисалы: *Шамалды-Сай*, *Ош*, *Бишкек*"""
+
+OBLAST_TAXI_TO_PROMPT = """📍 Кайда барасыз?
+
+Мисалы: *Ош*, *Бишкек*, *Жалал-Абад*"""
+
+OBLAST_TAXI_PERSONS_PROMPT = """👤 Канча адам?
+
+Сан менен жазыңыз. Мисалы: *1*, *2*, *3*"""
+
+OBLAST_TAXI_CARGO_PROMPT = """📦 Эмне жеткирүү керек?
+
+Кыскача жазыңыз. Мисалы: *телефон*, *буюм*, *пакет*"""
+
+OBLAST_TAXI_CONFIRM_PERSON = """🚐 *7 область такси*
+
+📍 Кайдан: {from_addr}
+📍 Кайда: {to_addr}
+👤 Киши: {persons}
+💰 Комиссия: {commission} сом
+
+Ырастайсызбы?"""
+
+OBLAST_TAXI_CONFIRM_CARGO = """📦 *7 область такси — жүк*
+
+📍 Кайдан: {from_addr}
+📍 Кайда: {to_addr}
+📦 Жүк: {cargo_desc}
+💰 Комиссия: {commission} сом
+
+Ырастайсызбы?"""
+
+OBLAST_TAXI_GROUP_PERSON = """🚐 *7 ОБЛАСТЬ ТАКСИ #{order_id}*
+
+📍 Кайдан: {from_addr}
+📍 Кайда: {to_addr}
+👤 Киши: {persons}
+💰 Комиссия: {commission} сом
+📞 Телефон: {client_phone}"""
+
+OBLAST_TAXI_GROUP_CARGO = """📦 *7 ОБЛАСТЬ ТАКСИ (ЖҮК) #{order_id}*
+
+📍 Кайдан: {from_addr}
+📍 Кайда: {to_addr}
+📦 Жүк: {cargo_desc}
+💰 Комиссия: {commission} сом
+📞 Телефон: {client_phone}"""
+
+OBLAST_TAXI_SENT = """✅ *Суроо жиберилди!*
 
 Айдоочу табылганда сизге кабарлайбыз."""
 
-POPUTKA_CLIENT_DRIVER_FOUND = """✅ *Попутка табылды!*
+# Legacy (kept for Telegram driver registration flow)
+POPUTKA_CLIENT_DEST_PROMPT = OBLAST_TAXI_FIRST_MSG
+POPUTKA_CLIENT_DATE_PROMPT = ""
+POPUTKA_CLIENT_SEATS_PROMPT = ""
+POPUTKA_CLIENT_CONFIRM = ""
+POPUTKA_CLIENT_SENT = OBLAST_TAXI_SENT
+POPUTKA_CLIENT_DRIVER_FOUND = """✅ *7 область такси табылды!*
 
 👤 Айдоочу: {driver_name}
 📞 Телефон: {driver_phone}
@@ -563,16 +628,11 @@ POPUTKA_CLIENT_DRIVER_FOUND = """✅ *Попутка табылды!*
 
 Байланышыңыз!"""
 
-POPUTKA_GROUP_MSG = """🚘 *ПОПУТКА СУРОО #{order_id}*
+POPUTKA_GROUP_MSG = OBLAST_TAXI_GROUP_PERSON
 
-📍 Багыт: {destination}
-🗓 Качан: {date_text}
-👥 Киши: {seats}
-💰 Баасы: Келишимдүү"""
+POPUTKA_MESSAGE = """🚐 *7 область такси*
 
-POPUTKA_MESSAGE = """🚘 *Попутка*
-
-Маршрут, убакыт жана канча орун керек экенин жазыңыз.
+Маршрут жана эмне керек экенин жазыңыз.
 
 Оператор жардам берет.
 📞 {support_phone}"""

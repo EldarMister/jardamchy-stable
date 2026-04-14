@@ -2548,7 +2548,7 @@ def handle_poputka_accept(data: str, user_id: str, user_name: str,
             _reply()
             return jsonify({"status": "ok"}), 200
 
-        commission = config.POPUTKA_COMMISSION
+        commission = int(order.get('price_total') or 0) or int(config.POPUTKA_COMMISSION)
         balance = db.get_driver_balance(user_id)
         if balance < commission:
             send_telegram_private(
@@ -2565,7 +2565,12 @@ def handle_poputka_accept(data: str, user_id: str, user_name: str,
         db.update_driver_balance(user_id, -commission, reason=f"Поputka order {order_id} commission")
 
         # Обновляем заказ
-        db.update_order_status(order_id, config.ORDER_STATUS_ACCEPTED, provider_id=user_id)
+        db.update_order_status(
+            order_id,
+            config.ORDER_STATUS_ACCEPTED,
+            provider_id=user_id,
+            driver_commission=commission,
+        )
 
         # Получаем профиль водителя
         driver = db.get_driver(user_id)
