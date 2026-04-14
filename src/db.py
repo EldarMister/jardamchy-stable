@@ -489,6 +489,17 @@ class Database:
                         END IF;
                     END $$;
                 """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'auction_timers' AND column_name = 'mention_2_sent'
+                        ) THEN
+                            ALTER TABLE auction_timers ADD COLUMN mention_2_sent BOOLEAN DEFAULT FALSE;
+                        END IF;
+                    END $$;
+                """)
 
                 # Очередь сообщений в Telegram-группы, которые не ушли сразу
                 cur.execute("""
@@ -2075,6 +2086,31 @@ class Database:
         with self.get_cursor(commit=True) as cur:
             cur.execute(
                 "UPDATE auction_timers SET mention_sent = TRUE WHERE id = %s AND mention_sent = FALSE",
+                (timer_id,)
+            )
+            return cur.rowcount > 0
+
+    def get_timers_needing_second_mention(self, delay_seconds: int = 120) -> List[Dict]:
+        """Таймеры, которые требуют второго упоминания (2 минуты, заказ ещё не принят)."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT at.*
+                   FROM auction_timers at
+                   JOIN orders o ON o.order_id = at.order_id
+                   WHERE at.is_processed = FALSE
+                     AND at.mention_sent = TRUE
+                     AND at.mention_2_sent = FALSE
+                     AND at.started_at <= (CURRENT_TIMESTAMP - INTERVAL '1 second' * %s)
+                     AND o.status IN ('PENDING', 'AUCTION', 'URGENT')""",
+                (delay_seconds,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def mark_second_mention_sent(self, timer_id: int) -> bool:
+        """Пометить, что второе упоминание отправлено."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE auction_timers SET mention_2_sent = TRUE WHERE id = %s AND mention_2_sent = FALSE",
                 (timer_id,)
             )
             return cur.rowcount > 0

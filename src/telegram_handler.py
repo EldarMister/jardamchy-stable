@@ -2599,6 +2599,15 @@ def handle_poputka_accept(data: str, user_id: str, user_name: str,
             buttons=[]
         )
 
+        # Таймер на удаление сообщения через 30 мин
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type='taxi_accepted',
+            telegram_message_id=str(message_id),
+            chat_id=chat_id,
+            timeout_seconds=int(_runtime_setting("taxi_accepted_timeout", config.TAXI_ACCEPTED_TIMEOUT))
+        )
+
         # Уведомляем клиента через WhatsApp
         client_msg = config.POPUTKA_CLIENT_DRIVER_FOUND.format(
             driver_name=driver_name,
@@ -2692,6 +2701,15 @@ def handle_raznarabochi_accept(data: str, user_id: str, user_name: str,
             f"👥 Керек адам: {workers_count}\n"
             f"💰 Комиссия: {commission} сом",
             buttons=[]
+        )
+
+        # Таймер на удаление сообщения через 30 мин
+        db.create_auction_timer(
+            order_id=order_id,
+            service_type='taxi_accepted',
+            telegram_message_id=str(message_id),
+            chat_id=chat_id,
+            timeout_seconds=int(_runtime_setting("taxi_accepted_timeout", config.TAXI_ACCEPTED_TIMEOUT))
         )
 
         client_msg = config.RAZNARABOCHI_WORKER_FOUND.format(
