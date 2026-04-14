@@ -1670,6 +1670,12 @@ def _send_specialist_request(user: User, client_message: str, service_name: str)
 
 OBLAST_KIND_PERSON = "person"
 OBLAST_KIND_CARGO = "cargo"
+
+# Kyrgyz directional suffixes for oblast route extraction
+_OBLAST_TO_SUFFIXES = ("га", "ге", "ка", "ке", "го", "гө", "ко", "кө")
+_OBLAST_FROM_SUFFIXES = ("дан", "ден", "тан", "тен", "нан", "нен", "дон", "дөн")
+_OBLAST_SUFFIX_MIN_BASE = 2  # minimum base length after suffix strip
+
 OBLAST_PERSON_MARKERS = frozenset({
     "адам", "адамдар", "киши", "кишилер", "человек", "человека", "человеков", "пассажир", "пассажира",
 })
@@ -1750,6 +1756,55 @@ def _extract_oblast_persons_count(message: str) -> int | None:
     return value
 
 
+def _extract_oblast_suffix_addresses(message: str) -> tuple[str, str]:
+    """Extract from/to city names using Kyrgyz directional suffixes.
+    Works for single-token cities (e.g. 'Ошко' → 'Ош') and
+    2-token cities (e.g. 'Жалал Абадка' → 'Жалал-Абад').
+    """
+    tokens = re.findall(r"[\w-]+", _normalize_loose_text(message or "").lower(), flags=re.UNICODE)
+    froms: list[str] = []
+    tos: list[str] = []
+    skip: set[int] = set()
+
+    for i, token in enumerate(tokens):
+        if i in skip:
+            continue
+        direction = None
+        base = token
+        for suf in _OBLAST_TO_SUFFIXES:
+            if token.endswith(suf) and len(token) - len(suf) >= _OBLAST_SUFFIX_MIN_BASE:
+                direction = "to"
+                base = token[:-len(suf)]
+                break
+        if not direction:
+            for suf in _OBLAST_FROM_SUFFIXES:
+                if token.endswith(suf) and len(token) - len(suf) >= _OBLAST_SUFFIX_MIN_BASE:
+                    direction = "from"
+                    base = token[:-len(suf)]
+                    break
+        if not direction:
+            continue
+        if base in OBLAST_CARGO_FILLERS or base in OBLAST_PERSON_MARKERS:
+            continue
+        # Try 2-token: previous token + base (e.g. "жалал" + "абад")
+        resolved = None
+        if i > 0 and (i - 1) not in skip:
+            two_word = tokens[i - 1] + " " + base
+            canonical_two = _canonicalize_address_value(two_word)
+            if canonical_two and canonical_two.lower() != two_word:
+                resolved = canonical_two
+                skip.add(i - 1)
+        if not resolved:
+            canonical = _canonicalize_address_value(base)
+            resolved = canonical if canonical else base.capitalize()
+        if direction == "to":
+            tos.append(resolved)
+        else:
+            froms.append(resolved)
+
+    return " ".join(froms), " ".join(tos)
+
+
 def _extract_oblast_route(message: str) -> tuple[str, str, dict]:
     msg = (message or "").strip()
     nlu_result = parse_user_message(msg)
@@ -1761,6 +1816,14 @@ def _extract_oblast_route(message: str) -> tuple[str, str, dict]:
         if len(dash_split) == 2 and dash_split[0].strip() and dash_split[1].strip():
             from_addr = _canonicalize_address_value(dash_split[0].strip())
             to_addr = _canonicalize_address_value(dash_split[1].strip())
+
+    # Suffix-based fallback — catches "Ошко", "Шамал-Сайдан", "Жалал-Абадка" etc.
+    if not from_addr or not to_addr:
+        suf_from, suf_to = _extract_oblast_suffix_addresses(msg)
+        if not from_addr and suf_from:
+            from_addr = suf_from
+        if not to_addr and suf_to:
+            to_addr = suf_to
 
     return from_addr, to_addr, nlu_result
 
@@ -1955,21 +2018,31 @@ def handle_oblast_taxi_request(
         return jsonify({"status": "ok"}), 200
 
     if current_state == config.STATE_OBLAST_FROM:
-        from_addr = _canonicalize_address_value(msg)
+        # Try to extract both from+to in case user wrote a full route
+        parsed_from, parsed_to, _ = _extract_oblast_route(msg)
+        from_addr = parsed_from or _canonicalize_address_value(msg)
         if not from_addr or _is_vague_address(from_addr):
             send_whatsapp(user.phone, config.OBLAST_TAXI_FROM_PROMPT)
             return jsonify({"status": "ok"}), 200
         user.set_temp_data("oblast_from", from_addr)
         user.set_temp_data("oblast_from_partial", from_addr)
+        # Save "to" if extracted and not already known
+        if parsed_to and not _canonicalize_address_value(user.get_temp_data("oblast_to", "") or ""):
+            user.set_temp_data("oblast_to", parsed_to)
         return _prompt_oblast_for_missing_data(user, kind)
 
     if current_state == config.STATE_OBLAST_TO:
-        to_addr = _canonicalize_address_value(msg)
+        # Try to extract both directions in case user wrote a full route
+        parsed_from, parsed_to, _ = _extract_oblast_route(msg)
+        to_addr = parsed_to or _canonicalize_address_value(msg)
         if not to_addr or _is_vague_address(to_addr):
             send_whatsapp(user.phone, config.OBLAST_TAXI_TO_PROMPT)
             return jsonify({"status": "ok"}), 200
         user.set_temp_data("oblast_to", to_addr)
         user.set_temp_data("oblast_from_partial", None)
+        # Save "from" if extracted and not already known
+        if parsed_from and not _canonicalize_address_value(user.get_temp_data("oblast_from", "") or ""):
+            user.set_temp_data("oblast_from", parsed_from)
         return _prompt_oblast_for_missing_data(user, kind)
 
     if kind == OBLAST_KIND_PERSON and current_state == config.STATE_OBLAST_PERSONS:
