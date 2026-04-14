@@ -74,6 +74,18 @@ def _bishkek_now_naive() -> datetime:
     return datetime.utcnow() + timedelta(hours=6)
 
 
+def _first_row_value(row: Any, default: Any = None) -> Any:
+    """Return the first selected column for both tuple rows and RealDictCursor rows."""
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 class Database:
     """Класс для работы с PostgreSQL"""
     
@@ -675,7 +687,7 @@ class Database:
                         "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s) RETURNING id",
                         ("Сантехника", "🔧", 1)
                     )
-                    cat1_id = cur.fetchone()[0]
+                    cat1_id = _first_row_value(cur.fetchone())
                     cur.execute(
                         "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s)",
                         ("Электрик", "⚡", 2)
@@ -1763,7 +1775,7 @@ class Database:
     def add_master_category(self, name: str, emoji: str = '🔧') -> Optional[Dict]:
         with self.get_cursor(commit=True) as cur:
             cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM master_categories")
-            sort_order = cur.fetchone()[0]
+            sort_order = _first_row_value(cur.fetchone(), 1)
             cur.execute(
                 "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s) RETURNING *",
                 (name.strip(), (emoji or '🔧').strip(), sort_order)
@@ -1806,7 +1818,7 @@ class Database:
     def add_master(self, name: str, phone: str, category_id: int = None) -> Optional[Dict]:
         with self.get_cursor(commit=True) as cur:
             cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM masters")
-            sort_order = cur.fetchone()[0]
+            sort_order = _first_row_value(cur.fetchone(), 1)
             cur.execute(
                 "INSERT INTO masters (name, phone, sort_order, category_id) VALUES (%s, %s, %s, %s) RETURNING *",
                 (name.strip(), phone.strip(), sort_order, category_id)
@@ -1842,7 +1854,7 @@ class Database:
     def add_med_eje_contact(self, name: str, phone: str) -> Optional[Dict]:
         with self.get_cursor(commit=True) as cur:
             cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM med_eje_contacts")
-            sort_order = cur.fetchone()[0]
+            sort_order = _first_row_value(cur.fetchone(), 1)
             cur.execute(
                 "INSERT INTO med_eje_contacts (name, phone, sort_order) VALUES (%s, %s, %s) RETURNING *",
                 (name.strip(), phone.strip(), sort_order)
@@ -1878,7 +1890,7 @@ class Database:
     def add_directory_entry(self, name: str, phone: str, emoji: str = '') -> Optional[Dict]:
         with self.get_cursor(commit=True) as cur:
             cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM directory_entries")
-            sort_order = cur.fetchone()[0]
+            sort_order = _first_row_value(cur.fetchone(), 1)
             cur.execute(
                 "INSERT INTO directory_entries (emoji, name, phone, sort_order) VALUES (%s, %s, %s, %s) RETURNING *",
                 (emoji.strip(), name.strip(), phone.strip(), sort_order)
