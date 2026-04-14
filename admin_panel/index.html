@@ -621,22 +621,11 @@
                 <div class="section" id="sec-contacts">
                     <!-- Мастера -->
                     <div class="filters-bar">
-                        <button class="btn btn-primary btn-sm" onclick="showAddMasterModal()">➕ Мастер</button>
+                        <button class="btn btn-primary btn-sm" onclick="showAddMasterCategoryModal()">➕ Категория</button>
+                        <button class="btn btn-success btn-sm" onclick="showAddMasterModal(null)">➕ Мастер</button>
                         <button class="btn btn-secondary btn-sm" onclick="showAddMedEjeModal()">➕ Мед Эже</button>
                     </div>
-                    <div class="table-container" style="margin-bottom:24px;">
-                        <div class="table-header">
-                            <div class="table-title">🔧 Мастера</div>
-                        </div>
-                        <div class="table-wrapper">
-                            <table>
-                                <thead>
-                                    <tr><th>#</th><th>Имя</th><th>Телефон</th><th>Действия</th></tr>
-                                </thead>
-                                <tbody id="masters-body"></tbody>
-                            </table>
-                        </div>
-                    </div>
+                    <div id="masters-categories-container" style="margin-bottom:24px;"></div>
                     <!-- Мед Эже -->
                     <div class="table-container">
                         <div class="table-header">
@@ -1135,6 +1124,31 @@
         </div>
     </div>
 
+    <!-- Add/Edit Master Category Modal -->
+    <div class="modal-overlay" id="modal-master-category">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="master-cat-modal-title">➕ Добавить категорию</h3>
+                <button class="modal-close" onclick="closeModal('modal-master-category')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="master-cat-id">
+                <div class="form-group">
+                    <label>Эмодзи</label>
+                    <input type="text" id="master-cat-emoji" placeholder="🔧" maxlength="4" style="width:80px;">
+                </div>
+                <div class="form-group">
+                    <label>Название категории *</label>
+                    <input type="text" id="master-cat-name" placeholder="Сантехника">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-master-category')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitMasterCategory()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Add/Edit Master Modal -->
     <div class="modal-overlay" id="modal-master">
         <div class="modal">
@@ -1145,8 +1159,14 @@
             <div class="modal-body">
                 <input type="hidden" id="master-id">
                 <div class="form-group">
+                    <label>Категория</label>
+                    <select id="master-category-id" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);">
+                        <option value="">— Без категории —</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label>Имя *</label>
-                    <input type="text" id="master-name" placeholder="Мастер 1">
+                    <input type="text" id="master-name" placeholder="Мастер Азиз">
                 </div>
                 <div class="form-group">
                     <label>Телефон *</label>

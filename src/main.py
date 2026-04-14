@@ -1022,10 +1022,20 @@ def _resend_confirm_step(user: User) -> bool:
     return False
 
 
+def _send_back_prompt(phone: str, message: str) -> None:
+    """Отправить первый промпт сервиса с кнопкой Артка вместо Отмена."""
+    send_whatsapp_buttons(
+        phone,
+        message,
+        [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"}],
+        include_cancel=False,
+    )
+
+
 def _resend_current_step_prompt(user: User) -> None:
     state = user.current_state
     if state == config.STATE_TAXI_ROUTE:
-        send_whatsapp(user.phone, config.TAXI_PROMPT)
+        _send_back_prompt(user.phone, config.TAXI_PROMPT)
         return
     if state == config.STATE_TAXI_REORDER_CHOICE:
         send_whatsapp(
@@ -1055,13 +1065,13 @@ def _resend_current_step_prompt(user: User) -> None:
         send_whatsapp(user.phone, config.CAFE_ADDRESS_PROMPT)
         return
     if state == config.STATE_PORTER_CARGO_TYPE:
-        send_whatsapp(user.phone, config.PORTER_CARGO_PROMPT)
+        _send_back_prompt(user.phone, config.PORTER_CARGO_PROMPT)
         return
     if state == config.STATE_PORTER_ROUTE:
-        send_whatsapp(user.phone, config.PORTER_ROUTE_PROMPT)
+        _send_back_prompt(user.phone, config.PORTER_ROUTE_PROMPT)
         return
     if state == config.STATE_ANT_ROUTE:
-        send_whatsapp(user.phone, config.ANT_PROMPT)
+        _send_back_prompt(user.phone, config.ANT_PROMPT)
         return
     if state in {config.STATE_RAZNARABOCHI_DESC, config.STATE_RAZNARABOCHI_COUNT}:
         _send_raznarabochi_next_prompt(user)
@@ -1295,7 +1305,7 @@ _SUPPORT_KEYWORDS = {
 }
 
 _MED_EJE_KEYWORDS = {
-    "7", "доктор", "мед эже", "медеже", "медсестра", "мед сестра",
+    "доктор", "мед эже", "медеже", "медсестра", "мед сестра",
     "мед помощь", "медициналык жардам",
     "врач", "укол", "уколы", "капельница", "капельницу", "капельницы",
 }
@@ -1471,11 +1481,30 @@ def _show_med_eje_menu(user: User, db=None):
     _reset_unknown_fallback(user)
     user.clear_temp_data()
     user.set_state(config.STATE_MED_EJE_MENU)
+
+    # Строим телефонные строки
+    phone_lines = ""
+    if db:
+        try:
+            contacts = db.list_med_eje_contacts(active_only=True)
+        except Exception:
+            contacts = []
+        if contacts:
+            phone_lines = "\n".join(
+                f"📞 *{i}. {c['name']}:* {c['phone']}" for i, c in enumerate(contacts, 1)
+            )
+    if not phone_lines:
+        phone_lines = (
+            f"📞 *1.* {format_phone(config.MED_EJE_PHONE)}\n"
+            f"📞 *2.* {format_phone(config.MED_EJE_PHONE_2)}"
+        )
+
+    combined = config.MED_EJE_MESSAGE + "\n\n" + phone_lines
+
     send_whatsapp_buttons(
         user.phone,
-        config.MED_EJE_MESSAGE,
+        combined,
         [
-            {"id": MED_EJE_NEED_BUTTON_ID, "text": "✅ Керек"},
             {"id": MED_EJE_BACK_BUTTON_ID, "text": "🏠 Артка"},
         ],
         include_cancel=False,
@@ -1484,22 +1513,53 @@ def _show_med_eje_menu(user: User, db=None):
 
 
 def _show_master_contacts(user: User, db) -> tuple:
-    """Отправить список мастеров из БД."""
+    """Отправить список мастеров из БД, сгруппированный по категориям."""
     _reset_unknown_fallback(user)
     user.set_state(config.STATE_IDLE)
     user.clear_temp_data()
     try:
+        categories = db.list_master_categories(active_only=True)
         masters = db.list_masters(active_only=True)
     except Exception:
+        categories = []
         masters = []
+
     if masters:
-        lines = ["🔧 *Мастер чакыруу*\n\nТөмөнкү мастерлерге түздөн-түз чалсаңыз болот:\n"]
-        for m in masters:
-            lines.append(f"📞 *{m['name']}:* {m['phone']}")
+        lines = ["🔧 *Мастер чакыруу*\n\nТөмөнкү мастерлерге түздөн-түз чалсаңыз болот:"]
+        if categories:
+            # Группируем мастеров по категориям
+            by_cat: dict = {}
+            no_cat = []
+            for m in masters:
+                cid = m.get('category_id')
+                if cid:
+                    by_cat.setdefault(cid, []).append(m)
+                else:
+                    no_cat.append(m)
+            for cat in categories:
+                cat_masters = by_cat.get(cat['id'], [])
+                if not cat_masters:
+                    continue
+                emoji = cat.get('emoji') or '🔧'
+                lines.append(f"\n{emoji} *{cat['name']}*")
+                for m in cat_masters:
+                    lines.append(f"📞 *{m['name']}:* {m['phone']}")
+            if no_cat:
+                lines.append("\n🔧 *Башкалар*")
+                for m in no_cat:
+                    lines.append(f"📞 *{m['name']}:* {m['phone']}")
+        else:
+            for m in masters:
+                lines.append(f"📞 *{m['name']}:* {m['phone']}")
         msg = "\n".join(lines)
     else:
         msg = config.MASTER_MESSAGE
-    send_whatsapp(user.phone, msg)
+
+    send_whatsapp_buttons(
+        user.phone, msg,
+        [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"}],
+        include_cancel=False,
+    )
     return jsonify({"status": "ok"}), 200
 
 
@@ -1513,7 +1573,11 @@ def _show_directory(user: User, db) -> tuple:
     except Exception:
         entries = []
     if not entries:
-        send_whatsapp(user.phone, config.DIRECTORY_EMPTY_MSG)
+        send_whatsapp_buttons(
+            user.phone, config.DIRECTORY_EMPTY_MSG,
+            [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"}],
+            include_cancel=False,
+        )
         return jsonify({"status": "ok"}), 200
     lines = [config.DIRECTORY_HEADER]
     for i, e in enumerate(entries, 1):
@@ -1522,7 +1586,11 @@ def _show_directory(user: User, db) -> tuple:
         phone = e.get('phone', '').strip()
         prefix = f"{emoji} " if emoji else ""
         lines.append(f"*{i}.* {prefix}{name}: {phone}")
-    send_whatsapp(user.phone, "\n".join(lines))
+    send_whatsapp_buttons(
+        user.phone, "\n".join(lines),
+        [{"id": WHATSAPP_MAIN_MENU_BUTTON_ID, "text": "🏠 Артка"}],
+        include_cancel=False,
+    )
     return jsonify({"status": "ok"}), 200
 
 
@@ -1566,7 +1634,7 @@ def _start_poputka_client_flow(user: User) -> tuple:
     user.clear_temp_data()
     user.set_temp_data('service_type', config.SERVICE_POPUTKA)
     user.set_state(config.STATE_POPUTKA_CLIENT_DEST)
-    send_whatsapp(user.phone, config.POPUTKA_CLIENT_DEST_PROMPT)
+    _send_back_prompt(user.phone, config.POPUTKA_CLIENT_DEST_PROMPT)
     return jsonify({"status": "ok"}), 200
 
 
@@ -1927,7 +1995,7 @@ def _send_raznarabochi_next_prompt(user: User) -> None:
 
     if not desc and not workers_count:
         user.set_state(config.STATE_RAZNARABOCHI_DESC)
-        send_whatsapp(user.phone, config.RAZNARABOCHI_DESC_PROMPT)
+        _send_back_prompt(user.phone, config.RAZNARABOCHI_DESC_PROMPT)
         return
     if not desc:
         user.set_state(config.STATE_RAZNARABOCHI_DESC)
@@ -2012,12 +2080,6 @@ def _dispatch_raznarabochi_to_group(user: User, db) -> None:
 def handle_med_eje_menu(user: User, message: str, db) -> tuple:
     normalized = _normalize_loose_text(message)
 
-    if normalized in {"керек", "нужно", "надо", "need"}:
-        user.set_state(config.STATE_IDLE)
-        user.clear_temp_data()
-        send_whatsapp(user.phone, _get_med_eje_phones_msg(db))
-        return jsonify({"status": "ok"}), 200
-
     if normalized in {"артка", "назад", "back", "меню"}:
         user.set_state(config.STATE_IDLE)
         user.clear_temp_data()
@@ -2026,7 +2088,7 @@ def handle_med_eje_menu(user: User, message: str, db) -> tuple:
         db.update_last_welcome(user.phone)
         return jsonify({"status": "ok"}), 200
 
-    return _show_med_eje_menu(user)
+    return _show_med_eje_menu(user, db)
 
 
 def _is_cancellation(message: str) -> bool:
@@ -2519,7 +2581,7 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
             )
 
         if _is_med_eje_request(incoming_msg):
-            return _show_med_eje_menu(user)
+            return _show_med_eje_menu(user, db)
 
         if user.current_state in DISABLED_PHARMACY_STATES:
             return _show_pharmacy_removed_notice(user, db)
@@ -2740,7 +2802,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             user.set_temp_data('taxi_from', '')
             user.set_temp_data('taxi_to', '')
             user.set_state(config.STATE_TAXI_ROUTE)
-            send_whatsapp(user.phone, config.TAXI_PROMPT)
+            _send_back_prompt(user.phone, config.TAXI_PROMPT)
 
         return jsonify({"status": "ok"}), 200
     
@@ -2783,7 +2845,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
             send_whatsapp(user.phone, config.SHOP_ADDRESS_PROMPT)
         else:
             user.set_state(config.STATE_SHOP_LIST)
-            send_whatsapp(user.phone, config.SHOP_PROMPT)
+            _send_back_prompt(user.phone, config.SHOP_PROMPT)
         
         return jsonify({"status": "ok"}), 200
     
@@ -2811,7 +2873,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         else:
             user.set_temp_data('porter_cargo', cargo)
             user.set_state(config.STATE_PORTER_ROUTE)
-            send_whatsapp(user.phone, config.PORTER_ROUTE_PROMPT)
+            _send_back_prompt(user.phone, config.PORTER_ROUTE_PROMPT)
 
         return jsonify({"status": "ok"}), 200
 
@@ -2840,13 +2902,13 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         else:
             user.set_temp_data('ant_cargo', cargo)
             user.set_state(config.STATE_ANT_ROUTE)
-            send_whatsapp(user.phone, config.ANT_PROMPT)
+            _send_back_prompt(user.phone, config.ANT_PROMPT)
 
         return jsonify({"status": "ok"}), 200
 
     # === МЕД ЭЖЕ ===
     elif intent == "med_eje":
-        return _show_med_eje_menu(user)
+        return _show_med_eje_menu(user, db)
 
     # === КОМПЬЮТЕРНЫЕ УСЛУГИ ===
     elif intent == "computer":
@@ -3614,7 +3676,7 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
             user.set_temp_data('taxi_from', '')
             user.set_temp_data('taxi_to', '')
             user.set_state(config.STATE_TAXI_ROUTE)
-            send_whatsapp(user.phone, config.TAXI_PROMPT)
+            _send_back_prompt(user.phone, config.TAXI_PROMPT)
             return jsonify({"status": "ok"}), 200
 
         user.set_temp_data('service_type', config.SERVICE_TAXI)
@@ -3640,7 +3702,7 @@ def handle_taxi_reorder_choice(user: User, message: str, db) -> tuple:
         user.clear_temp_data()
         user.set_temp_data('service_type', config.SERVICE_TAXI)
         user.set_state(config.STATE_TAXI_ROUTE)
-        send_whatsapp(user.phone, config.TAXI_PROMPT)
+        _send_back_prompt(user.phone, config.TAXI_PROMPT)
         return jsonify({"status": "ok"}), 200
 
     # Нераспознанный ответ — сбрасываем состояние и показываем главное меню
@@ -3694,7 +3756,7 @@ def handle_taxi_route(user: User, message: str, db, is_voice_input: bool = False
     """Обработка маршрута такси: собираем откуда/куда до полной информации."""
     msg = message.strip()
     if not msg:
-        send_whatsapp(user.phone, config.TAXI_PROMPT)
+        _send_back_prompt(user.phone, config.TAXI_PROMPT)
         return jsonify({"status": "ok"}), 200
 
     nlu_result = parse_user_message(msg)
@@ -3998,12 +4060,6 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             _reset_unknown_fallback(user)
             send_whatsapp(user.phone, config.WELCOME_MESSAGE)
             db.update_last_welcome(user.phone)
-            return jsonify({"status": "ok"}), 200
-
-        if button_response == MED_EJE_NEED_BUTTON_ID:
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            send_whatsapp(user.phone, _get_med_eje_phones_msg(db))
             return jsonify({"status": "ok"}), 200
 
         if button_response == MED_EJE_BACK_BUTTON_ID:

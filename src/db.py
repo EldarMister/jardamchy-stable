@@ -466,6 +466,17 @@ class Database:
                         is_processed BOOLEAN DEFAULT FALSE
                     )
                 """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'auction_timers' AND column_name = 'mention_sent'
+                        ) THEN
+                            ALTER TABLE auction_timers ADD COLUMN mention_sent BOOLEAN DEFAULT FALSE;
+                        END IF;
+                    END $$;
+                """)
 
                 # Очередь сообщений в Telegram-группы, которые не ушли сразу
                 cur.execute("""
@@ -623,6 +634,18 @@ class Database:
                     END $$;
                 """)
 
+                # Таблица категорий мастеров
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS master_categories (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        emoji VARCHAR(10) DEFAULT '🔧',
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
                 # Таблица мастеров (Мастер чакыруу)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS masters (
@@ -634,6 +657,31 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'masters' AND column_name = 'category_id'
+                        ) THEN
+                            ALTER TABLE masters ADD COLUMN category_id INTEGER REFERENCES master_categories(id) ON DELETE SET NULL;
+                        END IF;
+                    END $$;
+                """)
+                # Начальные категории если пусто
+                cur.execute("SELECT COUNT(*) as cnt FROM master_categories")
+                if (cur.fetchone() or {}).get('cnt', 0) == 0:
+                    cur.execute(
+                        "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s) RETURNING id",
+                        ("Сантехника", "🔧", 1)
+                    )
+                    cat1_id = cur.fetchone()[0]
+                    cur.execute(
+                        "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s)",
+                        ("Электрик", "⚡", 2)
+                    )
+                    # Привязать существующих мастеров к первой категории
+                    cur.execute("UPDATE masters SET category_id = %s WHERE category_id IS NULL", (cat1_id,))
 
                 # Таблица контактов Мед Эже
                 cur.execute("""
@@ -1699,32 +1747,78 @@ class Database:
     # MASTERS METHODS
     # ==========================================================================
 
-    def list_masters(self, active_only: bool = False) -> List[Dict]:
+    # ==========================================================================
+    # MASTER CATEGORIES METHODS
+    # ==========================================================================
+
+    def list_master_categories(self, active_only: bool = False) -> List[Dict]:
         with self.get_cursor() as cur:
+            query = "SELECT * FROM master_categories"
             if active_only:
-                cur.execute("SELECT * FROM masters WHERE is_active = TRUE ORDER BY sort_order, id")
-            else:
-                cur.execute("SELECT * FROM masters ORDER BY sort_order, id")
+                query += " WHERE is_active = TRUE"
+            query += " ORDER BY sort_order, id"
+            cur.execute(query)
             return [dict(row) for row in cur.fetchall()]
 
-    def add_master(self, name: str, phone: str) -> Optional[Dict]:
+    def add_master_category(self, name: str, emoji: str = '🔧') -> Optional[Dict]:
         with self.get_cursor(commit=True) as cur:
-            cur.execute(
-                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM masters"
-            )
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM master_categories")
             sort_order = cur.fetchone()[0]
             cur.execute(
-                "INSERT INTO masters (name, phone, sort_order) VALUES (%s, %s, %s) RETURNING *",
-                (name.strip(), phone.strip(), sort_order)
+                "INSERT INTO master_categories (name, emoji, sort_order) VALUES (%s, %s, %s) RETURNING *",
+                (name.strip(), (emoji or '🔧').strip(), sort_order)
             )
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def update_master(self, master_id: int, name: str, phone: str) -> bool:
+    def update_master_category(self, cat_id: int, name: str, emoji: str) -> bool:
         with self.get_cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE masters SET name = %s, phone = %s WHERE id = %s",
-                (name.strip(), phone.strip(), master_id)
+                "UPDATE master_categories SET name = %s, emoji = %s WHERE id = %s",
+                (name.strip(), (emoji or '🔧').strip(), cat_id)
+            )
+            return cur.rowcount > 0
+
+    def delete_master_category(self, cat_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("UPDATE masters SET category_id = NULL WHERE category_id = %s", (cat_id,))
+            cur.execute("DELETE FROM master_categories WHERE id = %s", (cat_id,))
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # MASTERS METHODS
+    # ==========================================================================
+
+    def list_masters(self, active_only: bool = False) -> List[Dict]:
+        with self.get_cursor() as cur:
+            query = """
+                SELECT m.*, mc.name as category_name, mc.emoji as category_emoji
+                FROM masters m
+                LEFT JOIN master_categories mc ON mc.id = m.category_id
+                WHERE 1=1
+            """
+            if active_only:
+                query += " AND m.is_active = TRUE"
+            query += " ORDER BY mc.sort_order NULLS LAST, m.category_id NULLS LAST, m.sort_order, m.id"
+            cur.execute(query)
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_master(self, name: str, phone: str, category_id: int = None) -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM masters")
+            sort_order = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO masters (name, phone, sort_order, category_id) VALUES (%s, %s, %s, %s) RETURNING *",
+                (name.strip(), phone.strip(), sort_order, category_id)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_master(self, master_id: int, name: str, phone: str, category_id: int = None) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE masters SET name = %s, phone = %s, category_id = %s WHERE id = %s",
+                (name.strip(), phone.strip(), category_id, master_id)
             )
             return cur.rowcount > 0
 
@@ -1944,6 +2038,75 @@ class Database:
                 (timer_id,)
             )
             return cur.rowcount > 0
+
+    def get_timers_needing_mention(self, delay_seconds: int = 30) -> List[Dict]:
+        """Таймеры, по которым нужно отправить упоминание участников группы.
+
+        Условия: таймер создан >= delay_seconds назад, не обработан, упоминание ещё не отправлено,
+        заказ всё ещё в статусе PENDING/AUCTION/URGENT.
+        """
+        with self.get_cursor() as cur:
+            cur.execute(
+                """SELECT at.*
+                   FROM auction_timers at
+                   JOIN orders o ON o.order_id = at.order_id
+                   WHERE at.is_processed = FALSE
+                     AND at.mention_sent = FALSE
+                     AND at.started_at <= (CURRENT_TIMESTAMP - INTERVAL '1 second' * %s)
+                     AND o.status IN ('PENDING', 'AUCTION', 'URGENT')""",
+                (delay_seconds,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def mark_mention_sent(self, timer_id: int) -> bool:
+        """Пометить, что упоминание по таймеру уже отправлено."""
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE auction_timers SET mention_sent = TRUE WHERE id = %s AND mention_sent = FALSE",
+                (timer_id,)
+            )
+            return cur.rowcount > 0
+
+    def get_executors_for_mention(self, service_type: str) -> List[Dict]:
+        """Получить активных исполнителей для упоминания по типу сервиса.
+        Возвращает список {'telegram_id': ..., 'name': ...}.
+        """
+        with self.get_cursor() as cur:
+            if service_type == 'cafe':
+                cur.execute(
+                    "SELECT telegram_id, name FROM cafes WHERE is_active = TRUE"
+                )
+            elif service_type == 'shop':
+                cur.execute(
+                    "SELECT telegram_id, name FROM shoppers WHERE is_active = TRUE"
+                )
+            elif service_type == 'ant':
+                cur.execute(
+                    """SELECT telegram_id, name FROM drivers
+                       WHERE driver_type IN ('ant', 'porter')
+                         AND is_active = TRUE AND is_blocked = FALSE"""
+                )
+            elif service_type == 'raznarabochi':
+                cur.execute(
+                    """SELECT telegram_id, name FROM drivers
+                       WHERE driver_type IN ('raznarabochi', 'porter')
+                         AND is_active = TRUE AND is_blocked = FALSE"""
+                )
+            elif service_type in ('poputka', 'taxi'):
+                cur.execute(
+                    """SELECT telegram_id, name FROM drivers
+                       WHERE driver_type = 'taxi'
+                         AND is_active = TRUE AND is_blocked = FALSE"""
+                )
+            elif service_type == 'porter':
+                cur.execute(
+                    """SELECT telegram_id, name FROM drivers
+                       WHERE driver_type = 'porter'
+                         AND is_active = TRUE AND is_blocked = FALSE"""
+                )
+            else:
+                return []
+            return [dict(row) for row in cur.fetchall()]
 
     # ==========================================================================
     # TELEGRAM GROUP OUTBOX

@@ -2041,26 +2041,104 @@ async function loadContacts() {
 }
 
 async function _loadMastersTable() {
-    const body = document.getElementById('masters-body');
+    const container = document.getElementById('masters-categories-container');
     try {
-        const data = await api('/masters');
-        const rows = data.masters || [];
-        body.innerHTML = rows.length === 0
-            ? '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">Нет мастеров</td></tr>'
-            : rows.map((m, idx) => `
-            <tr>
-                <td>${idx + 1}</td>
-                <td>${esc(m.name)}</td>
-                <td>${esc(m.phone)}</td>
-                <td>
+        const [catData, masterData] = await Promise.all([
+            api('/master-categories'),
+            api('/masters'),
+        ]);
+        const categories = catData.categories || [];
+        const masters = masterData.masters || [];
+
+        // Группируем мастеров по категориям
+        const byCategory = {};
+        const noCat = [];
+        for (const m of masters) {
+            if (m.category_id) {
+                (byCategory[m.category_id] = byCategory[m.category_id] || []).push(m);
+            } else {
+                noCat.push(m);
+            }
+        }
+
+        let html = '';
+
+        // Секция заголовка раздела
+        html += `<div class="table-header" style="margin-bottom:12px;">
+            <div class="table-title">🔧 Мастера по категориям</div>
+        </div>`;
+
+        for (const cat of categories) {
+            const catMasters = byCategory[cat.id] || [];
+            html += `
+            <div class="table-container" style="margin-bottom:16px;">
+                <div class="table-header">
+                    <div class="table-title">${esc(cat.emoji || '🔧')} ${esc(cat.name)}</div>
                     <div style="display:flex;gap:6px;">
-                        <button class="btn btn-ghost btn-sm" onclick="showEditMasterModal(${m.id},'${esc(m.name)}','${esc(m.phone)}')">✏️</button>
-                        <button class="btn btn-danger btn-sm" onclick="deleteMaster(${m.id})">🗑️</button>
+                        <button class="btn btn-success btn-sm" onclick="showAddMasterModal(${cat.id})">➕ Мастер</button>
+                        <button class="btn btn-ghost btn-sm" onclick="showEditMasterCategoryModal(${cat.id},'${esc(cat.emoji||'🔧')}','${esc(cat.name)}')">✏️</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteMasterCategory(${cat.id})">🗑️</button>
                     </div>
-                </td>
-            </tr>`).join('');
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead><tr><th>#</th><th>Имя</th><th>Телефон</th><th>Действия</th></tr></thead>
+                        <tbody>
+                        ${catMasters.length === 0
+                            ? '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px;">Нет мастеров</td></tr>'
+                            : catMasters.map((m, idx) => `
+                            <tr>
+                                <td>${idx + 1}</td>
+                                <td>${esc(m.name)}</td>
+                                <td>${esc(m.phone)}</td>
+                                <td>
+                                    <div style="display:flex;gap:6px;">
+                                        <button class="btn btn-ghost btn-sm" onclick="showEditMasterModal(${m.id},'${esc(m.name)}','${esc(m.phone)}',${cat.id})">✏️</button>
+                                        <button class="btn btn-danger btn-sm" onclick="deleteMaster(${m.id})">🗑️</button>
+                                    </div>
+                                </td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+
+        // Мастера без категории
+        if (noCat.length > 0) {
+            html += `
+            <div class="table-container" style="margin-bottom:16px;">
+                <div class="table-header"><div class="table-title">📋 Без категории</div></div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead><tr><th>#</th><th>Имя</th><th>Телефон</th><th>Категория</th><th>Действия</th></tr></thead>
+                        <tbody>
+                        ${noCat.map((m, idx) => `
+                            <tr>
+                                <td>${idx + 1}</td>
+                                <td>${esc(m.name)}</td>
+                                <td>${esc(m.phone)}</td>
+                                <td>—</td>
+                                <td>
+                                    <div style="display:flex;gap:6px;">
+                                        <button class="btn btn-ghost btn-sm" onclick="showEditMasterModal(${m.id},'${esc(m.name)}','${esc(m.phone)}',null)">✏️</button>
+                                        <button class="btn btn-danger btn-sm" onclick="deleteMaster(${m.id})">🗑️</button>
+                                    </div>
+                                </td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+
+        if (categories.length === 0 && masters.length === 0) {
+            html += '<div style="text-align:center;color:var(--text-muted);padding:20px;">Нет категорий. Добавьте категорию.</div>';
+        }
+
+        container.innerHTML = html;
     } catch (err) {
-        body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</td></tr>';
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</div>';
     }
 }
 
@@ -2088,21 +2166,87 @@ async function _loadMedEjeTable() {
     }
 }
 
+// --- Master Categories CRUD ---
+
+function showAddMasterCategoryModal() {
+    document.getElementById('master-cat-modal-title').textContent = '➕ Добавить категорию';
+    document.getElementById('master-cat-id').value = '';
+    document.getElementById('master-cat-emoji').value = '🔧';
+    document.getElementById('master-cat-name').value = '';
+    openModal('modal-master-category');
+}
+
+function showEditMasterCategoryModal(id, emoji, name) {
+    document.getElementById('master-cat-modal-title').textContent = '✏️ Редактировать категорию';
+    document.getElementById('master-cat-id').value = id;
+    document.getElementById('master-cat-emoji').value = emoji;
+    document.getElementById('master-cat-name').value = name;
+    openModal('modal-master-category');
+}
+
+async function submitMasterCategory() {
+    const id = document.getElementById('master-cat-id').value;
+    const name = document.getElementById('master-cat-name').value.trim();
+    const emoji = document.getElementById('master-cat-emoji').value.trim() || '🔧';
+    if (!name) { toast('Введите название категории', 'error'); return; }
+    try {
+        if (id) {
+            await api(`/master-categories/${id}`, { method: 'PUT', body: JSON.stringify({ name, emoji }) });
+            toast('Категория обновлена', 'success');
+        } else {
+            await api('/master-categories', { method: 'POST', body: JSON.stringify({ name, emoji }) });
+            toast('Категория добавлена', 'success');
+        }
+        closeModal('modal-master-category');
+        loadContacts();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteMasterCategory(id) {
+    if (!confirm('Удалить категорию? Мастера останутся, но потеряют категорию.')) return;
+    try {
+        await api(`/master-categories/${id}`, { method: 'DELETE' });
+        toast('Категория удалена', 'success');
+        loadContacts();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
 // --- Masters CRUD ---
 
-function showAddMasterModal() {
+async function _fillMasterCategorySelect(selectedId) {
+    const sel = document.getElementById('master-category-id');
+    sel.innerHTML = '<option value="">— Без категории —</option>';
+    try {
+        const data = await api('/master-categories');
+        for (const cat of data.categories || []) {
+            const opt = document.createElement('option');
+            opt.value = cat.id;
+            opt.textContent = `${cat.emoji || '🔧'} ${cat.name}`;
+            if (selectedId && String(cat.id) === String(selectedId)) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    } catch (_) {}
+}
+
+async function showAddMasterModal(categoryId) {
     document.getElementById('master-modal-title').textContent = '➕ Добавить мастера';
     document.getElementById('master-id').value = '';
     document.getElementById('master-name').value = '';
     document.getElementById('master-phone').value = '';
+    await _fillMasterCategorySelect(categoryId);
     openModal('modal-master');
 }
 
-function showEditMasterModal(id, name, phone) {
+async function showEditMasterModal(id, name, phone, categoryId) {
     document.getElementById('master-modal-title').textContent = '✏️ Редактировать мастера';
     document.getElementById('master-id').value = id;
     document.getElementById('master-name').value = name;
     document.getElementById('master-phone').value = phone;
+    await _fillMasterCategorySelect(categoryId);
     openModal('modal-master');
 }
 
@@ -2110,13 +2254,14 @@ async function submitMaster() {
     const id = document.getElementById('master-id').value;
     const name = document.getElementById('master-name').value.trim();
     const phone = document.getElementById('master-phone').value.trim();
+    const category_id = document.getElementById('master-category-id').value || null;
     if (!name || !phone) { toast('Заполните имя и телефон', 'error'); return; }
     try {
         if (id) {
-            await api(`/masters/${id}`, { method: 'PUT', body: JSON.stringify({ name, phone }) });
+            await api(`/masters/${id}`, { method: 'PUT', body: JSON.stringify({ name, phone, category_id }) });
             toast('Мастер обновлён', 'success');
         } else {
-            await api('/masters', { method: 'POST', body: JSON.stringify({ name, phone }) });
+            await api('/masters', { method: 'POST', body: JSON.stringify({ name, phone, category_id }) });
             toast('Мастер добавлен', 'success');
         }
         closeModal('modal-master');

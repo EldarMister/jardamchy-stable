@@ -579,6 +579,64 @@ def update_cafe_balance(telegram_id):
 # MASTERS MANAGEMENT
 # =============================================================================
 
+@admin_bp.route('/master-categories', methods=['GET'])
+def list_master_categories():
+    try:
+        db = get_db()
+        cats = db.list_master_categories()
+        return jsonify({"categories": _clean_rows(cats)}), 200
+    except Exception as e:
+        logger.exception("Error listing master categories")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/master-categories', methods=['POST'])
+def add_master_category():
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        emoji = (data.get('emoji') or '🔧').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        cat = db.add_master_category(name, emoji)
+        return jsonify({"ok": True, "category": _clean_rows([cat])[0]}), 201
+    except Exception as e:
+        logger.exception("Error adding master category")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/master-categories/<int:cat_id>', methods=['PUT'])
+def update_master_category(cat_id):
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        emoji = (data.get('emoji') or '🔧').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        ok = db.update_master_category(cat_id, name, emoji)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error updating master category")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/master-categories/<int:cat_id>', methods=['DELETE'])
+def delete_master_category(cat_id):
+    try:
+        db = get_db()
+        ok = db.delete_master_category(cat_id)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error deleting master category")
+        return jsonify({"error": str(e)}), 500
+
+
 @admin_bp.route('/masters', methods=['GET'])
 def list_masters():
     try:
@@ -596,10 +654,13 @@ def add_master():
         data = request.get_json() or {}
         name = (data.get('name') or '').strip()
         phone = (data.get('phone') or '').strip()
+        category_id = data.get('category_id') or None
+        if category_id:
+            category_id = int(category_id)
         if not name or not phone:
             return jsonify({"error": "name and phone are required"}), 400
         db = get_db()
-        master = db.add_master(name, phone)
+        master = db.add_master(name, phone, category_id)
         return jsonify({"ok": True, "master": _clean_rows([master])[0]}), 201
     except Exception as e:
         logger.exception("Error adding master")
@@ -612,10 +673,13 @@ def update_master(master_id):
         data = request.get_json() or {}
         name = (data.get('name') or '').strip()
         phone = (data.get('phone') or '').strip()
+        category_id = data.get('category_id') or None
+        if category_id:
+            category_id = int(category_id)
         if not name or not phone:
             return jsonify({"error": "name and phone are required"}), 400
         db = get_db()
-        ok = db.update_master(master_id, name, phone)
+        ok = db.update_master(master_id, name, phone, category_id)
         if not ok:
             return jsonify({"error": "Not found"}), 404
         return jsonify({"ok": True}), 200

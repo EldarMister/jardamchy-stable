@@ -300,6 +300,58 @@ def check_poputka_timeouts():
 
 
 # =============================================================================
+# MENTION REMINDER (30 seconds)
+# =============================================================================
+
+def check_mention_reminders():
+    """Если заказ не принят за 30 секунд — упомянуть всех исполнителей в группе."""
+    try:
+        db = get_db()
+        timers = db.get_timers_needing_mention(delay_seconds=30)
+
+        for timer in timers:
+            timer_id = timer['id']
+            chat_id = timer.get('chat_id')
+            order_id = timer.get('order_id')
+            service_type = timer.get('service_type')
+
+            if not chat_id:
+                db.mark_mention_sent(timer_id)
+                continue
+
+            # Атомарно помечаем — только один воркер обработает
+            if not db.mark_mention_sent(timer_id):
+                continue
+
+            executors = db.get_executors_for_mention(service_type)
+            if not executors:
+                logger.info(f"No executors to mention for order {order_id} ({service_type})")
+                continue
+
+            # Строим строку с упоминаниями: [Имя](tg://user?id=ID)
+            mentions = " ".join(
+                f"[{ex.get('name') or 'Исполнитель'}](tg://user?id={ex['telegram_id']})"
+                for ex in executors
+            )
+            message = f"🔔 Заказ #{order_id} ещё не принят!\n{mentions}"
+
+            send_telegram_group(chat_id, message)
+
+            db.log_transaction(
+                "MENTION_REMINDER_SENT",
+                order_id=order_id,
+                details=f"Mentioned {len(executors)} executors for {service_type}"
+            )
+            logger.info(f"Mention reminder sent for order {order_id}, {len(executors)} executors")
+
+        return True
+
+    except Exception:
+        logger.exception("Error checking mention reminders")
+        return False
+
+
+# =============================================================================
 # AUTO-CANCEL PENDING ORDERS (20 minutes)
 # =============================================================================
 
@@ -410,6 +462,7 @@ def run_all_cron_jobs():
     if sent_from_outbox:
         logger.info("Telegram group outbox processed: sent=%s", sent_from_outbox)
 
+    check_mention_reminders()
     check_cafe_timeouts()
     check_taxi_timeouts()
     check_raznarabochi_timeouts()
