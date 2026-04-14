@@ -637,7 +637,7 @@ PLUMBING_MESSAGE = """🔧 *Сантехника*
 Оператор передаст заявку мастеру.
 📞 {support_phone}"""
 
-MASTER_MESSAGE = """🔧 *Мастер чакыруу*
+MASTER_MESSAGE = """🛠 *Уста чакыруу*
 
 Төмөнкү мастерлерге түздөн-түз чалсаңыз болот:
 
@@ -671,25 +671,25 @@ DIRECTORY_HEADER = """📖 *Маалымдама — Шамалдуу-Сай*
 
 RAZNARABOCHI_COMMISSION = 10  # дублируется для удобства шаблонов
 
-RAZNARABOCHI_DESC_PROMPT = """👷 *Разнарабочий*
+RAZNARABOCHI_DESC_PROMPT = """💪 *Күндө-Күш*
 
 Эмне иш жана канча адам керек экенин жазыңыз.
 
 Мисалы: *2 адам, көмүр түшүрүш керек* же *3 киши, жер казуу*"""
 
-RAZNARABOCHI_JOB_PROMPT = """👷 *Разнарабочий*
+RAZNARABOCHI_JOB_PROMPT = """💪 *Күндө-Күш*
 
 Кандай иш экенин жазыңыз.
 
 Мисалы: *1 фура ун түшүрүш керек*"""
 
-RAZNARABOCHI_COUNT_PROMPT = """👷 *Разнарабочий*
+RAZNARABOCHI_COUNT_PROMPT = """💪 *Күндө-Күш*
 
 Канча адам керек?
 
 Мисалы: *5 адам*"""
 
-RAZNARABOCHI_CONFIRM = """👷 *Разнарабочий — суроо*
+RAZNARABOCHI_CONFIRM = """💪 *Күндө-Күш — суроо*
 
 📋 Иш: {desc}
 👥 Керек адам: {workers_count}
