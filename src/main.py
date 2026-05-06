@@ -93,8 +93,7 @@ FLOW_SWITCH_BUTTON_YES = "btn_switch_yes"
 FLOW_SWITCH_BUTTON_NO = "btn_switch_no"
 FLOW_STALE_BUTTON_NEW = "btn_stale_new"
 FLOW_STALE_BUTTON_CONTINUE = "btn_stale_continue"
-MED_EJE_NEED_BUTTON_ID = "med_eje_need"
-MED_EJE_BACK_BUTTON_ID = "med_eje_back"
+
 
 FLOW_SWITCH_SCOPE = {
     config.SERVICE_TAXI,
@@ -155,7 +154,7 @@ EXPECTED_STEP_BY_STATE = {
     config.STATE_TAXI_ROUTE: "ожидаю маршрут",
     config.STATE_TAXI_REORDER_CHOICE: "ожидаю ответ по повтору заказа",
     config.STATE_RAZNARABOCHI_REORDER_CHOICE: "ожидаю ответ по повтору заказа разнорабочих",
-    config.STATE_MED_EJE_MENU: "ожидаю выбор по медпомощи",
+
     config.STATE_CAFE_ORDER: "ожидаю список блюд",
     config.STATE_CAFE_ADDRESS: "ожидаю адрес доставки",
     config.STATE_SHOP_LIST: "ожидаю список покупок",
@@ -1359,11 +1358,6 @@ _SUPPORT_KEYWORDS = {
     "help", "support", "колдоо", "кömek", "комек",
 }
 
-_MED_EJE_KEYWORDS = {
-    "доктор", "мед эже", "медеже", "медсестра", "мед сестра",
-    "мед помощь", "медициналык жардам",
-    "врач", "укол", "уколы", "капельница", "капельницу", "капельницы",
-}
 
 _COMPUTER_SERVICE_FUZZY_TARGETS = tuple(
     phrase.replace(" ", "")
@@ -1473,29 +1467,6 @@ def _is_computer_service_request(message: str) -> bool:
     return False
 
 
-def _is_med_eje_request(message: str) -> bool:
-    """Проверяет, просит ли пользователь медицинскую помощь / Мед Эже."""
-    normalized = _normalize_loose_text(message)
-    if not normalized:
-        return False
-
-    compact = normalized.replace(" ", "")
-    if normalized in _MED_EJE_KEYWORDS or compact in _MED_EJE_KEYWORDS:
-        return True
-
-    return any(
-        phrase in normalized
-        for phrase in (
-            "мед помощь",
-            "мед эже",
-            "медициналык жардам",
-            "мед сестра",
-            "медсестра",
-            "капельница",
-            "укол",
-        )
-    )
-
 
 _PHARMACY_REMOVED_KEYWORDS = frozenset({
     "аптека",
@@ -1531,40 +1502,6 @@ def _show_pharmacy_removed_notice(user: User, db=None) -> tuple:
             pass
     return jsonify({"status": "ok"}), 200
 
-
-def _show_med_eje_menu(user: User, db=None):
-    _reset_unknown_fallback(user)
-    user.clear_temp_data()
-    user.set_state(config.STATE_MED_EJE_MENU)
-
-    # Строим телефонные строки
-    phone_lines = ""
-    if db:
-        try:
-            contacts = db.list_med_eje_contacts(active_only=True)
-        except Exception:
-            contacts = []
-        if contacts:
-            phone_lines = "\n".join(
-                f"📞 *{i}. {c['name']}:* {c['phone']}" for i, c in enumerate(contacts, 1)
-            )
-    if not phone_lines:
-        phone_lines = (
-            f"📞 *1.* {format_phone(config.MED_EJE_PHONE)}\n"
-            f"📞 *2.* {format_phone(config.MED_EJE_PHONE_2)}"
-        )
-
-    combined = config.MED_EJE_MESSAGE + "\n\n" + phone_lines
-
-    send_whatsapp_buttons(
-        user.phone,
-        combined,
-        [
-            {"id": MED_EJE_BACK_BUTTON_ID, "text": "🏠 Артка"},
-        ],
-        include_cancel=False,
-    )
-    return jsonify({"status": "ok"}), 200
 
 
 def _show_master_contacts(user: User, db) -> tuple:
@@ -1648,23 +1585,6 @@ def _show_directory(user: User, db) -> tuple:
     )
     return jsonify({"status": "ok"}), 200
 
-
-def _get_med_eje_phones_msg(db) -> str:
-    """Получить сообщение с контактами Мед Эже из БД."""
-    try:
-        contacts = db.list_med_eje_contacts(active_only=True)
-    except Exception:
-        contacts = []
-    if contacts:
-        lines = ["🩺 *Мед Эже*\n"]
-        for i, c in enumerate(contacts, 1):
-            lines.append(f"📞 *{i}. {c['name']}:* {c['phone']}")
-        return "\n".join(lines)
-    # fallback к env переменным
-    return config.MED_EJE_PHONE_MESSAGE.format(
-        phone_1=format_phone(config.MED_EJE_PHONE),
-        phone_2=format_phone(config.MED_EJE_PHONE_2),
-    )
 
 
 def _send_specialist_request(user: User, client_message: str, service_name: str):
@@ -1894,10 +1814,18 @@ def _extract_oblast_cargo_desc(
         return ""
 
     address_tokens: set[str] = set()
+    known_address_canonicals: set[str] = set()
     for address in (from_addr, to_addr):
+        if not address:
+            continue
+        known_address_canonicals.add(address)
         for token in re.findall(r"[\w-]+", _normalize_loose_text(address).lower(), flags=re.UNICODE):
             address_tokens.add(token)
             address_tokens.add(_strip_address_case_suffix(token))
+        # Add joined (no-space) form: "Шамалды-Сай" → "шамалдысай"
+        joined = re.sub(r"\s+", "", _normalize_loose_text(address).lower())
+        if joined:
+            address_tokens.add(joined)
 
     tokens = re.findall(r"[\w-]+", prepared, flags=re.UNICODE)
     kept: list[str] = []
@@ -1909,7 +1837,18 @@ def _extract_oblast_cargo_desc(
             continue
         if token in OBLAST_PERSON_MARKERS or stripped in OBLAST_PERSON_MARKERS:
             continue
-        kept.append(token)
+        # Check if token with a direction suffix resolves to a known address
+        # e.g. "шамалсайдан" → base "шамалсай" → canonical "Шамалды-Сай"
+        for suf in _OBLAST_FROM_SUFFIXES + _OBLAST_TO_SUFFIXES:
+            if token.endswith(suf) and len(token) - len(suf) >= _OBLAST_SUFFIX_MIN_BASE:
+                base = token[:-len(suf)]
+                if base in address_tokens:
+                    break
+                canonical = _canonicalize_address_value(base)
+                if canonical and canonical in known_address_canonicals:
+                    break
+        else:
+            kept.append(token)
 
     return " ".join(kept).strip()
 
@@ -2605,19 +2544,6 @@ def _dispatch_raznarabochi_to_group(user: User, db) -> None:
     send_whatsapp(user.phone, config.RAZNARABOCHI_SENT)
 
 
-def handle_med_eje_menu(user: User, message: str, db) -> tuple:
-    normalized = _normalize_loose_text(message)
-
-    if normalized in {"артка", "назад", "back", "меню"}:
-        user.set_state(config.STATE_IDLE)
-        user.clear_temp_data()
-        _reset_unknown_fallback(user)
-        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
-        db.update_last_welcome(user.phone)
-        return jsonify({"status": "ok"}), 200
-
-    return _show_med_eje_menu(user, db)
-
 
 def _is_cancellation(message: str) -> bool:
     """Проверяет, хочет ли пользователь отменить заказ"""
@@ -3071,9 +2997,7 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         
         # === ROUTING ===
 
-        if user.current_state == config.STATE_MED_EJE_MENU:
-            return handle_med_eje_menu(user, incoming_msg, db)
-        
+
         # Проверка на отмену (в любом состоянии)
         msg_lower = incoming_msg.lower().strip()
         if _is_cancellation(incoming_msg):
@@ -3108,9 +3032,6 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
                 "Компьютерные услуги",
             )
 
-        if _is_med_eje_request(incoming_msg):
-            return _show_med_eje_menu(user, db)
-
         if user.current_state in DISABLED_PHARMACY_STATES:
             return _show_pharmacy_removed_notice(user, db)
 
@@ -3127,9 +3048,7 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
 
         if user.current_state == config.STATE_IDLE:
             return handle_idle_state(user, incoming_msg, db)
-        elif user.current_state == config.STATE_MED_EJE_MENU:
-            return handle_med_eje_menu(user, incoming_msg, db)
-        
+
         # Подтверждение заказа (универсальное)
         elif user.current_state == config.STATE_CONFIRM_ORDER:
             return handle_confirm_order(user, incoming_msg, db)
@@ -3261,12 +3180,11 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "3": "taxi",
         "4": "porter",
         "5": "ant",
-        "6": "med_eje",
-        "7": "computer",
-        "8": "poputka",
-        "9": "master",
-        "10": "raznarabochi",
-        "11": "directory",
+        "6": "computer",
+        "7": "poputka",
+        "8": "master",
+        "9": "raznarabochi",
+        "10": "directory",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -3279,7 +3197,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "магазин": "shop", "дүкөн": "shop", "дукон": "shop", "продукты": "shop",
         "портер": "porter", "жүк": "porter",
         "муравей": "ant", "желмаян": "ant",
-        "мед эже": "med_eje", "медеже": "med_eje", "мед помощь": "med_eje", "доктор": "med_eje",
+
         "компьютер": "computer", "компьютерные услуги": "computer", "ноутбук": "computer",
         "пк": "computer", "принтер": "computer", "интернет": "computer",
         "попутка": "poputka", "попутчик": "poputka", "попутка керек": "poputka",
@@ -3303,8 +3221,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     elif msg_lower in _QUICK_INTENTS:
         nlu_result = {"intent": _QUICK_INTENTS[msg_lower], **_EMPTY_NLU}
         logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
-    elif _is_med_eje_request(message):
-        nlu_result = {"intent": "med_eje", **_EMPTY_NLU}
     elif _looks_like_disabled_pharmacy_request(message):
         return _show_pharmacy_removed_notice(user, db)
     elif any(k in msg_lower for k in menu_keywords):
@@ -3317,7 +3233,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "porter", "ant", "med_eje", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "porter", "ant", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -3444,9 +3360,6 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
 
         return jsonify({"status": "ok"}), 200
 
-    # === МЕД ЭЖЕ ===
-    elif intent == "med_eje":
-        return _show_med_eje_menu(user, db)
 
     # === КОМПЬЮТЕРНЫЕ УСЛУГИ ===
     elif intent == "computer":
@@ -4615,13 +4528,6 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
             db.update_last_welcome(user.phone)
             return jsonify({"status": "ok"}), 200
 
-        if button_response == MED_EJE_BACK_BUTTON_ID:
-            user.set_state(config.STATE_IDLE)
-            user.clear_temp_data()
-            _reset_unknown_fallback(user)
-            send_whatsapp(user.phone, config.WELCOME_MESSAGE)
-            db.update_last_welcome(user.phone)
-            return jsonify({"status": "ok"}), 200
 
         if button_response in {WHATSAPP_CANCEL_BUTTON_ID, "btn_cancel", "cancel"}:
             handle_client_cancel(user, db)
@@ -4680,13 +4586,25 @@ def health_check():
     }), 200
 
 
-def _start_poputka_client_flow(user: User) -> tuple:
-    """Начать клиентский flow 7 область такси."""
+_POPUTKA_BARE_KEYWORDS = frozenset({
+    "8", "попутка", "попутчик", "попутка керек", "7 область", "7 область такси",
+    "7областьтакси", "башка шаарларга",
+})
+
+def _start_poputka_client_flow(user: User, message: str = "") -> tuple:
+    """Начать клиентский flow 7 область такси.
+    Если в сообщении уже есть данные (маршрут/тип/кол-во), сразу их обрабатывает.
+    """
     _reset_unknown_fallback(user)
     user.clear_temp_data()
     _clear_oblast_temp_data(user)
     user.set_temp_data("service_type", config.SERVICE_POPUTKA)
     user.set_state(config.STATE_OBLAST_TYPE)
+
+    normalized = _normalize_loose_text(message or "").lower()
+    if normalized and normalized not in _POPUTKA_BARE_KEYWORDS:
+        return handle_oblast_taxi_request(user, message, None)
+
     _send_oblast_type_prompt(user)
     return jsonify({"status": "ok"}), 200
 

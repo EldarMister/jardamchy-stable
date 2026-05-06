@@ -700,67 +700,6 @@ def delete_master(master_id):
         return jsonify({"error": str(e)}), 500
 
 
-# =============================================================================
-# MED EJE CONTACTS MANAGEMENT
-# =============================================================================
-
-@admin_bp.route('/med-eje', methods=['GET'])
-def list_med_eje():
-    try:
-        db = get_db()
-        contacts = db.list_med_eje_contacts()
-        return jsonify({"contacts": _clean_rows(contacts)}), 200
-    except Exception as e:
-        logger.exception("Error listing med_eje contacts")
-        return jsonify({"error": str(e)}), 500
-
-
-@admin_bp.route('/med-eje', methods=['POST'])
-def add_med_eje():
-    try:
-        data = request.get_json() or {}
-        name = (data.get('name') or '').strip()
-        phone = (data.get('phone') or '').strip()
-        if not name or not phone:
-            return jsonify({"error": "name and phone are required"}), 400
-        db = get_db()
-        contact = db.add_med_eje_contact(name, phone)
-        return jsonify({"ok": True, "contact": _clean_rows([contact])[0]}), 201
-    except Exception as e:
-        logger.exception("Error adding med_eje contact")
-        return jsonify({"error": str(e)}), 500
-
-
-@admin_bp.route('/med-eje/<int:contact_id>', methods=['PUT'])
-def update_med_eje(contact_id):
-    try:
-        data = request.get_json() or {}
-        name = (data.get('name') or '').strip()
-        phone = (data.get('phone') or '').strip()
-        if not name or not phone:
-            return jsonify({"error": "name and phone are required"}), 400
-        db = get_db()
-        ok = db.update_med_eje_contact(contact_id, name, phone)
-        if not ok:
-            return jsonify({"error": "Not found"}), 404
-        return jsonify({"ok": True}), 200
-    except Exception as e:
-        logger.exception("Error updating med_eje contact")
-        return jsonify({"error": str(e)}), 500
-
-
-@admin_bp.route('/med-eje/<int:contact_id>', methods=['DELETE'])
-def delete_med_eje(contact_id):
-    try:
-        db = get_db()
-        ok = db.delete_med_eje_contact(contact_id)
-        if not ok:
-            return jsonify({"error": "Not found"}), 404
-        return jsonify({"ok": True}), 200
-    except Exception as e:
-        logger.exception("Error deleting med_eje contact")
-        return jsonify({"error": str(e)}), 500
-
 
 # =============================================================================
 # DIRECTORY (МААЛЫМДАМА) MANAGEMENT
