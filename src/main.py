@@ -20,7 +20,12 @@ from services import (
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
     WHATSAPP_CANCEL_BUTTON_ID, WHATSAPP_MAIN_MENU_BUTTON_ID, send_order_cancelled_with_main_menu
 )
-from nlu import parse_user_message, parse_confirmation
+from nlu import (
+    parse_user_message,
+    parse_confirmation,
+    generate_unknown_reply,
+    looks_like_order_help_question,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3223,6 +3228,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         logger.info(f"Quick intent match (no NLU): {msg_lower!r} → {nlu_result['intent']}")
     elif _looks_like_disabled_pharmacy_request(message):
         return _show_pharmacy_removed_notice(user, db)
+    elif looks_like_order_help_question(message):
+        nlu_result = {"intent": "unknown", **_EMPTY_NLU, "fallback_reply": generate_unknown_reply(message)}
     elif any(k in msg_lower for k in menu_keywords):
         nlu_result = {"intent": "cafe", **_EMPTY_NLU}
     elif _looks_like_greeting(message):
@@ -3421,7 +3428,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         return jsonify({"status": "ok"}), 200
 
     else:
-        return _handle_unknown_fallback(user, message, nlu_result.get("fallback_reply"))
+        fallback_reply = generate_unknown_reply(message, nlu_result.get("fallback_reply"))
+        return _handle_unknown_fallback(user, message, fallback_reply)
 
 
 # =============================================================================
