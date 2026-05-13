@@ -11,6 +11,8 @@ python src/web_test_app.py
 
 После запуска откройте `http://127.0.0.1:5050`.
 
+На Railway тестовая страница доступна по адресу `/web-test`, например `https://secret-production-d38c.up.railway.app/web-test`.
+
 Основная логика тестового веб-чата находится в `src/web_test_app.py`. Файл не дублирует сценарии бота: он вызывает `src/main.py::handle_whatsapp`, а внешние интеграции WhatsApp, Telegram и PostgreSQL заменяет in-memory mock-слоем. Интерфейс находится в `src/web_test_static/index.html`.
 
 `Jardamchy GO` — мультисервисная платформа для Шамалды-Сая: клиенты оформляют заявки через WhatsApp и web-menu, исполнители принимают их в Telegram, администраторы управляют системой через web-панель. Бэкенд работает на Flask + PostgreSQL и уже включает очереди, повторные отправки и фоновые cron-проверки для защиты от cold start и временных сбоев.

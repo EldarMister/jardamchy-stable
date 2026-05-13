@@ -207,6 +207,8 @@
       sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
       localStorage.setItem(sessionKey, sessionId);
     }
+    const pathname = window.location.pathname.replace(/\/$/, "");
+    const apiBase = pathname.endsWith("/web-test") ? "/web-test/api" : "/api";
 
     const messagesEl = document.getElementById("messages");
     const stateEl = document.getElementById("state");
@@ -252,7 +254,7 @@
       }
 
       try {
-        const res = await fetch("/api/chat", {
+        const res = await fetch(`${apiBase}/chat`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
@@ -302,7 +304,7 @@
 
     resetBtn.addEventListener("click", async () => {
       setBusy(true);
-      await fetch("/api/reset", {
+      await fetch(`${apiBase}/reset`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({session_id: sessionId})

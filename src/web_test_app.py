@@ -34,6 +34,13 @@ _active_events: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvar
     "web_test_events",
     default=None,
 )
+_web_test_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "web_test_active",
+    default=False,
+)
+_patch_install_lock = Lock()
+_patch_installed = False
+_original_edges: dict[str, Any] = {}
 
 
 class WebTestUser:
@@ -348,7 +355,90 @@ def _mock_send_telegram_private(user_id: str, message: str, buttons=None) -> boo
     return True
 
 
+def _is_web_test_request() -> bool:
+    return bool(_web_test_active.get())
+
+
 def _patch_external_edges() -> None:
+    global _patch_installed
+    with _patch_install_lock:
+        if _patch_installed:
+            return
+        _original_edges.update(
+            {
+                "get_db": main.get_db,
+                "get_runtime_setting": main.get_runtime_setting,
+                "send_whatsapp": main.send_whatsapp,
+                "send_whatsapp_buttons": main.send_whatsapp_buttons,
+                "send_whatsapp_image": main.send_whatsapp_image,
+                "send_order_cancelled_with_main_menu": main.send_order_cancelled_with_main_menu,
+                "send_confirmation_buttons": main.send_confirmation_buttons,
+                "dispatch_telegram_group_notification": main.dispatch_telegram_group_notification,
+                "send_telegram_private": main.send_telegram_private,
+            }
+        )
+
+        def get_db_proxy():
+            if _is_web_test_request():
+                return web_test_db
+            return _original_edges["get_db"]()
+
+        def get_runtime_setting_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return web_test_db.get_runtime_setting(*args, **kwargs)
+            return _original_edges["get_runtime_setting"](*args, **kwargs)
+
+        def send_whatsapp_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_whatsapp(*args, **kwargs)
+            return _original_edges["send_whatsapp"](*args, **kwargs)
+
+        def send_whatsapp_buttons_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_whatsapp_buttons(*args, **kwargs)
+            return _original_edges["send_whatsapp_buttons"](*args, **kwargs)
+
+        def send_whatsapp_image_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_whatsapp_image(*args, **kwargs)
+            return _original_edges["send_whatsapp_image"](*args, **kwargs)
+
+        def send_order_cancelled_with_main_menu_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_order_cancelled_with_main_menu(*args, **kwargs)
+            return _original_edges["send_order_cancelled_with_main_menu"](*args, **kwargs)
+
+        def send_confirmation_buttons_proxy(phone: str, *args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_whatsapp_buttons(
+                    phone,
+                    "РўР°СЃС‚С‹РєС‚Р°Р№СЃС‹Р·Р±С‹?",
+                    [{"id": "confirm_yes", "text": "вњ… РћРѕР±Р°"}, {"id": "confirm_no", "text": "вќЊ Р–РѕРє"}],
+                    include_cancel=False,
+                )
+            return _original_edges["send_confirmation_buttons"](phone, *args, **kwargs)
+
+        def dispatch_telegram_group_notification_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_dispatch_telegram_group_notification(*args, **kwargs)
+            return _original_edges["dispatch_telegram_group_notification"](*args, **kwargs)
+
+        def send_telegram_private_proxy(*args, **kwargs):
+            if _is_web_test_request():
+                return _mock_send_telegram_private(*args, **kwargs)
+            return _original_edges["send_telegram_private"](*args, **kwargs)
+
+        main.get_db = get_db_proxy
+        main.get_runtime_setting = get_runtime_setting_proxy
+        main.send_whatsapp = send_whatsapp_proxy
+        main.send_whatsapp_buttons = send_whatsapp_buttons_proxy
+        main.send_whatsapp_image = send_whatsapp_image_proxy
+        main.send_order_cancelled_with_main_menu = send_order_cancelled_with_main_menu_proxy
+        main.send_confirmation_buttons = send_confirmation_buttons_proxy
+        main.dispatch_telegram_group_notification = dispatch_telegram_group_notification_proxy
+        main.send_telegram_private = send_telegram_private_proxy
+        _patch_installed = True
+    return
     main.get_db = lambda: web_test_db
     main.get_runtime_setting = web_test_db.get_runtime_setting
     main.send_whatsapp = _mock_send_whatsapp
@@ -423,19 +513,22 @@ def _cloud_button_payload(phone: str, button_id: str, title: str, message_id: st
     }
 
 
-def create_app() -> Flask:
+def register_web_test_routes(
+    app: Flask,
+    *,
+    page_route: str = "/web-test",
+    static_prefix: str = "/web-test/static",
+    api_prefix: str = "/web-test/api",
+    endpoint_prefix: str = "web_test",
+) -> None:
     _patch_external_edges()
-    app = Flask(__name__, static_folder=None)
 
-    @app.get("/")
     def index():
         return send_from_directory(STATIC_DIR, "index.html")
 
-    @app.get("/web-test/<path:filename>")
     def static_files(filename: str):
         return send_from_directory(STATIC_DIR, filename)
 
-    @app.get("/api/health")
     def health():
         return jsonify(
             {
@@ -445,14 +538,12 @@ def create_app() -> Flask:
             }
         )
 
-    @app.post("/api/reset")
     def reset():
         data = request.get_json(silent=True) or {}
         phone = _phone_for_session(data.get("session_id"))
         web_test_db.reset(phone)
         return jsonify({"status": "ok", "phone": phone})
 
-    @app.post("/api/chat")
     def chat():
         data = request.get_json(silent=True) or {}
         text = (data.get("message") or "").strip()
@@ -468,6 +559,7 @@ def create_app() -> Flask:
         events: list[dict[str, Any]] = []
         outbox_token = _active_outbox.set(outbox)
         events_token = _active_events.set(events)
+        active_token = _web_test_active.set(True)
         try:
             message_id = f"web-{datetime.now(timezone.utc).timestamp()}-{len(web_test_db.messages)}"
             if button_id:
@@ -477,6 +569,7 @@ def create_app() -> Flask:
             result = main.handle_whatsapp(request_json=payload)
             status_code = result[1] if isinstance(result, tuple) and len(result) > 1 else 200
         finally:
+            _web_test_active.reset(active_token)
             _active_outbox.reset(outbox_token)
             _active_events.reset(events_token)
 
@@ -493,13 +586,31 @@ def create_app() -> Flask:
             }
         )
 
+    app.add_url_rule(page_route, f"{endpoint_prefix}_index", index, methods=["GET"])
+    app.add_url_rule(f"{static_prefix}/<path:filename>", f"{endpoint_prefix}_static", static_files, methods=["GET"])
+    app.add_url_rule(f"{api_prefix}/health", f"{endpoint_prefix}_health", health, methods=["GET"])
+    app.add_url_rule(f"{api_prefix}/reset", f"{endpoint_prefix}_reset", reset, methods=["POST"])
+    app.add_url_rule(f"{api_prefix}/chat", f"{endpoint_prefix}_chat", chat, methods=["POST"])
+    if "web_test_favicon" not in app.view_functions:
+        app.add_url_rule("/favicon.ico", "web_test_favicon", lambda: ("", 204), methods=["GET"])
+
+
+def create_app() -> Flask:
+    app = Flask(__name__, static_folder=None)
+    register_web_test_routes(
+        app,
+        page_route="/",
+        static_prefix="/web-test",
+        api_prefix="/api",
+        endpoint_prefix="web_test_root",
+    )
+    register_web_test_routes(app)
+
     return app
 
 
-app = create_app()
-
-
 if __name__ == "__main__":
+    app = create_app()
     port = int(os.getenv("WEB_TEST_PORT", "5050"))
     debug = os.getenv("WEB_TEST_DEBUG", "false").lower() == "true"
     app.run(host="127.0.0.1", port=port, debug=debug)

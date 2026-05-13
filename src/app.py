@@ -59,6 +59,9 @@ def create_app():
     
     from menu import menu_bp
     app.register_blueprint(menu_bp)
+
+    from web_test_app import register_web_test_routes
+    register_web_test_routes(app)
     
     # Регистрация роутов
     from main import (
