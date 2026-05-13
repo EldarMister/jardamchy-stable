@@ -1515,7 +1515,7 @@ class Database:
         with self.get_cursor(commit=True) as cur:
             # Получаем текущий баланс
             cur.execute(
-                "SELECT balance FROM drivers WHERE telegram_id = %s",
+                "SELECT balance FROM drivers WHERE telegram_id = %s FOR UPDATE",
                 (telegram_id,)
             )
             row = cur.fetchone()
@@ -1523,11 +1523,14 @@ class Database:
             if not row:
                 return False, 0
             
-            new_balance = float(row['balance']) + amount
+            current_balance = float(row['balance'])
+            amount = float(amount)
+            new_balance = current_balance + amount
             
-            # Проверяем минимальный баланс
-            if new_balance < config.MIN_DRIVER_BALANCE:
-                return False, float(row['balance'])
+            # Do not use MIN_DRIVER_BALANCE here: it gates taking new orders,
+            # while balance updates and commissions may bring the balance to 0.
+            if new_balance < 0:
+                return False, current_balance
             
             cur.execute(
                 """UPDATE drivers SET balance = %s, updated_at = CURRENT_TIMESTAMP

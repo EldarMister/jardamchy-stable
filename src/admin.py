@@ -391,6 +391,7 @@ def update_driver_balance(telegram_id):
 
         if amount is None:
             return jsonify({"error": "amount is required"}), 400
+        amount = float(amount)
 
         db = get_db()
         success, new_balance = db.update_driver_balance(telegram_id, amount, reason)

@@ -955,8 +955,10 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                 return jsonify({"status": "ok"}), 200
 
         # Проверяем баланс до атомарного захвата
+        commission = _runtime_setting("taxi_commission", config.TAXI_COMMISSION)
         balance = float(driver.get('balance', 0))
-        if balance < config.MIN_DRIVER_BALANCE:
+        required_balance = max(float(config.MIN_DRIVER_BALANCE), float(commission))
+        if balance < required_balance:
             send_telegram_private(
                 user_id,
                 f"❌ *Недостаточно средств!*\n\n"
@@ -975,10 +977,6 @@ def handle_taxi_take(data: str, user_id: str, user_name: str,
                 f"Завершите или отмените текущий заказ перед тем, как брать новый."
             )
             return jsonify({"status": "ok"}), 200
-
-        # Предопределяем комиссию (без обращения к заказу)
-        # Комиссия определяется позже на основе цены заказа
-        commission = _runtime_setting("taxi_commission", config.TAXI_COMMISSION)  # default
 
         # АТОМАРНЫЙ ЗАХВАТ: одним UPDATE проверяем и назначаем
         now = datetime.now()
@@ -1364,6 +1362,22 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
             )
             return jsonify({"status": "ok"}), 200
 
+        if order_service_type == config.SERVICE_ANT:
+            commission = _runtime_setting("ant_commission", config.ANT_COMMISSION)
+        else:
+            commission = _runtime_setting("porter_commission", config.PORTER_COMMISSION)
+        balance = float(driver.get('balance', 0))
+        required_balance = max(float(config.MIN_DRIVER_BALANCE), float(commission))
+        if balance < required_balance:
+            send_telegram_private(
+                user_id,
+                f"❌ *Недостаточно средств!*\n\n"
+                f"💰 Ваш баланс: *{balance:.0f} сом*\n"
+                f"💳 Комиссия: *{float(commission):.0f} сом*\n\n"
+                f"Пополните баланс и попробуйте снова."
+            )
+            return jsonify({"status": "ok"}), 200
+
         # Атомарно назначаем водителя
         now = datetime.now()
         assigned = db.assign_order_to_driver(
@@ -1377,7 +1391,8 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
                 config.ORDER_STATUS_READY,
                 config.ORDER_STATUS_URGENT
             ],
-            driver_assigned_at=now
+            driver_assigned_at=now,
+            driver_commission=commission
         )
         if not assigned:
             send_telegram_private(user_id, "❌ Заказ уже забрали другие!")
@@ -1396,7 +1411,6 @@ def handle_porter_take(data: str, user_id: str, user_name: str,
         edit_telegram_message(chat_id, message_id, updated_text, buttons=[])
         
         # Списываем комиссию
-        commission = _runtime_setting("porter_commission", config.PORTER_COMMISSION)
         success, new_balance = db.update_driver_balance(
             user_id,
             -commission,
@@ -1684,6 +1698,19 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                 "❌ Вы не зарегистрированы!\n\nДля регистрации напишите боту /register в личные сообщения."
             )
             return jsonify({"status": "ok"}), 200
+
+        if commission > 0:
+            balance = float(driver.get('balance', 0))
+            required_balance = max(float(config.MIN_DRIVER_BALANCE), float(commission))
+            if balance < required_balance:
+                send_telegram_private(
+                    user_id,
+                    f"❌ *Недостаточно средств!*\n\n"
+                    f"💰 Ваш баланс: *{balance:.0f} сом*\n"
+                    f"💳 Комиссия: *{float(commission):.0f} сом*\n\n"
+                    f"Пополните баланс и попробуйте снова."
+                )
+                return jsonify({"status": "ok"}), 200
         
         # АТОМАРНЫЙ ЗАХВАТ (доставка может быть назначена на заказ принятый кафе)
         now = datetime.now()
@@ -1698,7 +1725,8 @@ def handle_delivery_take(data: str, user_id: str, user_name: str,
                 config.ORDER_STATUS_ACCEPTED,
                 config.ORDER_STATUS_READY
             ],
-            driver_assigned_at=now
+            driver_assigned_at=now,
+            driver_commission=commission if commission > 0 else None
         )
         if not assigned:
             if order.get('driver_id') == str(user_id):
