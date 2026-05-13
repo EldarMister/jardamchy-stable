@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jardamchy GO Web Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f5;
+      --panel: #ffffff;
+      --line: #d7ded9;
+      --text: #17211b;
+      --muted: #66756c;
+      --brand: #0f7a4f;
+      --brand-strong: #0a5e3c;
+      --bot: #eef4f0;
+      --user: #d9f0e4;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .app {
+      width: min(980px, 100%);
+      min-height: 100vh;
+      background: var(--panel);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+    }
+
+    header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .reset {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 9px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .messages {
+      padding: 18px 18px 28px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: min(720px, 92%);
+      padding: 11px 13px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      white-space: pre-wrap;
+      line-height: 1.4;
+      font-size: 15px;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: var(--user);
+    }
+
+    .message.bot {
+      align-self: flex-start;
+      background: var(--bot);
+    }
+
+    .message.system {
+      align-self: center;
+      max-width: 760px;
+      background: #fff8df;
+      color: #5b4a11;
+      font-size: 13px;
+    }
+
+    .quick-replies {
+      align-self: flex-start;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: min(720px, 92%);
+      margin-top: -4px;
+    }
+
+    .quick-replies button {
+      border: 1px solid #b8c9bf;
+      background: #fff;
+      color: var(--brand-strong);
+      border-radius: 999px;
+      padding: 8px 11px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    form {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 46px;
+      max-height: 160px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      font: inherit;
+      line-height: 1.35;
+    }
+
+    button[type="submit"] {
+      border: 0;
+      border-radius: 8px;
+      padding: 0 18px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 112px;
+    }
+
+    button:disabled,
+    textarea:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    @media (max-width: 640px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      form {
+        grid-template-columns: 1fr;
+      }
+
+      button[type="submit"] {
+        min-height: 44px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Jardamchy GO Web Test</h1>
+        <div class="meta" id="state">Локальная веб-версия WhatsApp-бота</div>
+      </div>
+      <button class="reset" id="reset" type="button">Сбросить диалог</button>
+    </header>
+
+    <section class="messages" id="messages" aria-live="polite"></section>
+
+    <form id="form">
+      <textarea id="input" placeholder="Напишите сообщение как в WhatsApp..." autocomplete="off"></textarea>
+      <button type="submit">Отправить</button>
+    </form>
+  </main>
+
+  <script>
+    const sessionKey = "jardamchy-web-test-session";
+    let sessionId = localStorage.getItem(sessionKey);
+    if (!sessionId) {
+      sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+      localStorage.setItem(sessionKey, sessionId);
+    }
+
+    const messagesEl = document.getElementById("messages");
+    const stateEl = document.getElementById("state");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const resetBtn = document.getElementById("reset");
+
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function addMessage(role, text) {
+      const node = document.createElement("div");
+      node.className = `message ${role}`;
+      node.textContent = text;
+      messagesEl.appendChild(node);
+      scrollToBottom();
+    }
+
+    function addQuickReplies(buttons) {
+      if (!buttons || !buttons.length) return;
+      const wrap = document.createElement("div");
+      wrap.className = "quick-replies";
+      for (const btn of buttons) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = btn.text || btn.id || "Button";
+        button.addEventListener("click", () => sendMessage("", btn.id || "", btn.text || ""));
+        wrap.appendChild(button);
+      }
+      messagesEl.appendChild(wrap);
+      scrollToBottom();
+    }
+
+    async function sendMessage(text, buttonId = "", buttonTitle = "") {
+      const cleanText = text.trim();
+      if (!cleanText && !buttonId) return;
+      setBusy(true);
+      if (buttonId) {
+        addMessage("user", buttonTitle || buttonId);
+      } else {
+        addMessage("user", cleanText);
+      }
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: cleanText,
+            button_id: buttonId,
+            button_title: buttonTitle
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "request failed");
+        stateEl.textContent = `Состояние: ${data.state} | Телефон теста: ${data.phone}`;
+        if (!data.messages.length) {
+          addMessage("system", "Обработчик не отправил ответ. Проверьте mock_events или состояние диалога.");
+        }
+        for (const msg of data.messages) {
+          addMessage("bot", msg.text || "");
+          addQuickReplies(msg.buttons || []);
+        }
+      } catch (err) {
+        addMessage("system", `Ошибка: ${err.message}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function setBusy(isBusy) {
+      input.disabled = isBusy;
+      form.querySelector("button").disabled = isBusy;
+      resetBtn.disabled = isBusy;
+      if (!isBusy) input.focus();
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = input.value;
+      input.value = "";
+      sendMessage(text);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    resetBtn.addEventListener("click", async () => {
+      setBusy(true);
+      await fetch("/api/reset", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({session_id: sessionId})
+      });
+      messagesEl.textContent = "";
+      stateEl.textContent = "Диалог сброшен";
+      addMessage("system", "Новый тестовый диалог готов.");
+      setBusy(false);
+    });
+
+    addMessage("system", "Пишите так же, как клиент написал бы в WhatsApp: такси, кафе, магазин, доставка, портер, желмаян, попутка.");
+    input.focus();
+  </script>
+</body>
+</html>
