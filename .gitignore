@@ -57,3 +57,4 @@ htmlcov/
 # Temporary files
 *.tmp
 *.bak
+.vercel
