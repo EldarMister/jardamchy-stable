@@ -4551,6 +4551,14 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
         }:
             return handle_raznarabochi_reorder_choice(user, button_response, db)
 
+        if user.current_state == config.STATE_TAXI_REORDER_CHOICE and button_response in {
+            "reorder_yes",
+            "reorder_no",
+            "btn_taxi_reorder_yes",
+            "btn_taxi_reorder_no",
+        }:
+            return handle_taxi_reorder_choice(user, button_response, db)
+
         if button_response == config.OBLAST_TYPE_PERSON_BUTTON_ID:
             return handle_oblast_taxi_request(user, "", db, selected_kind=OBLAST_KIND_PERSON)
 
