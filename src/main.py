@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import config
 from db import get_db, User, get_runtime_setting
 from services import (
-    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image,
+    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image, send_whatsapp_location,
     send_telegram_private, edit_telegram_message,
     dispatch_telegram_group_notification,
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
@@ -1592,6 +1592,317 @@ def _show_directory(user: User, db) -> tuple:
 
 
 
+_CATALOG_QUERY_MARKERS = (
+    "где", "кайда", "адрес", "дарек", "телефон", "номер", "контакт",
+    "какие есть", "что есть", "покажи", "найди", "список", "рядом",
+    "барбы", "кандай", "кайсы",
+)
+_CATALOG_CATEGORY_WORDS = (
+    "кафе", "магазин", "аптека", "сто", "сервис", "организация", "уюм",
+    "ашкана", "дүкөн", "дукон", "дарыкана", "салон", "банк", "школа",
+)
+_CATALOG_ORDER_ACTION_WORDS = (
+    "заказать", "заказ", "доставка", "доставь", "привези", "принеси",
+    "купить", "возьми", "алып кел", "жеткир", "буйрутма", "заказ кыл",
+)
+_RENTAL_QUERY_MARKERS = (
+    "аренда", "аренду", "снять", "сдается", "сдаётся", "квартира", "квартиры",
+    "комната", "комнаты", "жилье", "жильё", "ижара", "батир", "үй ижара",
+)
+
+
+def _as_photo_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v or "").strip()]
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if str(v or "").strip()]
+        except Exception:
+            return [v.strip() for v in re.split(r"[\n,]+", value) if v.strip()]
+    return []
+
+
+def _normalized_contains_term(normalized: str, term: str) -> bool:
+    term = (term or "").strip().lower()
+    if not term:
+        return False
+    if " " in term:
+        return term in normalized
+    tokens = normalized.split()
+    if len(term) <= 3:
+        return term in tokens
+    return term in tokens or term in normalized
+
+
+def _catalog_terms_from_admin(db) -> set[str]:
+    terms: set[str] = set()
+    try:
+        categories = db.list_city_catalog_categories(active_only=True)
+    except Exception:
+        return terms
+    for category in categories or []:
+        raw = f"{category.get('name') or ''}\n{category.get('keywords') or ''}"
+        for part in re.split(r"[\n,;]+", raw):
+            normalized = _normalize_loose_text(part)
+            if len(normalized) >= 2:
+                terms.add(normalized)
+            for token in normalized.split():
+                if len(token) >= 3:
+                    terms.add(token)
+    return terms
+
+
+def _looks_like_catalog_query(message: str, db) -> bool:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+    if looks_like_order_help_question(message):
+        return False
+    has_marker = any(marker in normalized for marker in _CATALOG_QUERY_MARKERS)
+    has_order_action = any(marker in normalized for marker in _CATALOG_ORDER_ACTION_WORDS)
+    if has_order_action and not has_marker:
+        return False
+    admin_terms = _catalog_terms_from_admin(db)
+    has_category_word = any(_normalized_contains_term(normalized, word) for word in _CATALOG_CATEGORY_WORDS)
+    has_admin_category = any(_normalized_contains_term(normalized, word) for word in admin_terms)
+    has_category_word = has_category_word or has_admin_category
+    if has_marker and has_category_word:
+        return True
+    tokens = re.findall(r"[\wА-Яа-яЁёӨөҮүҢң-]{2,}", normalized)
+    category_tokens = {
+        "кафе", "магазин", "аптека", "сто", "ашкана", "дүкөн", "дукон", "дарыкана",
+        *{token for term in admin_terms for token in term.split()},
+    }
+    non_category_tokens = [token for token in tokens if token not in category_tokens]
+    if has_category_word and 0 < len(non_category_tokens) <= 2:
+        try:
+            return bool(db.search_city_catalog(" ".join(non_category_tokens), limit=1))
+        except Exception:
+            return False
+    if has_marker:
+        try:
+            return bool(db.search_city_catalog(message, limit=1))
+        except Exception:
+            return False
+    if len(tokens) == 1 and _extract_flow_keyword_intent(message):
+        return False
+    if 1 <= len(tokens) <= 3:
+        try:
+            return bool(db.search_city_catalog(message, limit=1))
+        except Exception:
+            return False
+    return False
+
+
+def _looks_like_rental_query(message: str) -> bool:
+    normalized = _normalize_loose_text(message)
+    if not normalized:
+        return False
+    if _extract_flow_keyword_intent(message):
+        return False
+    strong_markers = ("аренда", "аренду", "снять", "сдается", "сдаётся", "ижара", "үй ижара")
+    if any(marker in normalized for marker in strong_markers):
+        return True
+    apartment_markers = ("квартира", "квартиры", "комната", "комнаты", "жилье", "жильё", "батир")
+    question_markers = ("есть", "бар", "барбы", "покажи", "найди", "керек", "издейм", "ищу")
+    has_apartment_marker = any(marker in normalized for marker in apartment_markers)
+    has_filter = bool(
+        re.search(r"\d{1,2}\s*(?:ком|комн|комнат|бөлмө|болмо|к)", normalized)
+        or re.search(r"(?:до|чейин|max|макс)\s*\d[\d\s]{2,}", normalized)
+        or re.search(r"\d[\d\s]{2,}\s*(?:сом|с)", normalized)
+    )
+    return has_apartment_marker and (has_filter or any(marker in normalized for marker in question_markers))
+
+
+def _extract_rental_filters(message: str) -> dict:
+    normalized = _normalize_loose_text(message)
+    filters = {}
+    room_match = re.search(r"(\d{1,2})\s*(?:ком|комн|комнат|бөлмө|болмо|к)", normalized)
+    if room_match:
+        filters["rooms"] = int(room_match.group(1))
+    price_match = re.search(r"(?:до|чейин|max|макс)\s*(\d[\d\s]{2,})", normalized)
+    if not price_match:
+        price_match = re.search(r"(\d[\d\s]{2,})\s*(?:сом|с)", normalized)
+    if price_match:
+        filters["max_price"] = float(re.sub(r"\s+", "", price_match.group(1)))
+    district_match = re.search(r"(?:район|райондо|районунда)\s+([а-яёөүңa-z0-9 -]{2,40})", normalized)
+    if district_match:
+        filters["district"] = district_match.group(1).strip()
+    return filters
+
+
+def _format_catalog_entry(entry: dict) -> str:
+    lines = []
+    category = (entry.get("category_name") or "").strip()
+    emoji = (entry.get("category_emoji") or "").strip()
+    title = (entry.get("name") or "").strip()
+    lines.append(f"{emoji + ' ' if emoji else ''}*{title}*")
+    if category:
+        lines.append(f"Категория: {category}")
+    if entry.get("address"):
+        lines.append(f"Адрес: {entry['address']}")
+    if entry.get("description"):
+        lines.append(f"Описание: {entry['description']}")
+    if entry.get("phone"):
+        lines.append(f"Телефон: {entry['phone']}")
+    return "\n".join(lines)
+
+
+def _send_catalog_entry(user: User, entry: dict) -> None:
+    text = _format_catalog_entry(entry)
+    photos = _as_photo_list(entry.get("photo_urls"))
+    if photos:
+        send_whatsapp_image(user.phone, photos[0], text)
+        for photo in photos[1:4]:
+            send_whatsapp_image(user.phone, photo, "")
+    else:
+        send_whatsapp(user.phone, text)
+    lat = entry.get("latitude")
+    lon = entry.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            send_whatsapp_location(user.phone, float(lat), float(lon), entry.get("name") or "", entry.get("address") or "")
+        except Exception:
+            logger.warning("Failed to send catalog location id=%s", entry.get("id"))
+
+
+def _handle_city_catalog_query(user: User, message: str, db) -> tuple | None:
+    if not _looks_like_catalog_query(message, db):
+        return None
+    try:
+        entries = db.search_city_catalog(message, limit=8)
+    except Exception:
+        logger.exception("City catalog search failed")
+        entries = []
+    if not entries:
+        return None
+    _reset_unknown_fallback(user)
+    user.set_state(config.STATE_IDLE)
+    user.clear_temp_data()
+    normalized = _normalize_loose_text(message)
+    list_request = any(marker in normalized for marker in ("какие", "что есть", "список", "покажи", "рядом", "барбы", "кандай"))
+    if len(entries) == 1 or not list_request:
+        _send_catalog_entry(user, entries[0])
+        return jsonify({"status": "ok"}), 200
+    lines = ["Нашёл такие места:"]
+    for idx, entry in enumerate(entries, 1):
+        emoji = (entry.get("category_emoji") or "").strip()
+        name = (entry.get("name") or "").strip()
+        category = (entry.get("category_name") or "").strip()
+        address = (entry.get("address") or "").strip()
+        prefix = f"{emoji} " if emoji else ""
+        meta = f" — {category}" if category else ""
+        lines.append(f"{idx}. {prefix}{name}{meta}")
+        if address:
+            lines.append(f"   {address}")
+    send_whatsapp(user.phone, "\n".join(lines))
+    return jsonify({"status": "ok"}), 200
+
+
+def _format_rental_short(item: dict, idx: int) -> str:
+    rooms = item.get("rooms")
+    rooms_text = f"{rooms}-комнатная квартира" if rooms else "Квартира"
+    price = float(item.get("price") or 0)
+    price_text = f"{price:,.0f}".replace(",", " ")
+    lines = [f"{idx}. {rooms_text}"]
+    lines.append(f"   Адрес: {item.get('address') or '—'}")
+    lines.append(f"   Цена: {price_text} сом")
+    if item.get("owner_phone"):
+        lines.append(f"   Телефон: {item['owner_phone']}")
+    return "\n".join(lines)
+
+
+def _format_rental_detail(item: dict) -> str:
+    rooms = item.get("rooms")
+    price = float(item.get("price") or 0)
+    price_text = f"{price:,.0f}".replace(",", " ")
+    lines = [f"*Квартира #{item.get('id')}*"]
+    if rooms:
+        lines.append(f"Комнат: {rooms}")
+    lines.append(f"Адрес: {item.get('address') or '—'}")
+    if item.get("district"):
+        lines.append(f"Район: {item['district']}")
+    lines.append(f"Цена: {price_text} сом")
+    if item.get("description"):
+        lines.append(f"Описание: {item['description']}")
+    if item.get("owner_phone"):
+        lines.append(f"Телефон: {item['owner_phone']}")
+    return "\n".join(lines)
+
+
+def _send_rental_detail(user: User, item: dict) -> None:
+    text = _format_rental_detail(item)
+    photos = _as_photo_list(item.get("photo_urls"))
+    if photos:
+        send_whatsapp_image(user.phone, photos[0], text)
+        for photo in photos[1:6]:
+            send_whatsapp_image(user.phone, photo, "")
+    else:
+        send_whatsapp(user.phone, text)
+    lat = item.get("latitude")
+    lon = item.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            send_whatsapp_location(user.phone, float(lat), float(lon), "Квартира", item.get("address") or "")
+        except Exception:
+            logger.warning("Failed to send rental location id=%s", item.get("id"))
+
+
+def _handle_rental_query(user: User, message: str, db) -> tuple | None:
+    if not _looks_like_rental_query(message):
+        return None
+    filters = _extract_rental_filters(message)
+    try:
+        listings = db.list_rental_listings(
+            active_only=True,
+            available_only=True,
+            rooms=filters.get("rooms"),
+            max_price=filters.get("max_price"),
+            district=filters.get("district"),
+            limit=10,
+        )
+    except Exception:
+        logger.exception("Rental search failed")
+        listings = []
+    _reset_unknown_fallback(user)
+    if not listings:
+        send_whatsapp(user.phone, "Сейчас подходящих квартир в аренду не нашёл. Можно уточнить цену, район или количество комнат.")
+        return jsonify({"status": "ok"}), 200
+    user.clear_temp_data()
+    user.set_state(config.STATE_RENTAL_DETAIL_CHOICE)
+    user.set_temp_data("rental_result_ids", [item["id"] for item in listings])
+    lines = ["🏠 *Квартиры в аренду*"]
+    for idx, item in enumerate(listings, 1):
+        lines.append(_format_rental_short(item, idx))
+    lines.append("\nДля просмотра фото и подробностей отправьте номер квартиры из списка.")
+    send_whatsapp(user.phone, "\n\n".join(lines))
+    return jsonify({"status": "ok"}), 200
+
+
+def handle_rental_detail_choice(user: User, message: str, db) -> tuple:
+    match = re.search(r"\d+", message or "")
+    result_ids = user.get_temp_data("rental_result_ids", []) or []
+    if not match or not result_ids:
+        user.clear_temp_data()
+        user.set_state(config.STATE_IDLE)
+        send_whatsapp(user.phone, config.WELCOME_MESSAGE)
+        return jsonify({"status": "ok"}), 200
+    index = int(match.group(0)) - 1
+    if index < 0 or index >= len(result_ids):
+        send_whatsapp(user.phone, "Такого номера в списке нет. Отправьте номер квартиры из последнего списка.")
+        return jsonify({"status": "ok"}), 200
+    item = db.get_rental_listing(int(result_ids[index]))
+    user.clear_temp_data()
+    user.set_state(config.STATE_IDLE)
+    if not item or not item.get("is_active") or item.get("status") != "available":
+        send_whatsapp(user.phone, "Эта квартира уже недоступна. Напишите “квартиры в аренду”, чтобы увидеть актуальный список.")
+        return jsonify({"status": "ok"}), 200
+    _send_rental_detail(user, item)
+    return jsonify({"status": "ok"}), 200
+
+
 def _send_specialist_request(user: User, client_message: str, service_name: str):
     _reset_unknown_fallback(user)
     user.set_state(config.STATE_IDLE)
@@ -3040,6 +3351,9 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         if user.current_state in DISABLED_PHARMACY_STATES:
             return _show_pharmacy_removed_notice(user, db)
 
+        if user.current_state == config.STATE_RENTAL_DETAIL_CHOICE:
+            return handle_rental_detail_choice(user, incoming_msg, db)
+
         if user.current_state != config.STATE_IDLE:
             _reset_unknown_fallback(user)
             switch_prompt_result = _maybe_prompt_flow_switch(user, incoming_msg)
@@ -3217,6 +3531,14 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+
+    rental_result = _handle_rental_query(user, message, db)
+    if rental_result:
+        return rental_result
+
+    catalog_result = _handle_city_catalog_query(user, message, db)
+    if catalog_result:
+        return catalog_result
 
     selected_intent = service_intent_by_number.get(msg_trim) or service_intent_by_number.get(first_token_digits)
     if selected_intent:

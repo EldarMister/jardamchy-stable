@@ -233,6 +233,9 @@ STATE_RAZNARABOCHI_REORDER_CHOICE = "RAZNARABOCHI_REORDER_CHOICE"
 # Веб-заказ
 STATE_WEB_ORDER_ADDRESS = "WEB_ORDER_ADDRESS"         # Ввод адреса для веб-заказа
 
+# Городской каталог / аренда
+STATE_RENTAL_DETAIL_CHOICE = "RENTAL_DETAIL_CHOICE"
+
 # =============================================================================
 # НОМЕРА И ССЫЛКИ
 # =============================================================================

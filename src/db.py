@@ -7,6 +7,7 @@ Database Module for Business Assistant GO
 import json
 import uuid
 import math
+import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple
 from contextlib import contextmanager
@@ -84,6 +85,27 @@ def _first_row_value(row: Any, default: Any = None) -> Any:
         return row[0]
     except (KeyError, IndexError, TypeError):
         return default
+
+
+def _normalize_photo_urls(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.replace("\r", "\n").replace(",", "\n").split("\n")
+    elif isinstance(value, (list, tuple)):
+        raw_items = value
+    else:
+        return []
+
+    urls = []
+    seen = set()
+    for item in raw_items:
+        url = str(item or "").strip()
+        if not url or url in seen:
+            continue
+        urls.append(url)
+        seen.add(url)
+    return urls
 
 
 class Database:
@@ -740,6 +762,60 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS city_catalog_categories (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(120) NOT NULL UNIQUE,
+                        emoji VARCHAR(10) DEFAULT '',
+                        keywords TEXT DEFAULT '',
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS city_catalog_entries (
+                        id SERIAL PRIMARY KEY,
+                        category_id INTEGER REFERENCES city_catalog_categories(id) ON DELETE SET NULL,
+                        name VARCHAR(200) NOT NULL,
+                        address TEXT DEFAULT '',
+                        description TEXT DEFAULT '',
+                        phone VARCHAR(80) DEFAULT '',
+                        photo_urls JSONB DEFAULT '[]'::jsonb,
+                        latitude DECIMAL(10, 7),
+                        longitude DECIMAL(10, 7),
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_city_catalog_entries_category ON city_catalog_entries(category_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_city_catalog_entries_active ON city_catalog_entries(is_active)")
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS rental_listings (
+                        id SERIAL PRIMARY KEY,
+                        rooms INTEGER,
+                        address TEXT NOT NULL,
+                        district VARCHAR(120) DEFAULT '',
+                        price DECIMAL(12, 2) DEFAULT 0,
+                        description TEXT DEFAULT '',
+                        owner_phone VARCHAR(80) DEFAULT '',
+                        photo_urls JSONB DEFAULT '[]'::jsonb,
+                        latitude DECIMAL(10, 7),
+                        longitude DECIMAL(10, 7),
+                        status VARCHAR(20) DEFAULT 'available',
+                        sort_order INTEGER DEFAULT 0,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_rental_listings_status ON rental_listings(status, is_active)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_rental_listings_rooms_price ON rental_listings(rooms, price)")
 
             finally:
                 cur.execute("SELECT pg_advisory_unlock(741852963)")
@@ -1876,6 +1952,334 @@ class Database:
     def delete_directory_entry(self, entry_id: int) -> bool:
         with self.get_cursor(commit=True) as cur:
             cur.execute("DELETE FROM directory_entries WHERE id = %s", (entry_id,))
+            return cur.rowcount > 0
+
+    # ==========================================================================
+    # CITY CATALOG METHODS
+    # ==========================================================================
+
+    def list_city_catalog_categories(self, active_only: bool = False) -> List[Dict]:
+        with self.get_cursor() as cur:
+            query = "SELECT * FROM city_catalog_categories"
+            params = []
+            if active_only:
+                query += " WHERE is_active = TRUE"
+            query += " ORDER BY sort_order, name"
+            cur.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_city_catalog_category(self, name: str, emoji: str = "", keywords: str = "") -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM city_catalog_categories")
+            sort_order = _first_row_value(cur.fetchone(), 1)
+            cur.execute(
+                """INSERT INTO city_catalog_categories (name, emoji, keywords, sort_order)
+                   VALUES (%s, %s, %s, %s)
+                   RETURNING *""",
+                (name.strip(), emoji.strip(), keywords.strip(), sort_order)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_city_catalog_category(self, category_id: int, name: str, emoji: str = "", keywords: str = "",
+                                     is_active: bool = True) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE city_catalog_categories
+                   SET name = %s, emoji = %s, keywords = %s, is_active = %s, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = %s""",
+                (name.strip(), emoji.strip(), keywords.strip(), bool(is_active), category_id)
+            )
+            return cur.rowcount > 0
+
+    def delete_city_catalog_category(self, category_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("UPDATE city_catalog_entries SET category_id = NULL WHERE category_id = %s", (category_id,))
+            cur.execute("DELETE FROM city_catalog_categories WHERE id = %s", (category_id,))
+            return cur.rowcount > 0
+
+    def list_city_catalog_entries(self, active_only: bool = False, category_id: int = None,
+                                  limit: int = 200) -> List[Dict]:
+        with self.get_cursor() as cur:
+            query = """
+                SELECT e.*, c.name AS category_name, c.emoji AS category_emoji
+                FROM city_catalog_entries e
+                LEFT JOIN city_catalog_categories c ON c.id = e.category_id
+                WHERE TRUE
+            """
+            params = []
+            if active_only:
+                query += " AND e.is_active = TRUE AND COALESCE(c.is_active, TRUE) = TRUE"
+            if category_id:
+                query += " AND e.category_id = %s"
+                params.append(category_id)
+            query += " ORDER BY COALESCE(c.sort_order, 9999), e.sort_order, e.name LIMIT %s"
+            params.append(int(limit))
+            cur.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_city_catalog_entry(
+        self,
+        name: str,
+        category_id: int = None,
+        address: str = "",
+        description: str = "",
+        phone: str = "",
+        photo_urls: Any = None,
+        latitude: float = None,
+        longitude: float = None,
+        is_active: bool = True,
+    ) -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM city_catalog_entries")
+            sort_order = _first_row_value(cur.fetchone(), 1)
+            cur.execute(
+                """INSERT INTO city_catalog_entries
+                   (category_id, name, address, description, phone, photo_urls, latitude, longitude, sort_order, is_active)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                   RETURNING *""",
+                (
+                    category_id,
+                    name.strip(),
+                    (address or "").strip(),
+                    (description or "").strip(),
+                    (phone or "").strip(),
+                    json.dumps(_normalize_photo_urls(photo_urls), ensure_ascii=False),
+                    latitude,
+                    longitude,
+                    sort_order,
+                    bool(is_active),
+                )
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_city_catalog_entry(
+        self,
+        entry_id: int,
+        name: str,
+        category_id: int = None,
+        address: str = "",
+        description: str = "",
+        phone: str = "",
+        photo_urls: Any = None,
+        latitude: float = None,
+        longitude: float = None,
+        is_active: bool = True,
+    ) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE city_catalog_entries
+                   SET category_id = %s, name = %s, address = %s, description = %s, phone = %s,
+                       photo_urls = %s::jsonb, latitude = %s, longitude = %s, is_active = %s,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = %s""",
+                (
+                    category_id,
+                    name.strip(),
+                    (address or "").strip(),
+                    (description or "").strip(),
+                    (phone or "").strip(),
+                    json.dumps(_normalize_photo_urls(photo_urls), ensure_ascii=False),
+                    latitude,
+                    longitude,
+                    bool(is_active),
+                    entry_id,
+                )
+            )
+            return cur.rowcount > 0
+
+    def delete_city_catalog_entry(self, entry_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM city_catalog_entries WHERE id = %s", (entry_id,))
+            return cur.rowcount > 0
+
+    def search_city_catalog(self, query: str, category_text: str = None, limit: int = 5) -> List[Dict]:
+        normalized = re.sub(r"\s+", " ", (query or "").strip())
+        tokens = [
+            token for token in re.findall(r"[\wА-Яа-яЁёӨөҮүҢң-]{2,}", normalized.lower())
+            if token not in {"где", "кайда", "какие", "какой", "барбы", "есть", "покажи", "найди", "адрес", "телефон"}
+        ][:6]
+        if not normalized and not tokens and not category_text:
+            return []
+
+        search_parts = []
+        params: List[Any] = []
+        if normalized:
+            pattern = f"%{normalized}%"
+            search_parts.append("(e.name ILIKE %s OR e.address ILIKE %s OR e.description ILIKE %s)")
+            params.extend([pattern, pattern, pattern])
+        for token in tokens:
+            pattern = f"%{token}%"
+            search_parts.append("(e.name ILIKE %s OR e.address ILIKE %s OR c.name ILIKE %s OR c.keywords ILIKE %s)")
+            params.extend([pattern, pattern, pattern, pattern])
+
+        category_clause = ""
+        if category_text:
+            category_pattern = f"%{category_text.strip()}%"
+            category_clause = " AND (c.name ILIKE %s OR c.keywords ILIKE %s)"
+            params.extend([category_pattern, category_pattern])
+
+        where_search = " OR ".join(search_parts) if search_parts else "TRUE"
+        params.append(int(limit))
+
+        with self.get_cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT e.*, c.name AS category_name, c.emoji AS category_emoji
+                FROM city_catalog_entries e
+                LEFT JOIN city_catalog_categories c ON c.id = e.category_id
+                WHERE e.is_active = TRUE
+                  AND COALESCE(c.is_active, TRUE) = TRUE
+                  AND ({where_search})
+                  {category_clause}
+                ORDER BY
+                    CASE
+                        WHEN e.name ILIKE %s THEN 0
+                        WHEN e.name ILIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    COALESCE(c.sort_order, 9999),
+                    e.sort_order,
+                    e.name
+                LIMIT %s
+                """,
+                params[:-1] + [
+                    f"%{normalized}%" if normalized else "%",
+                    f"%{tokens[-1]}%" if tokens else f"%{normalized}%",
+                    params[-1],
+                ]
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    # ==========================================================================
+    # RENTAL LISTING METHODS
+    # ==========================================================================
+
+    def list_rental_listings(
+        self,
+        active_only: bool = False,
+        available_only: bool = False,
+        rooms: int = None,
+        min_price: float = None,
+        max_price: float = None,
+        district: str = None,
+        limit: int = 200,
+    ) -> List[Dict]:
+        query = "SELECT * FROM rental_listings WHERE TRUE"
+        params: List[Any] = []
+        if active_only:
+            query += " AND is_active = TRUE"
+        if available_only:
+            query += " AND status = 'available'"
+        if rooms:
+            query += " AND rooms = %s"
+            params.append(int(rooms))
+        if min_price is not None:
+            query += " AND price >= %s"
+            params.append(float(min_price))
+        if max_price is not None:
+            query += " AND price <= %s"
+            params.append(float(max_price))
+        if district:
+            query += " AND (district ILIKE %s OR address ILIKE %s)"
+            pattern = f"%{district.strip()}%"
+            params.extend([pattern, pattern])
+        query += " ORDER BY price ASC, sort_order, id LIMIT %s"
+        params.append(int(limit))
+        with self.get_cursor() as cur:
+            cur.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_rental_listing(self, listing_id: int) -> Optional[Dict]:
+        with self.get_cursor() as cur:
+            cur.execute("SELECT * FROM rental_listings WHERE id = %s", (listing_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def add_rental_listing(
+        self,
+        rooms: int = None,
+        address: str = "",
+        district: str = "",
+        price: float = 0,
+        description: str = "",
+        owner_phone: str = "",
+        photo_urls: Any = None,
+        latitude: float = None,
+        longitude: float = None,
+        status: str = "available",
+        is_active: bool = True,
+    ) -> Optional[Dict]:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM rental_listings")
+            sort_order = _first_row_value(cur.fetchone(), 1)
+            cur.execute(
+                """INSERT INTO rental_listings
+                   (rooms, address, district, price, description, owner_phone, photo_urls,
+                    latitude, longitude, status, sort_order, is_active)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+                   RETURNING *""",
+                (
+                    rooms,
+                    address.strip(),
+                    (district or "").strip(),
+                    float(price or 0),
+                    (description or "").strip(),
+                    (owner_phone or "").strip(),
+                    json.dumps(_normalize_photo_urls(photo_urls), ensure_ascii=False),
+                    latitude,
+                    longitude,
+                    status or "available",
+                    sort_order,
+                    bool(is_active),
+                )
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_rental_listing(
+        self,
+        listing_id: int,
+        rooms: int = None,
+        address: str = "",
+        district: str = "",
+        price: float = 0,
+        description: str = "",
+        owner_phone: str = "",
+        photo_urls: Any = None,
+        latitude: float = None,
+        longitude: float = None,
+        status: str = "available",
+        is_active: bool = True,
+    ) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """UPDATE rental_listings
+                   SET rooms = %s, address = %s, district = %s, price = %s, description = %s,
+                       owner_phone = %s, photo_urls = %s::jsonb, latitude = %s, longitude = %s,
+                       status = %s, is_active = %s, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = %s""",
+                (
+                    rooms,
+                    address.strip(),
+                    (district or "").strip(),
+                    float(price or 0),
+                    (description or "").strip(),
+                    (owner_phone or "").strip(),
+                    json.dumps(_normalize_photo_urls(photo_urls), ensure_ascii=False),
+                    latitude,
+                    longitude,
+                    status or "available",
+                    bool(is_active),
+                    listing_id,
+                )
+            )
+            return cur.rowcount > 0
+
+    def delete_rental_listing(self, listing_id: int) -> bool:
+        with self.get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM rental_listings WHERE id = %s", (listing_id,))
             return cur.rowcount > 0
 
     # ==========================================================================

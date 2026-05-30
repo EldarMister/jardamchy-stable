@@ -55,6 +55,9 @@ let currentSection = 'dashboard';
 let dashboardData = null;
 let statsPeriod = 'day';
 let menuCategories = [];
+let catalogCategories = [];
+let catalogEntries = [];
+let rentalListings = [];
 
 // ============================================================================
 // API HELPERS
@@ -90,6 +93,8 @@ const sectionTitles = {
     cafes: '🍔 Кафе',
     contacts: '📋 Контакты',
     directory: '📖 Маалымдама',
+    catalog: '🏙️ Каталог',
+    rentals: '🏠 Аренда',
     shoppers: '🛒 Закупщики',
     stats: '📈 Статистика',
     transactions: '💰 Транзакции',
@@ -137,6 +142,8 @@ function loadSectionData(section) {
         case 'cafes': loadCafes(); break;
         case 'contacts': loadContacts(); break;
         case 'directory': loadDirectory(); break;
+        case 'catalog': loadCatalog(); break;
+        case 'rentals': loadRentals(); break;
         case 'shoppers': loadShoppers(); break;
         case 'stats': loadStats(); break;
         case 'transactions': loadTransactions(); break;
@@ -2390,6 +2397,287 @@ async function deleteDirectory(id) {
         await api(`/directory/${id}`, { method: 'DELETE' });
         toast('Запись удалена', 'success');
         loadDirectory();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+// ============================================================================
+// CITY CATALOG — CRUD
+// ============================================================================
+
+function photoList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value === 'string' && value.trim()) {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed.filter(Boolean);
+        } catch (_) {
+            return value.split(/\n|,/).map(v => v.trim()).filter(Boolean);
+        }
+    }
+    return [];
+}
+
+function readPhotoTextarea(id) {
+    return document.getElementById(id).value
+        .split(/\n|,/)
+        .map(v => v.trim())
+        .filter(Boolean);
+}
+
+function numOrNull(id) {
+    const value = document.getElementById(id).value;
+    return value === '' ? null : Number(value);
+}
+
+function fillCatalogCategorySelect(selectedId = '') {
+    const select = document.getElementById('catalog-entry-category-id');
+    if (!select) return;
+    select.innerHTML = '<option value="">— Без категории —</option>' + catalogCategories.map(c =>
+        `<option value="${c.id}">${escHtml((c.emoji ? c.emoji + ' ' : '') + c.name)}</option>`
+    ).join('');
+    select.value = selectedId || '';
+}
+
+async function loadCatalog() {
+    const catBody = document.getElementById('catalog-categories-body');
+    const entryBody = document.getElementById('catalog-entries-body');
+    try {
+        const [catData, entryData] = await Promise.all([
+            api('/catalog/categories'),
+            api('/catalog/entries'),
+        ]);
+        catalogCategories = catData.categories || [];
+        catalogEntries = entryData.entries || [];
+
+        catBody.innerHTML = catalogCategories.length === 0
+            ? '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">Категорий пока нет.</td></tr>'
+            : catalogCategories.map((c, idx) => `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td style="font-size:1.3em;">${escHtml(c.emoji || '')}</td>
+                    <td>${escHtml(c.name || '')}</td>
+                    <td>${escHtml(c.keywords || '')}</td>
+                    <td>${c.is_active ? 'Да' : 'Нет'}</td>
+                    <td>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-ghost btn-sm" onclick="showCatalogCategoryModal(${c.id})">✏️</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteCatalogCategory(${c.id})">🗑️</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+        entryBody.innerHTML = catalogEntries.length === 0
+            ? '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">Объектов пока нет.</td></tr>'
+            : catalogEntries.map((e, idx) => {
+                const photos = photoList(e.photo_urls);
+                const cat = `${e.category_emoji || ''} ${e.category_name || '—'}`.trim();
+                return `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td>${escHtml(cat)}</td>
+                    <td>${escHtml(e.name || '')}</td>
+                    <td>${escHtml(truncate(e.address || '', 42))}</td>
+                    <td>${escHtml(e.phone || '—')}</td>
+                    <td>${photos.length}</td>
+                    <td>${e.is_active ? 'Да' : 'Нет'}</td>
+                    <td>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-ghost btn-sm" onclick="showCatalogEntryModal(${e.id})">✏️</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteCatalogEntry(${e.id})">🗑️</button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+    } catch (err) {
+        catBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</td></tr>';
+        entryBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</td></tr>';
+    }
+}
+
+function showCatalogCategoryModal(id = null) {
+    const item = id ? catalogCategories.find(c => c.id === id) : null;
+    document.getElementById('catalog-category-modal-title').textContent = item ? '✏️ Редактировать категорию' : '➕ Добавить категорию';
+    document.getElementById('catalog-category-id').value = item ? item.id : '';
+    document.getElementById('catalog-category-emoji').value = item ? (item.emoji || '') : '';
+    document.getElementById('catalog-category-name').value = item ? (item.name || '') : '';
+    document.getElementById('catalog-category-keywords').value = item ? (item.keywords || '') : '';
+    document.getElementById('catalog-category-active').checked = item ? !!item.is_active : true;
+    openModal('modal-catalog-category');
+}
+
+async function submitCatalogCategory() {
+    const id = document.getElementById('catalog-category-id').value;
+    const body = {
+        emoji: document.getElementById('catalog-category-emoji').value.trim(),
+        name: document.getElementById('catalog-category-name').value.trim(),
+        keywords: document.getElementById('catalog-category-keywords').value.trim(),
+        is_active: document.getElementById('catalog-category-active').checked,
+    };
+    if (!body.name) { toast('Заполните название категории', 'error'); return; }
+    try {
+        if (id) await api(`/catalog/categories/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        else await api('/catalog/categories', { method: 'POST', body: JSON.stringify(body) });
+        closeModal('modal-catalog-category');
+        toast('Категория сохранена', 'success');
+        loadCatalog();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteCatalogCategory(id) {
+    if (!confirm('Удалить категорию? Объекты останутся без категории.')) return;
+    try {
+        await api(`/catalog/categories/${id}`, { method: 'DELETE' });
+        toast('Категория удалена', 'success');
+        loadCatalog();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+function showCatalogEntryModal(id = null) {
+    const item = id ? catalogEntries.find(e => e.id === id) : null;
+    fillCatalogCategorySelect(item ? item.category_id : '');
+    document.getElementById('catalog-entry-modal-title').textContent = item ? '✏️ Редактировать объект' : '➕ Добавить объект';
+    document.getElementById('catalog-entry-id').value = item ? item.id : '';
+    document.getElementById('catalog-entry-name').value = item ? (item.name || '') : '';
+    document.getElementById('catalog-entry-address').value = item ? (item.address || '') : '';
+    document.getElementById('catalog-entry-description').value = item ? (item.description || '') : '';
+    document.getElementById('catalog-entry-phone').value = item ? (item.phone || '') : '';
+    document.getElementById('catalog-entry-photos').value = item ? photoList(item.photo_urls).join('\n') : '';
+    document.getElementById('catalog-entry-latitude').value = item && item.latitude != null ? item.latitude : '';
+    document.getElementById('catalog-entry-longitude').value = item && item.longitude != null ? item.longitude : '';
+    document.getElementById('catalog-entry-active').checked = item ? !!item.is_active : true;
+    openModal('modal-catalog-entry');
+}
+
+async function submitCatalogEntry() {
+    const id = document.getElementById('catalog-entry-id').value;
+    const body = {
+        category_id: document.getElementById('catalog-entry-category-id').value || null,
+        name: document.getElementById('catalog-entry-name').value.trim(),
+        address: document.getElementById('catalog-entry-address').value.trim(),
+        description: document.getElementById('catalog-entry-description').value.trim(),
+        phone: document.getElementById('catalog-entry-phone').value.trim(),
+        photo_urls: readPhotoTextarea('catalog-entry-photos'),
+        latitude: numOrNull('catalog-entry-latitude'),
+        longitude: numOrNull('catalog-entry-longitude'),
+        is_active: document.getElementById('catalog-entry-active').checked,
+    };
+    if (!body.name) { toast('Заполните название объекта', 'error'); return; }
+    try {
+        if (id) await api(`/catalog/entries/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        else await api('/catalog/entries', { method: 'POST', body: JSON.stringify(body) });
+        closeModal('modal-catalog-entry');
+        toast('Объект сохранён', 'success');
+        loadCatalog();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteCatalogEntry(id) {
+    if (!confirm('Удалить объект каталога?')) return;
+    try {
+        await api(`/catalog/entries/${id}`, { method: 'DELETE' });
+        toast('Объект удалён', 'success');
+        loadCatalog();
+    } catch (err) {
+        toast('Ошибка удаления', 'error');
+    }
+}
+
+// ============================================================================
+// RENTALS — CRUD
+// ============================================================================
+
+async function loadRentals() {
+    const body = document.getElementById('rentals-body');
+    try {
+        const data = await api('/rentals');
+        rentalListings = data.rentals || [];
+        body.innerHTML = rentalListings.length === 0
+            ? '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px;">Квартир пока нет.</td></tr>'
+            : rentalListings.map((r, idx) => {
+                const photos = photoList(r.photo_urls);
+                return `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td>${r.rooms || '—'}</td>
+                    <td>${escHtml(truncate(r.address || '', 42))}</td>
+                    <td>${escHtml(r.district || '—')}</td>
+                    <td>${formatMoney(r.price || 0)} сом</td>
+                    <td>${escHtml(r.owner_phone || '—')}</td>
+                    <td>${r.status === 'available' ? 'Сдается' : 'Занята'}</td>
+                    <td>${photos.length}</td>
+                    <td>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-ghost btn-sm" onclick="showRentalModal(${r.id})">✏️</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteRental(${r.id})">🗑️</button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+    } catch (err) {
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px;">Ошибка загрузки</td></tr>';
+    }
+}
+
+function showRentalModal(id = null) {
+    const item = id ? rentalListings.find(r => r.id === id) : null;
+    document.getElementById('rental-modal-title').textContent = item ? '✏️ Редактировать квартиру' : '➕ Добавить квартиру';
+    document.getElementById('rental-id').value = item ? item.id : '';
+    document.getElementById('rental-rooms').value = item && item.rooms != null ? item.rooms : '';
+    document.getElementById('rental-price').value = item && item.price != null ? item.price : '';
+    document.getElementById('rental-address').value = item ? (item.address || '') : '';
+    document.getElementById('rental-district').value = item ? (item.district || '') : '';
+    document.getElementById('rental-description').value = item ? (item.description || '') : '';
+    document.getElementById('rental-owner-phone').value = item ? (item.owner_phone || '') : '';
+    document.getElementById('rental-photos').value = item ? photoList(item.photo_urls).join('\n') : '';
+    document.getElementById('rental-latitude').value = item && item.latitude != null ? item.latitude : '';
+    document.getElementById('rental-longitude').value = item && item.longitude != null ? item.longitude : '';
+    document.getElementById('rental-status').value = item ? (item.status || 'available') : 'available';
+    document.getElementById('rental-active').checked = item ? !!item.is_active : true;
+    openModal('modal-rental');
+}
+
+async function submitRental() {
+    const id = document.getElementById('rental-id').value;
+    const body = {
+        rooms: numOrNull('rental-rooms'),
+        price: numOrNull('rental-price') || 0,
+        address: document.getElementById('rental-address').value.trim(),
+        district: document.getElementById('rental-district').value.trim(),
+        description: document.getElementById('rental-description').value.trim(),
+        owner_phone: document.getElementById('rental-owner-phone').value.trim(),
+        photo_urls: readPhotoTextarea('rental-photos'),
+        latitude: numOrNull('rental-latitude'),
+        longitude: numOrNull('rental-longitude'),
+        status: document.getElementById('rental-status').value,
+        is_active: document.getElementById('rental-active').checked,
+    };
+    if (!body.address) { toast('Заполните адрес квартиры', 'error'); return; }
+    try {
+        if (id) await api(`/rentals/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        else await api('/rentals', { method: 'POST', body: JSON.stringify(body) });
+        closeModal('modal-rental');
+        toast('Квартира сохранена', 'success');
+        loadRentals();
+    } catch (err) {
+        toast('Ошибка: ' + err.message, 'error');
+    }
+}
+
+async function deleteRental(id) {
+    if (!confirm('Удалить квартиру?')) return;
+    try {
+        await api(`/rentals/${id}`, { method: 'DELETE' });
+        toast('Квартира удалена', 'success');
+        loadRentals();
     } catch (err) {
         toast('Ошибка удаления', 'error');
     }

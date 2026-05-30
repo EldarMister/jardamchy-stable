@@ -73,6 +73,35 @@ def _feature_removed_response(feature_name: str):
     return jsonify({"error": f"{feature_name} feature removed"}), 410
 
 
+def _bool_from_body(value, default=True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", "нет", "жок"}
+
+
+def _optional_int(value):
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _optional_float(value):
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _photo_urls_from_body(data: dict):
+    value = data.get("photo_urls")
+    if value is None:
+        value = data.get("photos")
+    if value is None:
+        value = data.get("photo_url")
+    return value
+
+
 # =============================================================================
 # ADMIN PANEL STATIC FILES
 # =============================================================================
@@ -763,6 +792,239 @@ def delete_directory_entry(entry_id):
         return jsonify({"ok": True}), 200
     except Exception as e:
         logger.exception("Error deleting directory entry")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# CITY CATALOG MANAGEMENT
+# =============================================================================
+
+@admin_bp.route('/catalog/categories', methods=['GET'])
+def list_catalog_categories():
+    try:
+        db = get_db()
+        cats = db.list_city_catalog_categories(active_only=False)
+        return jsonify({"categories": _clean_rows(cats)}), 200
+    except Exception as e:
+        logger.exception("Error listing catalog categories")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/categories', methods=['POST'])
+def add_catalog_category():
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        cat = db.add_city_catalog_category(
+            name=name,
+            emoji=(data.get('emoji') or '').strip(),
+            keywords=(data.get('keywords') or '').strip(),
+        )
+        return jsonify({"ok": True, "category": _clean_row(cat)}), 201
+    except Exception as e:
+        logger.exception("Error adding catalog category")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/categories/<int:category_id>', methods=['PUT'])
+def update_catalog_category(category_id):
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        ok = db.update_city_catalog_category(
+            category_id,
+            name=name,
+            emoji=(data.get('emoji') or '').strip(),
+            keywords=(data.get('keywords') or '').strip(),
+            is_active=_bool_from_body(data.get('is_active'), True),
+        )
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error updating catalog category")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/categories/<int:category_id>', methods=['DELETE'])
+def delete_catalog_category(category_id):
+    try:
+        db = get_db()
+        ok = db.delete_city_catalog_category(category_id)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error deleting catalog category")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/entries', methods=['GET'])
+def list_catalog_entries():
+    try:
+        db = get_db()
+        category_id = request.args.get('category_id', type=int)
+        entries = db.list_city_catalog_entries(active_only=False, category_id=category_id, limit=500)
+        return jsonify({"entries": _clean_rows(entries)}), 200
+    except Exception as e:
+        logger.exception("Error listing catalog entries")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/entries', methods=['POST'])
+def add_catalog_entry():
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        entry = db.add_city_catalog_entry(
+            name=name,
+            category_id=_optional_int(data.get('category_id')),
+            address=data.get('address') or '',
+            description=data.get('description') or '',
+            phone=data.get('phone') or '',
+            photo_urls=_photo_urls_from_body(data),
+            latitude=_optional_float(data.get('latitude')),
+            longitude=_optional_float(data.get('longitude')),
+            is_active=_bool_from_body(data.get('is_active'), True),
+        )
+        return jsonify({"ok": True, "entry": _clean_row(entry)}), 201
+    except Exception as e:
+        logger.exception("Error adding catalog entry")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/entries/<int:entry_id>', methods=['PUT'])
+def update_catalog_entry(entry_id):
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        db = get_db()
+        ok = db.update_city_catalog_entry(
+            entry_id,
+            name=name,
+            category_id=_optional_int(data.get('category_id')),
+            address=data.get('address') or '',
+            description=data.get('description') or '',
+            phone=data.get('phone') or '',
+            photo_urls=_photo_urls_from_body(data),
+            latitude=_optional_float(data.get('latitude')),
+            longitude=_optional_float(data.get('longitude')),
+            is_active=_bool_from_body(data.get('is_active'), True),
+        )
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error updating catalog entry")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/catalog/entries/<int:entry_id>', methods=['DELETE'])
+def delete_catalog_entry(entry_id):
+    try:
+        db = get_db()
+        ok = db.delete_city_catalog_entry(entry_id)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error deleting catalog entry")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# RENTAL LISTINGS MANAGEMENT
+# =============================================================================
+
+@admin_bp.route('/rentals', methods=['GET'])
+def list_rentals():
+    try:
+        db = get_db()
+        listings = db.list_rental_listings(active_only=False, limit=500)
+        return jsonify({"rentals": _clean_rows(listings)}), 200
+    except Exception as e:
+        logger.exception("Error listing rentals")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/rentals', methods=['POST'])
+def add_rental():
+    try:
+        data = request.get_json() or {}
+        address = (data.get('address') or '').strip()
+        if not address:
+            return jsonify({"error": "address is required"}), 400
+        db = get_db()
+        rental = db.add_rental_listing(
+            rooms=_optional_int(data.get('rooms')),
+            address=address,
+            district=data.get('district') or '',
+            price=float(data.get('price') or 0),
+            description=data.get('description') or '',
+            owner_phone=data.get('owner_phone') or data.get('phone') or '',
+            photo_urls=_photo_urls_from_body(data),
+            latitude=_optional_float(data.get('latitude')),
+            longitude=_optional_float(data.get('longitude')),
+            status=data.get('status') or 'available',
+            is_active=_bool_from_body(data.get('is_active'), True),
+        )
+        return jsonify({"ok": True, "rental": _clean_row(rental)}), 201
+    except Exception as e:
+        logger.exception("Error adding rental")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/rentals/<int:listing_id>', methods=['PUT'])
+def update_rental(listing_id):
+    try:
+        data = request.get_json() or {}
+        address = (data.get('address') or '').strip()
+        if not address:
+            return jsonify({"error": "address is required"}), 400
+        db = get_db()
+        ok = db.update_rental_listing(
+            listing_id,
+            rooms=_optional_int(data.get('rooms')),
+            address=address,
+            district=data.get('district') or '',
+            price=float(data.get('price') or 0),
+            description=data.get('description') or '',
+            owner_phone=data.get('owner_phone') or data.get('phone') or '',
+            photo_urls=_photo_urls_from_body(data),
+            latitude=_optional_float(data.get('latitude')),
+            longitude=_optional_float(data.get('longitude')),
+            status=data.get('status') or 'available',
+            is_active=_bool_from_body(data.get('is_active'), True),
+        )
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error updating rental")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/rentals/<int:listing_id>', methods=['DELETE'])
+def delete_rental(listing_id):
+    try:
+        db = get_db()
+        ok = db.delete_rental_listing(listing_id)
+        if not ok:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logger.exception("Error deleting rental")
         return jsonify({"error": str(e)}), 500
 
 

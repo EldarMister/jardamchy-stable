@@ -50,6 +50,12 @@
                 <div class="nav-item" data-section="directory">
                     <span class="nav-item-icon">📖</span> Маалымдама
                 </div>
+                <div class="nav-item" data-section="catalog">
+                    <span class="nav-item-icon">🏙️</span> Каталог
+                </div>
+                <div class="nav-item" data-section="rentals">
+                    <span class="nav-item-icon">🏠</span> Аренда
+                </div>
                 <!-- Закупщики отключены -->
                 <!-- <div class="nav-item" data-section="shoppers">
                     <span class="nav-item-icon">🛒</span> Закупщики
@@ -659,6 +665,80 @@
                     </div>
                 </div>
 
+                <div class="section" id="sec-catalog">
+                    <div class="table-container" style="margin-bottom:20px;">
+                        <div class="table-header">
+                            <div class="table-title">🏙️ Категории городского каталога</div>
+                            <button class="btn btn-primary btn-sm" onclick="showCatalogCategoryModal()">➕ Категория</button>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Эмодзи</th>
+                                    <th>Название</th>
+                                    <th>Ключевые слова</th>
+                                    <th>Активно</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="catalog-categories-body">
+                                <tr><td colspan="6" style="text-align:center;padding:20px;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">📍 Организации и места</div>
+                            <button class="btn btn-primary btn-sm" onclick="showCatalogEntryModal()">➕ Объект</button>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Категория</th>
+                                    <th>Название</th>
+                                    <th>Адрес</th>
+                                    <th>Телефон</th>
+                                    <th>Фото</th>
+                                    <th>Активно</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="catalog-entries-body">
+                                <tr><td colspan="8" style="text-align:center;padding:20px;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="section" id="sec-rentals">
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">🏠 Квартиры в аренду</div>
+                            <button class="btn btn-primary btn-sm" onclick="showRentalModal()">➕ Квартира</button>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Комнаты</th>
+                                    <th>Адрес</th>
+                                    <th>Район</th>
+                                    <th>Цена</th>
+                                    <th>Телефон</th>
+                                    <th>Статус</th>
+                                    <th>Фото</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rentals-body">
+                                <tr><td colspan="9" style="text-align:center;padding:20px;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div class="section" id="sec-order-mgmt">
                     <div class="table-container">
                         <div class="table-header">
@@ -1221,6 +1301,161 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="closeModal('modal-directory')">Отмена</button>
                 <button class="btn btn-primary" onclick="submitDirectory()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Catalog Category Modal -->
+    <div class="modal-overlay" id="modal-catalog-category">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="catalog-category-modal-title">➕ Добавить категорию</h3>
+                <button class="modal-close" onclick="closeModal('modal-catalog-category')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="catalog-category-id">
+                <div class="form-group">
+                    <label>Эмодзи</label>
+                    <input type="text" id="catalog-category-emoji" placeholder="☕" maxlength="4">
+                </div>
+                <div class="form-group">
+                    <label>Название *</label>
+                    <input type="text" id="catalog-category-name" placeholder="Кафе">
+                </div>
+                <div class="form-group">
+                    <label>Ключевые слова</label>
+                    <textarea id="catalog-category-keywords" rows="2" placeholder="кофейня, ашкана, тамак, еда"></textarea>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="catalog-category-active" checked> Активно</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-catalog-category')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitCatalogCategory()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Catalog Entry Modal -->
+    <div class="modal-overlay" id="modal-catalog-entry">
+        <div class="modal" style="max-width:720px">
+            <div class="modal-header">
+                <h3 class="modal-title" id="catalog-entry-modal-title">➕ Добавить объект</h3>
+                <button class="modal-close" onclick="closeModal('modal-catalog-entry')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="catalog-entry-id">
+                <div class="form-group">
+                    <label>Категория</label>
+                    <select id="catalog-entry-category-id"></select>
+                </div>
+                <div class="form-group">
+                    <label>Название *</label>
+                    <input type="text" id="catalog-entry-name" placeholder="Кафе Адеми">
+                </div>
+                <div class="form-group">
+                    <label>Адрес</label>
+                    <input type="text" id="catalog-entry-address" placeholder="ул. Ленина 10">
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <textarea id="catalog-entry-description" rows="3" placeholder="Краткое описание для ответа бота"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Телефон</label>
+                    <input type="text" id="catalog-entry-phone" placeholder="+996 ...">
+                </div>
+                <div class="form-group">
+                    <label>Фото URL, по одному в строке</label>
+                    <textarea id="catalog-entry-photos" rows="3" placeholder="https://example.com/photo.jpg"></textarea>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Широта</label>
+                        <input type="number" id="catalog-entry-latitude" step="0.000001" placeholder="41.123456">
+                    </div>
+                    <div class="form-group">
+                        <label>Долгота</label>
+                        <input type="number" id="catalog-entry-longitude" step="0.000001" placeholder="72.123456">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="catalog-entry-active" checked> Активно</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-catalog-entry')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitCatalogEntry()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Rental Modal -->
+    <div class="modal-overlay" id="modal-rental">
+        <div class="modal" style="max-width:720px">
+            <div class="modal-header">
+                <h3 class="modal-title" id="rental-modal-title">➕ Добавить квартиру</h3>
+                <button class="modal-close" onclick="closeModal('modal-rental')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rental-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Количество комнат</label>
+                        <input type="number" id="rental-rooms" min="0" step="1" placeholder="2">
+                    </div>
+                    <div class="form-group">
+                        <label>Цена, сом</label>
+                        <input type="number" id="rental-price" min="0" step="100" placeholder="10000">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Адрес *</label>
+                    <input type="text" id="rental-address" placeholder="ул. Ленина 10">
+                </div>
+                <div class="form-group">
+                    <label>Район</label>
+                    <input type="text" id="rental-district" placeholder="Центр, ЖД, Адыр">
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <textarea id="rental-description" rows="3" placeholder="Этаж, мебель, условия аренды"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Контакт владельца</label>
+                    <input type="text" id="rental-owner-phone" placeholder="+996 ...">
+                </div>
+                <div class="form-group">
+                    <label>Фото URL, по одному в строке</label>
+                    <textarea id="rental-photos" rows="3" placeholder="https://example.com/photo.jpg"></textarea>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Широта</label>
+                        <input type="number" id="rental-latitude" step="0.000001" placeholder="41.123456">
+                    </div>
+                    <div class="form-group">
+                        <label>Долгота</label>
+                        <input type="number" id="rental-longitude" step="0.000001" placeholder="72.123456">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Статус</label>
+                        <select id="rental-status">
+                            <option value="available">Сдается</option>
+                            <option value="occupied">Занята</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="rental-active" checked> Активно</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('modal-rental')">Отмена</button>
+                <button class="btn btn-primary" onclick="submitRental()">Сохранить</button>
             </div>
         </div>
     </div>
