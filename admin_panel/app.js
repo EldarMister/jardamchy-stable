@@ -65,8 +65,9 @@ let rentalListings = [];
 
 async function api(path, options = {}) {
     const url = `${API_BASE}${path}`;
+    const isFormData = options.body instanceof FormData;
     const headers = {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...options.headers,
     };
     try {
@@ -2407,11 +2408,11 @@ async function deleteDirectory(id) {
 // ============================================================================
 
 function photoList(value) {
-    if (Array.isArray(value)) return value.filter(Boolean);
+    if (Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
     if (typeof value === 'string' && value.trim()) {
         try {
             const parsed = JSON.parse(value);
-            if (Array.isArray(parsed)) return parsed.filter(Boolean);
+            if (Array.isArray(parsed)) return parsed.map(v => String(v || '').trim()).filter(Boolean);
         } catch (_) {
             return value.split(/\n|,/).map(v => v.trim()).filter(Boolean);
         }
@@ -2419,11 +2420,109 @@ function photoList(value) {
     return [];
 }
 
-function readPhotoTextarea(id) {
-    return document.getElementById(id).value
-        .split(/\n|,/)
-        .map(v => v.trim())
-        .filter(Boolean);
+function photoStateInput(prefix) {
+    return document.getElementById(`${prefix}-photo-state`);
+}
+
+function readPhotoState(prefix) {
+    const input = photoStateInput(prefix);
+    if (!input || !input.value) return [];
+    try {
+        return photoList(JSON.parse(input.value));
+    } catch (_) {
+        return photoList(input.value);
+    }
+}
+
+function setPhotoState(prefix, urls) {
+    const input = photoStateInput(prefix);
+    if (input) input.value = JSON.stringify(photoList(urls));
+}
+
+function escapeJsString(value) {
+    return String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
+
+function renderPhotoManager(prefix) {
+    const listEl = document.getElementById(`${prefix}-photo-list`);
+    const fileInput = document.getElementById(`${prefix}-photo-files`);
+    if (!listEl) return;
+
+    const existing = readPhotoState(prefix);
+    const selected = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+    if (!existing.length && !selected.length) {
+        listEl.innerHTML = '<div class="photo-empty">Фото пока не добавлены.</div>';
+        return;
+    }
+
+    const existingHtml = existing.map((url, index) => `
+        <div class="photo-item">
+            <img src="${escHtml(url)}" alt="photo">
+            <div class="photo-meta">
+                <a href="${escHtml(url)}" target="_blank" rel="noopener">Открыть</a>
+                <button type="button" class="btn btn-danger btn-sm" onclick="removePhotoFromState('${escapeJsString(prefix)}', ${index})">Удалить</button>
+            </div>
+        </div>
+    `).join('');
+
+    const selectedHtml = selected.map(file => `
+        <div class="photo-item photo-item-pending">
+            <img src="${URL.createObjectURL(file)}" alt="new photo">
+            <div class="photo-meta">
+                <strong>${escHtml(file.name)}</strong>
+                <span>Будет загружено при сохранении</span>
+            </div>
+        </div>
+    `).join('');
+
+    listEl.innerHTML = existingHtml + selectedHtml;
+}
+
+function resetPhotoManager(prefix, urls = []) {
+    setPhotoState(prefix, urls);
+    const fileInput = document.getElementById(`${prefix}-photo-files`);
+    if (fileInput) fileInput.value = '';
+    renderPhotoManager(prefix);
+}
+
+function removePhotoFromState(prefix, index) {
+    const urls = readPhotoState(prefix);
+    urls.splice(index, 1);
+    setPhotoState(prefix, urls);
+    renderPhotoManager(prefix);
+}
+
+function handlePhotoSelection(prefix) {
+    renderPhotoManager(prefix);
+}
+
+async function uploadPhotoFiles(prefix) {
+    const fileInput = document.getElementById(`${prefix}-photo-files`);
+    const files = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+    if (!files.length) return [];
+
+    const formData = new FormData();
+    for (const file of files) {
+        formData.append('files', file);
+    }
+
+    const result = await api('/uploads', {
+        method: 'POST',
+        body: formData,
+    });
+    fileInput.value = '';
+    return (result.files || []).map(item => item.url).filter(Boolean);
+}
+
+async function collectPhotoUrls(prefix) {
+    const existing = readPhotoState(prefix);
+    const uploaded = await uploadPhotoFiles(prefix);
+    const combined = [...existing, ...uploaded];
+    setPhotoState(prefix, combined);
+    renderPhotoManager(prefix);
+    return combined;
 }
 
 function numOrNull(id) {
@@ -2548,22 +2647,31 @@ function showCatalogEntryModal(id = null) {
     document.getElementById('catalog-entry-address').value = item ? (item.address || '') : '';
     document.getElementById('catalog-entry-description').value = item ? (item.description || '') : '';
     document.getElementById('catalog-entry-phone').value = item ? (item.phone || '') : '';
-    document.getElementById('catalog-entry-photos').value = item ? photoList(item.photo_urls).join('\n') : '';
     document.getElementById('catalog-entry-latitude').value = item && item.latitude != null ? item.latitude : '';
     document.getElementById('catalog-entry-longitude').value = item && item.longitude != null ? item.longitude : '';
     document.getElementById('catalog-entry-active').checked = item ? !!item.is_active : true;
+    resetPhotoManager('catalog-entry', item ? photoList(item.photo_urls) : []);
     openModal('modal-catalog-entry');
 }
 
 async function submitCatalogEntry() {
     const id = document.getElementById('catalog-entry-id').value;
+    const name = document.getElementById('catalog-entry-name').value.trim();
+    if (!name) { toast('Р—Р°РїРѕР»РЅРёС‚Рµ РЅР°Р·РІР°РЅРёРµ РѕР±СЉРµРєС‚Р°', 'error'); return; }
+    let photoUrls = [];
+    try {
+        photoUrls = await collectPhotoUrls('catalog-entry');
+    } catch (err) {
+        toast('Upload failed: ' + err.message, 'error');
+        return;
+    }
     const body = {
         category_id: document.getElementById('catalog-entry-category-id').value || null,
-        name: document.getElementById('catalog-entry-name').value.trim(),
+        name,
         address: document.getElementById('catalog-entry-address').value.trim(),
         description: document.getElementById('catalog-entry-description').value.trim(),
         phone: document.getElementById('catalog-entry-phone').value.trim(),
-        photo_urls: readPhotoTextarea('catalog-entry-photos'),
+        photo_urls: photoUrls,
         latitude: numOrNull('catalog-entry-latitude'),
         longitude: numOrNull('catalog-entry-longitude'),
         is_active: document.getElementById('catalog-entry-active').checked,
@@ -2637,24 +2745,33 @@ function showRentalModal(id = null) {
     document.getElementById('rental-district').value = item ? (item.district || '') : '';
     document.getElementById('rental-description').value = item ? (item.description || '') : '';
     document.getElementById('rental-owner-phone').value = item ? (item.owner_phone || '') : '';
-    document.getElementById('rental-photos').value = item ? photoList(item.photo_urls).join('\n') : '';
     document.getElementById('rental-latitude').value = item && item.latitude != null ? item.latitude : '';
     document.getElementById('rental-longitude').value = item && item.longitude != null ? item.longitude : '';
     document.getElementById('rental-status').value = item ? (item.status || 'available') : 'available';
     document.getElementById('rental-active').checked = item ? !!item.is_active : true;
+    resetPhotoManager('rental', item ? photoList(item.photo_urls) : []);
     openModal('modal-rental');
 }
 
 async function submitRental() {
     const id = document.getElementById('rental-id').value;
+    const address = document.getElementById('rental-address').value.trim();
+    if (!address) { toast('Р—Р°РїРѕР»РЅРёС‚Рµ Р°РґСЂРµСЃ РєРІР°СЂС‚РёСЂС‹', 'error'); return; }
+    let photoUrls = [];
+    try {
+        photoUrls = await collectPhotoUrls('rental');
+    } catch (err) {
+        toast('Upload failed: ' + err.message, 'error');
+        return;
+    }
     const body = {
         rooms: numOrNull('rental-rooms'),
         price: numOrNull('rental-price') || 0,
-        address: document.getElementById('rental-address').value.trim(),
+        address,
         district: document.getElementById('rental-district').value.trim(),
         description: document.getElementById('rental-description').value.trim(),
         owner_phone: document.getElementById('rental-owner-phone').value.trim(),
-        photo_urls: readPhotoTextarea('rental-photos'),
+        photo_urls: photoUrls,
         latitude: numOrNull('rental-latitude'),
         longitude: numOrNull('rental-longitude'),
         status: document.getElementById('rental-status').value,

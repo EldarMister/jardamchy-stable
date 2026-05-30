@@ -6,9 +6,11 @@ Admin Module — расширенная версия с визуальной а�
 from flask import Blueprint, request, jsonify, send_from_directory, Response
 import logging
 import os
+import uuid
 import requests as req_lib
 from datetime import datetime, timedelta
 from decimal import Decimal
+from werkzeug.utils import secure_filename
 
 import config
 from db import get_db, RUNTIME_SETTING_DEFAULTS
@@ -21,6 +23,9 @@ admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
 # Путь к файлам админ-панели
 ADMIN_PANEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'admin_panel')
+ADMIN_UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads', 'admin')
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+MAX_ADMIN_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def is_admin(telegram_id: str) -> bool:
@@ -102,6 +107,43 @@ def _photo_urls_from_body(data: dict):
     return value
 
 
+def _is_allowed_image(filename: str, mimetype: str = "") -> bool:
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return False
+    return not mimetype or mimetype.startswith("image/")
+
+
+def _save_admin_upload(file_storage) -> dict:
+    original_name = secure_filename(file_storage.filename or "")
+    if not original_name:
+        raise ValueError("Empty filename")
+    if not _is_allowed_image(original_name, getattr(file_storage, "mimetype", "")):
+        raise ValueError("Unsupported file type")
+
+    file_storage.stream.seek(0, os.SEEK_END)
+    size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    if size <= 0:
+        raise ValueError("Empty file")
+    if size > MAX_ADMIN_UPLOAD_BYTES:
+        raise ValueError("File is too large")
+
+    today_prefix = datetime.utcnow().strftime("%Y%m%d")
+    ext = os.path.splitext(original_name)[1].lower()
+    saved_name = f"{today_prefix}_{uuid.uuid4().hex}{ext}"
+    os.makedirs(ADMIN_UPLOADS_DIR, exist_ok=True)
+    saved_path = os.path.join(ADMIN_UPLOADS_DIR, saved_name)
+    file_storage.save(saved_path)
+
+    return {
+        "name": original_name,
+        "filename": saved_name,
+        "url": f"/admin/uploads/{saved_name}",
+        "size": size,
+    }
+
+
 # =============================================================================
 # ADMIN PANEL STATIC FILES
 # =============================================================================
@@ -117,6 +159,33 @@ def serve_panel():
 def serve_panel_file(filename):
     """Отдать статические файлы админки"""
     return send_from_directory(ADMIN_PANEL_DIR, filename)
+
+
+@admin_bp.route('/uploads/<path:filename>')
+def serve_admin_upload(filename):
+    return send_from_directory(ADMIN_UPLOADS_DIR, filename)
+
+
+@admin_bp.route('/uploads', methods=['POST'])
+def upload_admin_files():
+    try:
+        files = request.files.getlist('files')
+        if not files:
+            single_file = request.files.get('file')
+            if single_file:
+                files = [single_file]
+        if not files:
+            return jsonify({"error": "No files uploaded"}), 400
+
+        uploaded = []
+        for file_storage in files:
+            uploaded.append(_save_admin_upload(file_storage))
+        return jsonify({"ok": True, "files": uploaded}), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Error uploading admin files")
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================

@@ -1368,7 +1368,11 @@
                 </div>
                 <div class="form-group">
                     <label>Фото URL, по одному в строке</label>
-                    <textarea id="catalog-entry-photos" rows="3" placeholder="https://example.com/photo.jpg"></textarea>
+                    <div class="form-help">Загрузка фото с устройства вместо ссылок.</div>
+                    <input type="hidden" id="catalog-entry-photo-state" value="[]">
+                    <input type="file" id="catalog-entry-photo-files" accept="image/*" multiple onchange="handlePhotoSelection('catalog-entry')">
+                    <div class="form-help">Можно выбрать несколько файлов. Они загрузятся при сохранении объекта.</div>
+                    <div class="photo-list" id="catalog-entry-photo-list"></div>
                 </div>
                 <div class="form-grid">
                     <div class="form-group">
@@ -1428,7 +1432,11 @@
                 </div>
                 <div class="form-group">
                     <label>Фото URL, по одному в строке</label>
-                    <textarea id="rental-photos" rows="3" placeholder="https://example.com/photo.jpg"></textarea>
+                    <div class="form-help">Загрузка фото с устройства вместо ссылок.</div>
+                    <input type="hidden" id="rental-photo-state" value="[]">
+                    <input type="file" id="rental-photo-files" accept="image/*" multiple onchange="handlePhotoSelection('rental')">
+                    <div class="form-help">Можно выбрать несколько файлов. Они загрузятся при сохранении квартиры.</div>
+                    <div class="photo-list" id="rental-photo-list"></div>
                 </div>
                 <div class="form-grid">
                     <div class="form-group">
