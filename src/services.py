@@ -8,12 +8,15 @@ import json
 import logging
 import time
 import re
+import mimetypes
+import os
+from io import BytesIO
 from datetime import datetime, timedelta
 import requests
 from typing import List, Dict, Optional, Tuple
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlparse
 
 import config
 
@@ -131,6 +134,55 @@ def _wa_get(url: str, **kwargs):
 
 def _wa_post(url: str, **kwargs):
     return _WHATSAPP_HTTP_SESSION.post(url, **kwargs)
+
+
+def _repo_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _admin_upload_filename(image_url: str) -> Optional[str]:
+    raw = (image_url or "").strip()
+    if not raw:
+        return None
+    parsed_path = urlparse(raw).path if raw.startswith(("http://", "https://")) else raw
+    parsed_path = unquote(parsed_path or "")
+    marker = "/admin/uploads/"
+    if marker not in parsed_path:
+        return None
+    filename = os.path.basename(parsed_path.split(marker, 1)[1])
+    if not filename:
+        return None
+    return filename
+
+
+def _local_admin_upload_path(image_url: str) -> Optional[str]:
+    filename = _admin_upload_filename(image_url)
+    if not filename:
+        return None
+    path = os.path.abspath(os.path.join(_repo_root(), "uploads", "admin", filename))
+    upload_dir = os.path.abspath(os.path.join(_repo_root(), "uploads", "admin"))
+    if not (path == upload_dir or path.startswith(upload_dir + os.sep)):
+        return None
+    return path if os.path.exists(path) else None
+
+
+def _stored_admin_upload(image_url: str) -> Optional[dict]:
+    filename = _admin_upload_filename(image_url)
+    if not filename:
+        return None
+    try:
+        from db import get_db
+
+        stored = get_db().get_admin_upload_file(filename)
+        return stored if stored and stored.get("data") else None
+    except Exception:
+        logger.exception("Failed to load admin upload from db filename=%s", filename)
+        return None
+
+
+def _guess_image_mime(filename: str) -> str:
+    mime = mimetypes.guess_type(filename or "")[0]
+    return mime if mime and mime.startswith("image/") else "image/jpeg"
 
 
 # =============================================================================
@@ -336,9 +388,107 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
         return False
 
 
-def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") -> bool:
-    """Отправить изображение через Cloud API по публичному URL"""
+def _upload_whatsapp_image_cloud(image_url: str) -> Optional[str]:
+    local_path = _local_admin_upload_path(image_url)
+    filename = os.path.basename(local_path) if local_path else "image.jpg"
+    mime = _guess_image_mime(filename)
+
     try:
+        if local_path:
+            file_obj = open(local_path, "rb")
+        elif stored := _stored_admin_upload(image_url):
+            filename = stored.get("filename") or filename
+            mime = stored.get("content_type") or _guess_image_mime(filename)
+            file_obj = BytesIO(stored["data"])
+        elif image_url.startswith(("http://", "https://")):
+            download_resp = _wa_get(image_url, timeout=30)
+            if download_resp.status_code != 200:
+                logger.warning(
+                    "WhatsApp image download failed status=%s url=%s body=%s",
+                    download_resp.status_code,
+                    image_url,
+                    download_resp.text[:300],
+                )
+                return None
+            content_type = (download_resp.headers.get("content-type") or "").split(";")[0].strip()
+            if content_type.startswith("image/"):
+                mime = content_type
+            file_obj = BytesIO(download_resp.content)
+        else:
+            return None
+
+        try:
+            url = (
+                f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+                f"/{config.WHATSAPP_PHONE_NUMBER_ID}/media"
+            )
+            headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}"}
+            files = {"file": (filename, file_obj, mime)}
+            data = {"messaging_product": "whatsapp", "type": mime}
+            response = _wa_post(url, headers=headers, data=data, files=files, timeout=60)
+        finally:
+            file_obj.close()
+
+        if response.status_code == 200:
+            media_id = response.json().get("id")
+            if media_id:
+                logger.info("WhatsApp image uploaded media_id=%s source=%s", media_id, "local" if local_path else "url")
+                return media_id
+        logger.warning("WhatsApp image upload failed status=%s body=%s", response.status_code, response.text[:500])
+        return None
+    except Exception:
+        logger.exception("WhatsApp image upload exception")
+        return None
+
+
+def _send_whatsapp_image_id_cloud(phone: str, media_id: str, caption: str = "") -> bool:
+    try:
+        url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "image",
+            "image": {"id": media_id, "caption": caption},
+        }
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            sent_id = (response.json().get("messages") or [{}])[0].get("id") or None
+            try:
+                from db import get_db as _get_db
+                _get_db().save_message(
+                    phone=phone,
+                    direction="out",
+                    body=caption or "[image]",
+                    msg_type="image",
+                    wa_message_id=sent_id,
+                    media_url=f"cloud_media:{media_id}",
+                )
+            except Exception:
+                pass
+            logger.info("WhatsApp image sent by media id to=%s media_id=%s", phone, media_id)
+            return True
+        logger.warning("WhatsApp image send by id failed status=%s body=%s", response.status_code, response.text[:500])
+        return False
+    except Exception:
+        logger.exception("WhatsApp image send by id exception")
+        return False
+
+
+def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") -> bool:
+    """Send an image through Cloud API. Local admin uploads are sent by media id."""
+    try:
+        if _admin_upload_filename(image_url):
+            media_id = _upload_whatsapp_image_cloud(image_url)
+            return _send_whatsapp_image_id_cloud(phone, media_id, caption) if media_id else False
+
         url = (
             f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
             f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
@@ -355,9 +505,28 @@ def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") ->
             "image": {"link": image_url, "caption": caption},
         }
         response = _wa_post(url, json=payload, headers=headers, timeout=30)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"[Cloud API Image] Exception: {e}")
+        if response.status_code == 200:
+            sent_id = (response.json().get("messages") or [{}])[0].get("id") or None
+            try:
+                from db import get_db as _get_db
+                _get_db().save_message(
+                    phone=phone,
+                    direction="out",
+                    body=caption or "[image]",
+                    msg_type="image",
+                    wa_message_id=sent_id,
+                    media_url=image_url,
+                )
+            except Exception:
+                pass
+            logger.info("WhatsApp image sent by link to=%s", phone)
+            return True
+
+        logger.warning("WhatsApp image send by link failed status=%s body=%s", response.status_code, response.text[:500])
+        media_id = _upload_whatsapp_image_cloud(image_url)
+        return _send_whatsapp_image_id_cloud(phone, media_id, caption) if media_id else False
+    except Exception:
+        logger.exception("WhatsApp image send exception")
         return False
 
 

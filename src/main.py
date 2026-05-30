@@ -1774,10 +1774,11 @@ def _send_catalog_entry(user: User, entry: dict) -> None:
     if photos:
         sent = send_whatsapp_image(user.phone, photos[0], text)
         if not sent:
-            send_whatsapp(user.phone, f"{text}\n\nФото: {photos[0]}")
+            logger.warning("Catalog photo send failed id=%s phone=%s", entry.get("id"), user.phone)
+            send_whatsapp(user.phone, f"{text}\n\nФото сейчас не удалось отправить.")
         for photo in photos[1:4]:
             if not send_whatsapp_image(user.phone, photo, ""):
-                send_whatsapp(user.phone, f"Фото: {photo}")
+                logger.warning("Catalog extra photo send failed id=%s phone=%s", entry.get("id"), user.phone)
     else:
         send_whatsapp(user.phone, text)
     lat = entry.get("latitude")
@@ -1859,10 +1860,11 @@ def _send_rental_detail(user: User, item: dict) -> None:
     if photos:
         sent = send_whatsapp_image(user.phone, photos[0], text)
         if not sent:
-            send_whatsapp(user.phone, f"{text}\n\nФото: {photos[0]}")
+            logger.warning("Rental photo send failed id=%s phone=%s", item.get("id"), user.phone)
+            send_whatsapp(user.phone, f"{text}\n\nФото сейчас не удалось отправить.")
         for photo in photos[1:6]:
             if not send_whatsapp_image(user.phone, photo, ""):
-                send_whatsapp(user.phone, f"Фото: {photo}")
+                logger.warning("Rental extra photo send failed id=%s phone=%s", item.get("id"), user.phone)
     else:
         send_whatsapp(user.phone, text)
     lat = item.get("latitude")
@@ -1934,6 +1936,13 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
 def handle_rental_detail_choice(user: User, message: str, db) -> tuple:
     match = re.search(r"\d+", message or "")
     result_ids = _get_recent_rental_result_ids(user)
+    logger.info(
+        "Rental detail choice received phone=%s has_match=%s result_count=%s state=%s",
+        user.phone,
+        bool(match),
+        len(result_ids),
+        user.current_state,
+    )
     if not match or not result_ids:
         user.clear_temp_data()
         user.set_state(config.STATE_IDLE)
@@ -3359,6 +3368,17 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
         if media_type and media_type.startswith('image/'):
             user.set_temp_data('media_url', media_url)
             user.set_temp_data('media_type', media_type)
+
+        if (
+            not button_response
+            and _is_plain_numeric_choice(incoming_msg)
+            and (
+                user.current_state == config.STATE_RENTAL_DETAIL_CHOICE
+                or _get_recent_rental_result_ids(user)
+            )
+        ):
+            logger.info("Numeric message routed to rental detail before flow switch phone=%s", user.phone)
+            return handle_rental_detail_choice(user, incoming_msg, db)
         
         # Обработка кнопок (если есть)
         if button_response:

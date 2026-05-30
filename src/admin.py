@@ -132,9 +132,22 @@ def _save_admin_upload(file_storage) -> dict:
     today_prefix = datetime.utcnow().strftime("%Y%m%d")
     ext = os.path.splitext(original_name)[1].lower()
     saved_name = f"{today_prefix}_{uuid.uuid4().hex}{ext}"
+    content = file_storage.read()
+    file_storage.stream.seek(0)
+
     os.makedirs(ADMIN_UPLOADS_DIR, exist_ok=True)
     saved_path = os.path.join(ADMIN_UPLOADS_DIR, saved_name)
-    file_storage.save(saved_path)
+    with open(saved_path, "wb") as fh:
+        fh.write(content)
+    try:
+        get_db().save_admin_upload_file(
+            saved_name,
+            original_name,
+            getattr(file_storage, "mimetype", "") or "image/jpeg",
+            content,
+        )
+    except Exception:
+        logger.exception("Failed to persist admin upload filename=%s", saved_name)
 
     relative_url = f"/admin/uploads/{saved_name}"
     base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/")
@@ -173,7 +186,22 @@ def serve_panel_file(filename):
 
 @admin_bp.route('/uploads/<path:filename>')
 def serve_admin_upload(filename):
-    return send_from_directory(ADMIN_UPLOADS_DIR, filename)
+    safe_name = secure_filename(filename or "")
+    local_path = os.path.join(ADMIN_UPLOADS_DIR, safe_name)
+    if safe_name and os.path.exists(local_path):
+        return send_from_directory(ADMIN_UPLOADS_DIR, safe_name)
+    try:
+        stored = get_db().get_admin_upload_file(safe_name)
+    except Exception:
+        logger.exception("Failed to load admin upload from db filename=%s", safe_name)
+        stored = None
+    if stored and stored.get("data"):
+        return Response(
+            stored["data"],
+            mimetype=stored.get("content_type") or "image/jpeg",
+            headers={"Cache-Control": "public, max-age=31536000"},
+        )
+    return send_from_directory(ADMIN_UPLOADS_DIR, safe_name)
 
 
 @admin_bp.route('/uploads', methods=['POST'])

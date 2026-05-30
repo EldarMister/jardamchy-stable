@@ -164,6 +164,17 @@ class Database:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS admin_upload_files (
+                        filename TEXT PRIMARY KEY,
+                        original_name TEXT,
+                        content_type TEXT,
+                        data BYTEA NOT NULL,
+                        size_bytes INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
                 # Migration: add last_welcome_at if missing
                 cur.execute("""
@@ -3265,6 +3276,52 @@ class Database:
                 tuple(values)
             )
             return cur.rowcount > 0
+
+    def save_admin_upload_file(self, filename: str, original_name: str, content_type: str, data: bytes) -> bool:
+        if not filename or not data:
+            return False
+        with self.get_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO admin_upload_files (filename, original_name, content_type, data, size_bytes)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (filename) DO UPDATE SET
+                    original_name = EXCLUDED.original_name,
+                    content_type = EXCLUDED.content_type,
+                    data = EXCLUDED.data,
+                    size_bytes = EXCLUDED.size_bytes
+                """,
+                (
+                    filename,
+                    original_name or filename,
+                    content_type or "application/octet-stream",
+                    psycopg2.Binary(data),
+                    len(data),
+                ),
+            )
+            return True
+
+    def get_admin_upload_file(self, filename: str) -> Optional[Dict[str, Any]]:
+        if not filename:
+            return None
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT filename, original_name, content_type, data, size_bytes
+                FROM admin_upload_files
+                WHERE filename = %s
+                """,
+                (filename,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            row = dict(row)
+            data = row.get("data")
+            if isinstance(data, memoryview):
+                data = data.tobytes()
+            row["data"] = bytes(data or b"")
+            return row
 
 
 class User:
