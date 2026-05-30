@@ -154,6 +154,7 @@ WHISPER_PROMPT = (
 
 # PostgreSQL Database
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/business_assistant")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 # =============================================================================
 # СТАТУСЫ ПОЛЬЗОВАТЕЛЯ (STATE MACHINE)

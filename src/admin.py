@@ -136,10 +136,13 @@ def _save_admin_upload(file_storage) -> dict:
     saved_path = os.path.join(ADMIN_UPLOADS_DIR, saved_name)
     file_storage.save(saved_path)
 
+    relative_url = f"/admin/uploads/{saved_name}"
+    base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/") or request.host_url.rstrip("/")
     return {
         "name": original_name,
         "filename": saved_name,
-        "url": f"/admin/uploads/{saved_name}",
+        "url": f"{base_url}{relative_url}",
+        "relative_url": relative_url,
         "size": size,
     }
 

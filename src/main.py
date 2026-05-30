@@ -1613,15 +1613,28 @@ _RENTAL_QUERY_MARKERS = (
 
 def _as_photo_list(value) -> list[str]:
     if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v or "").strip()]
+        return [_make_public_media_url(str(v).strip()) for v in value if str(v or "").strip()]
     if isinstance(value, str) and value.strip():
         try:
             parsed = json.loads(value)
             if isinstance(parsed, list):
-                return [str(v).strip() for v in parsed if str(v or "").strip()]
+                return [_make_public_media_url(str(v).strip()) for v in parsed if str(v or "").strip()]
         except Exception:
-            return [v.strip() for v in re.split(r"[\n,]+", value) if v.strip()]
+            return [_make_public_media_url(v.strip()) for v in re.split(r"[\n,]+", value) if v.strip()]
     return []
+
+
+def _make_public_media_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw or raw.startswith(("http://", "https://", "cloud_media:", "data:")):
+        return raw
+    path = raw if raw.startswith("/") else f"/{raw}"
+    base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if base_url:
+        return f"{base_url}{path}"
+    if has_request_context():
+        return f"{request.host_url.rstrip('/')}{path}"
+    return raw
 
 
 def _normalized_contains_term(normalized: str, term: str) -> bool:
@@ -1754,9 +1767,12 @@ def _send_catalog_entry(user: User, entry: dict) -> None:
     text = _format_catalog_entry(entry)
     photos = _as_photo_list(entry.get("photo_urls"))
     if photos:
-        send_whatsapp_image(user.phone, photos[0], text)
+        sent = send_whatsapp_image(user.phone, photos[0], text)
+        if not sent:
+            send_whatsapp(user.phone, f"{text}\n\nФото: {photos[0]}")
         for photo in photos[1:4]:
-            send_whatsapp_image(user.phone, photo, "")
+            if not send_whatsapp_image(user.phone, photo, ""):
+                send_whatsapp(user.phone, f"Фото: {photo}")
     else:
         send_whatsapp(user.phone, text)
     lat = entry.get("latitude")
@@ -1836,9 +1852,12 @@ def _send_rental_detail(user: User, item: dict) -> None:
     text = _format_rental_detail(item)
     photos = _as_photo_list(item.get("photo_urls"))
     if photos:
-        send_whatsapp_image(user.phone, photos[0], text)
+        sent = send_whatsapp_image(user.phone, photos[0], text)
+        if not sent:
+            send_whatsapp(user.phone, f"{text}\n\nФото: {photos[0]}")
         for photo in photos[1:6]:
-            send_whatsapp_image(user.phone, photo, "")
+            if not send_whatsapp_image(user.phone, photo, ""):
+                send_whatsapp(user.phone, f"Фото: {photo}")
     else:
         send_whatsapp(user.phone, text)
     lat = item.get("latitude")
