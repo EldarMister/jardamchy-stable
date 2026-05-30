@@ -137,7 +137,14 @@ def _save_admin_upload(file_storage) -> dict:
     file_storage.save(saved_path)
 
     relative_url = f"/admin/uploads/{saved_name}"
-    base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/") or request.host_url.rstrip("/")
+    base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if not base_url:
+        forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").strip()
+        forwarded_host = (request.headers.get("X-Forwarded-Host") or "").strip()
+        if forwarded_proto and forwarded_host:
+            base_url = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+        else:
+            base_url = request.host_url.rstrip("/")
     return {
         "name": original_name,
         "filename": saved_name,

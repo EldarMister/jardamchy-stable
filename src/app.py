@@ -30,6 +30,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _public_request_base_url() -> str:
+    if config.PUBLIC_BASE_URL:
+        return config.PUBLIC_BASE_URL
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").strip()
+    forwarded_host = (request.headers.get("X-Forwarded-Host") or "").strip()
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    return request.host_url.rstrip("/")
+
+
 # =============================================================================
 # BACKGROUND CRON SCHEDULER
 # =============================================================================
@@ -87,9 +97,11 @@ def create_app():
         if not isinstance(payload, dict) or not payload:
             return False
         try:
-            metadata = extract_whatsapp_queue_metadata(payload)
+            payload_for_queue = dict(payload)
+            payload_for_queue["_app_base_url"] = _public_request_base_url()
+            metadata = extract_whatsapp_queue_metadata(payload_for_queue)
             queue_id = get_db().enqueue_whatsapp_webhook(
-                payload_json=payload,
+                payload_json=payload_for_queue,
                 provider=metadata.get("provider"),
                 sender_phone=metadata.get("sender_phone"),
                 external_message_id=metadata.get("external_message_id"),

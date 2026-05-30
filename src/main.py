@@ -8,6 +8,7 @@ from flask import request, jsonify, has_request_context
 import json
 import re
 import logging
+import threading
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 
@@ -28,6 +29,7 @@ from nlu import (
 )
 
 logger = logging.getLogger(__name__)
+_REQUEST_BASE_URL = threading.local()
 
 def _runtime_setting(key: str, default):
     return get_runtime_setting(key, default)
@@ -1632,6 +1634,9 @@ def _make_public_media_url(url: str) -> str:
     base_url = (config.PUBLIC_BASE_URL or "").strip().rstrip("/")
     if base_url:
         return f"{base_url}{path}"
+    queued_base_url = getattr(_REQUEST_BASE_URL, "value", "") or ""
+    if queued_base_url:
+        return f"{queued_base_url.rstrip('/')}{path}"
     if has_request_context():
         return f"{request.host_url.rstrip('/')}{path}"
     return raw
@@ -3148,6 +3153,17 @@ def extract_whatsapp_queue_metadata(payload: dict) -> dict:
 def handle_whatsapp(request_json: dict = None, form_values=None):
     """Главная функция обработки сообщений от Клиента"""
     try:
+        previous_base_url = getattr(_REQUEST_BASE_URL, "value", "")
+        if isinstance(request_json, dict):
+            _REQUEST_BASE_URL.value = str(request_json.get("_app_base_url") or "").strip()
+        elif has_request_context():
+            forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").strip()
+            forwarded_host = (request.headers.get("X-Forwarded-Host") or "").strip()
+            if forwarded_proto and forwarded_host:
+                _REQUEST_BASE_URL.value = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+            else:
+                _REQUEST_BASE_URL.value = request.host_url.rstrip("/")
+
         incoming_msg = ''
         sender_phone = ''
         media_url = ''
@@ -3457,6 +3473,8 @@ def handle_whatsapp(request_json: dict = None, form_values=None):
     except Exception as e:
         logger.exception("Error handling WhatsApp webhook")
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        _REQUEST_BASE_URL.value = previous_base_url
 
 
 def process_whatsapp_webhook_queue(limit: int = 20, stale_after_seconds: int = 300) -> int:
