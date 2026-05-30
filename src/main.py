@@ -1874,6 +1874,25 @@ def _send_rental_detail(user: User, item: dict) -> None:
             logger.warning("Failed to send rental location id=%s", item.get("id"))
 
 
+RENTAL_DETAIL_CHOICE_TTL = timedelta(minutes=30)
+
+
+def _is_plain_numeric_choice(message: str) -> bool:
+    return bool(re.fullmatch(r"\s*\d{1,2}\s*", message or ""))
+
+
+def _get_recent_rental_result_ids(user: User) -> list:
+    result_ids = user.get_temp_data("rental_result_ids", []) or []
+    if not isinstance(result_ids, list) or not result_ids:
+        return []
+
+    raw_timestamp = user.get_temp_data("rental_result_at")
+    timestamp = _parse_iso_utc(raw_timestamp)
+    if timestamp and (_utc_now() - timestamp) > RENTAL_DETAIL_CHOICE_TTL:
+        return []
+    return result_ids
+
+
 def _handle_rental_query(user: User, message: str, db) -> tuple | None:
     if not _looks_like_rental_query(message):
         return None
@@ -1894,9 +1913,16 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
     if not listings:
         send_whatsapp(user.phone, "Сейчас подходящих квартир в аренду не нашёл. Можно уточнить цену, район или количество комнат.")
         return jsonify({"status": "ok"}), 200
+    rental_result_ids = [item["id"] for item in listings]
     user.clear_temp_data()
+    user.set_temp_data("rental_result_ids", rental_result_ids)
+    user.set_temp_data("rental_result_at", _utc_now().isoformat())
     user.set_state(config.STATE_RENTAL_DETAIL_CHOICE)
-    user.set_temp_data("rental_result_ids", [item["id"] for item in listings])
+    logger.info(
+        "Rental detail choice context saved phone=%s count=%s",
+        user.phone,
+        len(rental_result_ids),
+    )
     lines = ["🏠 *Квартиры в аренду*"]
     for idx, item in enumerate(listings, 1):
         lines.append(_format_rental_short(item, idx))
@@ -1907,7 +1933,7 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
 
 def handle_rental_detail_choice(user: User, message: str, db) -> tuple:
     match = re.search(r"\d+", message or "")
-    result_ids = user.get_temp_data("rental_result_ids", []) or []
+    result_ids = _get_recent_rental_result_ids(user)
     if not match or not result_ids:
         user.clear_temp_data()
         user.set_state(config.STATE_IDLE)
@@ -3568,6 +3594,10 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     }
 
     _EMPTY_NLU = {"from_address": None, "to_address": None, "order_details": None, "cargo_type": None}
+
+    if _is_plain_numeric_choice(message) and _get_recent_rental_result_ids(user):
+        logger.info("Idle numeric message treated as rental detail choice phone=%s", user.phone)
+        return handle_rental_detail_choice(user, message, db)
 
     rental_result = _handle_rental_query(user, message, db)
     if rental_result:
