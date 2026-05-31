@@ -1823,14 +1823,16 @@ def _handle_city_catalog_query(user: User, message: str, db) -> tuple | None:
     return jsonify({"status": "ok"}), 200
 
 
-def _format_rental_short(item: dict, idx: int) -> str:
+def _format_rental_short(item: dict) -> str:
     rooms = item.get("rooms")
-    rooms_text = f"{rooms}-комнатная квартира" if rooms else "Квартира"
+    item_id = item.get("id")
+    rooms_text = f"{rooms} бөлмөлүү батир" if rooms else "Батир"
     price = float(item.get("price") or 0)
     price_text = f"{price:,.0f}".replace(",", " ")
-    lines = [f"{idx}. {rooms_text}"]
-    lines.append(f"   Адрес: {item.get('address') or '—'}")
-    lines.append(f"   Цена: {price_text} сом")
+    label = str(item_id) if item_id is not None else "?"
+    lines = [f"{label}. {rooms_text}"]
+    lines.append(f"   Дарек: {item.get('address') or '—'}")
+    lines.append(f"   Баасы: {price_text} сом")
     if item.get("owner_phone"):
         lines.append(f"   Телефон: {item['owner_phone']}")
     return "\n".join(lines)
@@ -1840,15 +1842,15 @@ def _format_rental_detail(item: dict) -> str:
     rooms = item.get("rooms")
     price = float(item.get("price") or 0)
     price_text = f"{price:,.0f}".replace(",", " ")
-    lines = [f"*Квартира #{item.get('id')}*"]
+    lines = [f"*Батир №{item.get('id')}*"]
     if rooms:
-        lines.append(f"Комнат: {rooms}")
-    lines.append(f"Адрес: {item.get('address') or '—'}")
+        lines.append(f"Бөлмө: {rooms}")
+    lines.append(f"Дарек: {item.get('address') or '—'}")
     if item.get("district"):
         lines.append(f"Район: {item['district']}")
-    lines.append(f"Цена: {price_text} сом")
+    lines.append(f"Баасы: {price_text} сом")
     if item.get("description"):
-        lines.append(f"Описание: {item['description']}")
+        lines.append(f"Маалымат: {item['description']}")
     if item.get("owner_phone"):
         lines.append(f"Телефон: {item['owner_phone']}")
     return "\n".join(lines)
@@ -1861,7 +1863,7 @@ def _send_rental_detail(user: User, item: dict) -> None:
         sent = send_whatsapp_image(user.phone, photos[0], text)
         if not sent:
             logger.warning("Rental photo send failed id=%s phone=%s", item.get("id"), user.phone)
-            send_whatsapp(user.phone, f"{text}\n\nФото сейчас не удалось отправить.")
+            send_whatsapp(user.phone, f"{text}\n\nСүрөттү азыр жөнөтүү мүмкүн болгон жок.")
         for photo in photos[1:6]:
             if not send_whatsapp_image(user.phone, photo, ""):
                 logger.warning("Rental extra photo send failed id=%s phone=%s", item.get("id"), user.phone)
@@ -1871,7 +1873,7 @@ def _send_rental_detail(user: User, item: dict) -> None:
     lon = item.get("longitude")
     if lat is not None and lon is not None:
         try:
-            send_whatsapp_location(user.phone, float(lat), float(lon), "Квартира", item.get("address") or "")
+            send_whatsapp_location(user.phone, float(lat), float(lon), "Батир", item.get("address") or "")
         except Exception:
             logger.warning("Failed to send rental location id=%s", item.get("id"))
 
@@ -1913,7 +1915,7 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
         listings = []
     _reset_unknown_fallback(user)
     if not listings:
-        send_whatsapp(user.phone, "Сейчас подходящих квартир в аренду не нашёл. Можно уточнить цену, район или количество комнат.")
+        send_whatsapp(user.phone, "Азыр ылайыктуу ижарадагы батир табылган жок. Баасын, районун же бөлмө санын тактап жазыңыз.")
         return jsonify({"status": "ok"}), 200
     rental_result_ids = [item["id"] for item in listings]
     user.clear_temp_data()
@@ -1925,10 +1927,10 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
         user.phone,
         len(rental_result_ids),
     )
-    lines = ["🏠 *Квартиры в аренду*"]
-    for idx, item in enumerate(listings, 1):
-        lines.append(_format_rental_short(item, idx))
-    lines.append("\nДля просмотра фото и подробностей отправьте номер квартиры из списка.")
+    lines = ["🏠 *Ижарадагы батирлер*"]
+    for item in listings:
+        lines.append(_format_rental_short(item))
+    lines.append("\nСүрөттөрүн жана толук маалыматты көрүү үчүн тизмедеги батирдин номерин жазыңыз.")
     send_whatsapp(user.phone, "\n\n".join(lines))
     return jsonify({"status": "ok"}), 200
 
@@ -1948,15 +1950,24 @@ def handle_rental_detail_choice(user: User, message: str, db) -> tuple:
         user.set_state(config.STATE_IDLE)
         send_whatsapp(user.phone, config.WELCOME_MESSAGE)
         return jsonify({"status": "ok"}), 200
-    index = int(match.group(0)) - 1
-    if index < 0 or index >= len(result_ids):
-        send_whatsapp(user.phone, "Такого номера в списке нет. Отправьте номер квартиры из последнего списка.")
+
+    selected_number = int(match.group(0))
+    selected_id = None
+    if selected_number in result_ids:
+        selected_id = selected_number
+    else:
+        index = selected_number - 1
+        if 0 <= index < len(result_ids):
+            selected_id = int(result_ids[index])
+
+    if selected_id is None:
+        send_whatsapp(user.phone, "Мындай номер тизмеде жок. Акыркы тизмедеги батирдин номерин жазыңыз.")
         return jsonify({"status": "ok"}), 200
-    item = db.get_rental_listing(int(result_ids[index]))
+    item = db.get_rental_listing(selected_id)
     user.clear_temp_data()
     user.set_state(config.STATE_IDLE)
     if not item or not item.get("is_active") or item.get("status") != "available":
-        send_whatsapp(user.phone, "Эта квартира уже недоступна. Напишите “квартиры в аренду”, чтобы увидеть актуальный список.")
+        send_whatsapp(user.phone, "Бул батир азыр жеткиликтүү эмес. Жаңы тизмени көрүү үчүн “ижарадагы батирлер” деп жазыңыз.")
         return jsonify({"status": "ok"}), 200
     _send_rental_detail(user, item)
     return jsonify({"status": "ok"}), 200
