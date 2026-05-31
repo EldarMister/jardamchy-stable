@@ -3598,6 +3598,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
         "8": "master",
         "9": "raznarabochi",
         "10": "directory",
+        "11": "rental",
     }
 
     # Жёсткая проверка на «меню» / запрос еды, чтобы не путать с доставкой
@@ -3660,7 +3661,7 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     intent = nlu_result.get("intent", "unknown")
     
     logger.info(f"NLU intent for {user.phone}: {intent}")
-    if intent in {"taxi", "cafe", "shop", "porter", "ant", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "greeting"}:
+    if intent in {"taxi", "cafe", "shop", "porter", "ant", "computer", "poputka", "plumbing", "master", "raznarabochi", "directory", "rental", "greeting"}:
         _reset_unknown_fallback(user)
 
     # === ТАКСИ ===
@@ -3818,6 +3819,8 @@ def handle_idle_state(user: User, message: str, db) -> tuple:
     # === МААЛЫМДАМА (СПРАВОЧНИК) ===
     elif intent == "directory":
         return _show_directory(user, db)
+    elif intent == "rental":
+        return _handle_rental_query(user, "ижарадагы батирлер", db)
 
     # === САНТЕХНИКА ===
     elif intent == "plumbing":
