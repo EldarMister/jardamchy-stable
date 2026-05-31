@@ -136,6 +136,15 @@ def _wa_post(url: str, **kwargs):
     return _WHATSAPP_HTTP_SESSION.post(url, **kwargs)
 
 
+def _build_cloud_reply_buttons(buttons: List[Dict]) -> List[Dict]:
+    cloud_buttons = []
+    for btn in buttons[:3]:
+        btn_id = (btn.get("id") or btn.get("text") or "btn")[:256]
+        btn_title = btn.get("text", "")[:20]
+        cloud_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": btn_title}})
+    return cloud_buttons
+
+
 def _repo_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -352,11 +361,7 @@ def _send_whatsapp_buttons_cloud(phone: str, message: str, buttons: List[Dict]) 
         }
         phone_clean = _clean_phone(phone)
 
-        cloud_buttons = []
-        for btn in buttons[:3]:
-            btn_id = (btn.get("id") or btn.get("text") or "btn")[:256]
-            btn_title = btn.get("text", "")[:20]
-            cloud_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": btn_title}})
+        cloud_buttons = _build_cloud_reply_buttons(buttons)
 
         payload = {
             "messaging_product": "whatsapp",
@@ -530,6 +535,68 @@ def _send_whatsapp_image_cloud(phone: str, image_url: str, caption: str = "") ->
         return False
 
 
+def _send_whatsapp_image_buttons_cloud(phone: str, image_url: str, caption: str, buttons: List[Dict]) -> bool:
+    try:
+        url = (
+            f"https://graph.facebook.com/{config.WHATSAPP_API_VERSION}"
+            f"/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        )
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        phone_clean = _clean_phone(phone)
+        cloud_buttons = _build_cloud_reply_buttons(buttons)
+
+        media_payload: Dict[str, str]
+        media_id = _upload_whatsapp_image_cloud(image_url)
+        if media_id:
+            media_payload = {"id": media_id}
+        else:
+            media_payload = {"link": image_url}
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone_clean,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "header": {"type": "image", "image": media_payload},
+                "body": {"text": caption or " "},
+                "action": {"buttons": cloud_buttons},
+            },
+        }
+        response = _wa_post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            sent_id = (response.json().get("messages") or [{}])[0].get("id") or None
+            try:
+                from db import get_db as _get_db
+                btn_titles = " / ".join(b["reply"]["title"] for b in cloud_buttons)
+                media_ref = f"cloud_media:{media_id}" if media_id else image_url
+                _get_db().save_message(
+                    phone=phone,
+                    direction="out",
+                    body=f"{caption}\n[Кнопки: {btn_titles}]",
+                    msg_type="interactive",
+                    wa_message_id=sent_id,
+                    media_url=media_ref,
+                )
+            except Exception:
+                pass
+            logger.info("WhatsApp interactive image sent to=%s", phone)
+            return True
+
+        logger.warning(
+            "WhatsApp interactive image failed status=%s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
+        return False
+    except Exception:
+        logger.exception("WhatsApp interactive image exception")
+        return False
+
+
 def _download_cloud_media_bytes(media_id: str) -> Optional[bytes]:
     """Скачать медиа из Cloud API по media_id (требует Bearer токен)"""
     try:
@@ -671,6 +738,21 @@ def send_whatsapp_buttons(phone: str, message: str, buttons: List[Dict], include
             return _send_whatsapp_buttons_green(phone, message, buttons)
     except Exception as e:
         print(f"Error sending WhatsApp buttons: {e}")
+        return False
+
+
+def send_whatsapp_image_buttons(phone: str, image_url: str, caption: str, buttons: List[Dict], include_cancel: bool = False) -> bool:
+    """Send a WhatsApp image together with reply buttons when the provider supports it."""
+    try:
+        if include_cancel:
+            buttons = _with_cancel_button(buttons)
+        if config.WHATSAPP_PROVIDER == "cloud":
+            return _send_whatsapp_image_buttons_cloud(phone, image_url, caption, buttons)
+        image_sent = send_whatsapp_image(phone, image_url, caption)
+        buttons_sent = send_whatsapp_buttons(phone, "Тизмеге кайтуу үчүн басыңыз.", buttons, include_cancel=include_cancel)
+        return image_sent and buttons_sent
+    except Exception as e:
+        print(f"Error sending WhatsApp image buttons: {e}")
         return False
 
 

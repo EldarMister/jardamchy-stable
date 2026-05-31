@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import config
 from db import get_db, User, get_runtime_setting
 from services import (
-    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image, send_whatsapp_location,
+    send_whatsapp, send_whatsapp_buttons, send_whatsapp_image, send_whatsapp_image_buttons, send_whatsapp_location,
     send_telegram_private, edit_telegram_message,
     dispatch_telegram_group_notification,
     speech_to_text, format_phone, format_currency, send_confirmation_buttons,
@@ -55,6 +55,9 @@ UNKNOWN_FALLBACK_COOLDOWN_MESSAGE = (
     "Заказ берүү үчүн кызматты жазыңыз: "
     f"{UNKNOWN_FALLBACK_SERVICES_HINT}."
 )
+
+RENTAL_BACK_BUTTON_ID = "btn_rental_back"
+RENTAL_BACK_BUTTON_TEXT = "↩️ Артка"
 
 _GREETING_TEXT_VARIANTS = {
     "привет",
@@ -1825,12 +1828,12 @@ def _handle_city_catalog_query(user: User, message: str, db) -> tuple | None:
 
 def _format_rental_short(item: dict, idx: int) -> str:
     rooms = item.get("rooms")
-    rooms_text = f"{rooms}-комнатная квартира" if rooms else "Квартира"
+    rooms_text = f"{rooms} бөлмөлүү батир" if rooms else "Батир"
     price = float(item.get("price") or 0)
     price_text = f"{price:,.0f}".replace(",", " ")
     lines = [f"{idx}. {rooms_text}"]
-    lines.append(f"   Адрес: {item.get('address') or '—'}")
-    lines.append(f"   Цена: {price_text} сом")
+    lines.append(f"   Дарек: {item.get('address') or '—'}")
+    lines.append(f"   Баасы: {price_text} сом")
     if item.get("owner_phone"):
         lines.append(f"   Телефон: {item['owner_phone']}")
     return "\n".join(lines)
@@ -1840,38 +1843,82 @@ def _format_rental_detail(item: dict) -> str:
     rooms = item.get("rooms")
     price = float(item.get("price") or 0)
     price_text = f"{price:,.0f}".replace(",", " ")
-    lines = [f"*Квартира #{item.get('id')}*"]
+    lines = ["*Батир*"]
     if rooms:
-        lines.append(f"Комнат: {rooms}")
-    lines.append(f"Адрес: {item.get('address') or '—'}")
+        lines.append(f"Бөлмө: {rooms}")
+    lines.append(f"Дарек: {item.get('address') or '—'}")
     if item.get("district"):
         lines.append(f"Район: {item['district']}")
-    lines.append(f"Цена: {price_text} сом")
+    lines.append(f"Баасы: {price_text} сом")
     if item.get("description"):
-        lines.append(f"Описание: {item['description']}")
+        lines.append(f"Маалымат: {item['description']}")
     if item.get("owner_phone"):
         lines.append(f"Телефон: {item['owner_phone']}")
     return "\n".join(lines)
+
+
+def _build_rental_list_message(listings: list[dict]) -> str:
+    lines = ["🏠 *Ижарадагы батирлер*"]
+    for idx, item in enumerate(listings, 1):
+        lines.append(_format_rental_short(item, idx))
+    lines.append("\nСүрөттөрүн жана толук маалыматты көрүү үчүн тизмедеги батирдин номерин жазыңыз.")
+    return "\n\n".join(lines)
+
+
+def _get_recent_rental_listings(user: User, db) -> list[dict]:
+    listings: list[dict] = []
+    for listing_id in _get_recent_rental_result_ids(user):
+        item = db.get_rental_listing(int(listing_id))
+        if item and item.get("is_active") and item.get("status") == "available":
+            listings.append(item)
+    return listings
+
+
+def _show_recent_rental_results(user: User, db) -> tuple:
+    listings = _get_recent_rental_listings(user, db)
+    if not listings:
+        user.clear_temp_data()
+        user.set_state(config.STATE_IDLE)
+        send_whatsapp(user.phone, "Акыркы батирлер тизмеси жеткиликтүү эмес. Кайрадан суроо жазыңыз.")
+        return jsonify({"status": "ok"}), 200
+
+    user.set_state(config.STATE_RENTAL_DETAIL_CHOICE)
+    user.set_temp_data("rental_result_ids", [item["id"] for item in listings])
+    user.set_temp_data("rental_result_at", _utc_now().isoformat())
+    send_whatsapp(user.phone, _build_rental_list_message(listings))
+    return jsonify({"status": "ok"}), 200
 
 
 def _send_rental_detail(user: User, item: dict) -> None:
     text = _format_rental_detail(item)
     photos = _as_photo_list(item.get("photo_urls"))
     if photos:
-        sent = send_whatsapp_image(user.phone, photos[0], text)
+        sent = send_whatsapp_image_buttons(
+            user.phone,
+            photos[0],
+            text,
+            [{"id": RENTAL_BACK_BUTTON_ID, "text": RENTAL_BACK_BUTTON_TEXT}],
+            include_cancel=False,
+        )
         if not sent:
             logger.warning("Rental photo send failed id=%s phone=%s", item.get("id"), user.phone)
-            send_whatsapp(user.phone, f"{text}\n\nФото сейчас не удалось отправить.")
+            send_whatsapp(user.phone, f"{text}\n\nСүрөттү азыр жөнөтүү мүмкүн болгон жок.")
         for photo in photos[1:6]:
             if not send_whatsapp_image(user.phone, photo, ""):
                 logger.warning("Rental extra photo send failed id=%s phone=%s", item.get("id"), user.phone)
     else:
         send_whatsapp(user.phone, text)
+        send_whatsapp_buttons(
+            user.phone,
+            "Тизмеге кайтуу үчүн басыңыз.",
+            [{"id": RENTAL_BACK_BUTTON_ID, "text": RENTAL_BACK_BUTTON_TEXT}],
+            include_cancel=False,
+        )
     lat = item.get("latitude")
     lon = item.get("longitude")
     if lat is not None and lon is not None:
         try:
-            send_whatsapp_location(user.phone, float(lat), float(lon), "Квартира", item.get("address") or "")
+            send_whatsapp_location(user.phone, float(lat), float(lon), "Батир", item.get("address") or "")
         except Exception:
             logger.warning("Failed to send rental location id=%s", item.get("id"))
 
@@ -1913,7 +1960,7 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
         listings = []
     _reset_unknown_fallback(user)
     if not listings:
-        send_whatsapp(user.phone, "Сейчас подходящих квартир в аренду не нашёл. Можно уточнить цену, район или количество комнат.")
+        send_whatsapp(user.phone, "Азыр ылайыктуу ижарадагы батир табылган жок. Баасын, районун же бөлмө санын тактап жазыңыз.")
         return jsonify({"status": "ok"}), 200
     rental_result_ids = [item["id"] for item in listings]
     user.clear_temp_data()
@@ -1925,11 +1972,7 @@ def _handle_rental_query(user: User, message: str, db) -> tuple | None:
         user.phone,
         len(rental_result_ids),
     )
-    lines = ["🏠 *Квартиры в аренду*"]
-    for idx, item in enumerate(listings, 1):
-        lines.append(_format_rental_short(item, idx))
-    lines.append("\nДля просмотра фото и подробностей отправьте номер квартиры из списка.")
-    send_whatsapp(user.phone, "\n\n".join(lines))
+    send_whatsapp(user.phone, _build_rental_list_message(listings))
     return jsonify({"status": "ok"}), 200
 
 
@@ -1950,13 +1993,12 @@ def handle_rental_detail_choice(user: User, message: str, db) -> tuple:
         return jsonify({"status": "ok"}), 200
     index = int(match.group(0)) - 1
     if index < 0 or index >= len(result_ids):
-        send_whatsapp(user.phone, "Такого номера в списке нет. Отправьте номер квартиры из последнего списка.")
+        send_whatsapp(user.phone, "Мындай номер тизмеде жок. Акыркы тизмедеги батирдин номерин жазыңыз.")
         return jsonify({"status": "ok"}), 200
     item = db.get_rental_listing(int(result_ids[index]))
-    user.clear_temp_data()
     user.set_state(config.STATE_IDLE)
     if not item or not item.get("is_active") or item.get("status") != "available":
-        send_whatsapp(user.phone, "Эта квартира уже недоступна. Напишите “квартиры в аренду”, чтобы увидеть актуальный список.")
+        send_whatsapp(user.phone, "Бул батир азыр жеткиликтүү эмес. Жаңы тизмени көрүү үчүн “ижарадагы батирлер” деп жазыңыз.")
         return jsonify({"status": "ok"}), 200
     _send_rental_detail(user, item)
     return jsonify({"status": "ok"}), 200
@@ -4940,6 +4982,9 @@ def handle_button_response(user: User, button_response: str, db) -> tuple:
 
     try:
         _reset_unknown_fallback(user)
+        if button_response in {RENTAL_BACK_BUTTON_ID, RENTAL_BACK_BUTTON_TEXT, "Артка", "артка"}:
+            return _show_recent_rental_results(user, db)
+
         if button_response in {WHATSAPP_MAIN_MENU_BUTTON_ID, "btn_main_menu", "main_menu"}:
             user.set_state(config.STATE_IDLE)
             user.clear_temp_data()
